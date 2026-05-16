@@ -7,3 +7,6 @@ coverage
 .env
 .env.local
 .DS_Store
+
+# Local-only planning notes (not part of the public repo)
+solid-motion-port-plan.md
