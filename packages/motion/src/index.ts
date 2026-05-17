@@ -5,6 +5,8 @@ export { animate, inView, isMotionValue, motionValue, scroll, spring } from "mot
 // Context layer.
 export { MotionConfig, MotionConfigContext, useMotionConfig } from "./motion-config"
 export { PresenceContext, usePresenceContext } from "./presence-context"
+// Imperative motion primitive (advanced — most users want useMotion instead).
+export { createMotion } from "./primitives/createMotion"
 // MotionValue family + Solid signal bridge.
 export {
   createMotionSignal,
@@ -21,8 +23,9 @@ export {
 export { createReducedMotion, shouldReduceMotion } from "./reduced-motion"
 // Style helper (also useful for users with custom directives or imperative DOM).
 export { targetToStyle } from "./style"
-
 export type * from "./types"
+// Canonical hook.
+export { useMotion } from "./use-motion"
 // Variant resolution.
 export { effectiveLabels, resolveVariant, useVariantContext, VariantContext } from "./variants"
 
