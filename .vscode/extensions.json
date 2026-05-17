@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "vitest.explorer",
+    "tamasfe.even-better-toml",
+    "nicholashsiang.vscode-solid",
+    "usernamehw.errorlens"
+  ]
+}
