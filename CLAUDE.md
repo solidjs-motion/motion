@@ -194,7 +194,8 @@ The `bunfig.toml` in the repo root re-routes Bun's test root to `.bun-test-no-op
 - **Explicit return types on every exported function.** JSR's "slow types" check requires this; also keeps the public API surface deliberate.
 - **JSDoc on every public API** with `@example` blocks. JSR auto-generates docs from these.
 - **No CJS.** ESM only.
-- **Don't import from `motion/react` or undocumented `motion/dom` paths.** Public surface only: `import { animate, spring, inView, ... } from "motion"`.
+- **Don't import from `motion/react`.** Animation primitives come from `motion`: `import { animate, spring, inView, scroll, motionValue, isMotionValue } from "motion"`.
+- **`motion-dom` is an explicit dependency.** Phase 2 reverses Phase 1's "no motion/dom paths" rule. Imports from `motion-dom` are allowed and expected: `hover`, `press`, `visualElementStore`, `createDOMVisualElement`, `addDomEvent`, `frame`/`cancelFrame`/`time`, `isPrimaryPointer`, `distance2D`, `setDragLock`/`isDragActive`, `variantPriorityOrder`, `animateVisualElement`, `getValueTransition`, `stagger`. Some of these lack public `.d.ts` types (e.g., `visualElementStore`, `createDOMVisualElement`); cast where needed and pin compatibility. Rationale: [docs/adr/0001-lean-on-motion-dom-for-phase-2.md](docs/adr/0001-lean-on-motion-dom-for-phase-2.md).
 - **Solid reactivity discipline**: pick the right primitive from the decision matrix above. `onMount` for one-time setup, `onCleanup` for teardown. Never destructure props at the top of a function (use `splitProps`).
 - **Test runner**: always `bun run test`, never `bun test`. See the warning above.
 
