@@ -1,0 +1,227 @@
+import { isMotionValue, type MotionValue } from "motion"
+import type { JSX } from "solid-js"
+import type { Target } from "./types"
+
+// ---------------------------------------------------------------------------
+// Tables (Q5 locked decisions)
+// ---------------------------------------------------------------------------
+
+const TRANSFORM_KEYS = /* @__PURE__ */ new Set([
+  "x",
+  "y",
+  "z",
+  "scale",
+  "scaleX",
+  "scaleY",
+  "scaleZ",
+  "rotate",
+  "rotateX",
+  "rotateY",
+  "rotateZ",
+  "skew",
+  "skewX",
+  "skewY",
+  "transformPerspective",
+])
+
+/** Order matters — motion composes transforms in this sequence (Q5 sub-1). */
+const TRANSFORM_ORDER = [
+  "x",
+  "y",
+  "z",
+  "scale",
+  "scaleX",
+  "scaleY",
+  "scaleZ",
+  "rotate",
+  "rotateX",
+  "rotateY",
+  "rotateZ",
+  "skew",
+  "skewX",
+  "skewY",
+  "transformPerspective",
+] as const
+
+const PX_PROPERTIES = /* @__PURE__ */ new Set([
+  "width",
+  "minWidth",
+  "maxWidth",
+  "height",
+  "minHeight",
+  "maxHeight",
+  "top",
+  "right",
+  "bottom",
+  "left",
+  "padding",
+  "paddingTop",
+  "paddingRight",
+  "paddingBottom",
+  "paddingLeft",
+  "paddingInline",
+  "paddingBlock",
+  "paddingInlineStart",
+  "paddingInlineEnd",
+  "paddingBlockStart",
+  "paddingBlockEnd",
+  "margin",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+  "marginInline",
+  "marginBlock",
+  "marginInlineStart",
+  "marginInlineEnd",
+  "marginBlockStart",
+  "marginBlockEnd",
+  "borderWidth",
+  "borderTopWidth",
+  "borderRightWidth",
+  "borderBottomWidth",
+  "borderLeftWidth",
+  "borderRadius",
+  "borderTopLeftRadius",
+  "borderTopRightRadius",
+  "borderBottomLeftRadius",
+  "borderBottomRightRadius",
+  "gap",
+  "rowGap",
+  "columnGap",
+  "fontSize",
+  "outlineWidth",
+  "outlineOffset",
+])
+
+// ---------------------------------------------------------------------------
+// Snapshot — unwrap MotionValue / Accessor / keyframe-array to a leaf value.
+// Returns `undefined` when the leaf is null or undefined; callers omit those.
+// ---------------------------------------------------------------------------
+
+type Leaf = string | number
+
+function snapshotValue(value: unknown): Leaf | undefined {
+  if (value === null || value === undefined) return undefined
+  if (Array.isArray(value)) return snapshotValue(value[0])
+  if (isMotionValue(value)) return snapshotValue((value as MotionValue<Leaf>).get())
+  if (typeof value === "function") return snapshotValue((value as () => unknown)())
+  if (typeof value === "string" || typeof value === "number") return value
+  // Anything else (objects, booleans) isn't a renderable CSS value — skip it.
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Transform composition — produce a single `transform: ...` string from the
+// shorthand keys present in the target.
+// ---------------------------------------------------------------------------
+
+function transformFunctionFor(key: string, value: Leaf): string {
+  switch (key) {
+    case "x":
+      return `translateX(${withUnit(value, "px")})`
+    case "y":
+      return `translateY(${withUnit(value, "px")})`
+    case "z":
+      return `translateZ(${withUnit(value, "px")})`
+    case "scale":
+      return `scale(${value})`
+    case "scaleX":
+      return `scaleX(${value})`
+    case "scaleY":
+      return `scaleY(${value})`
+    case "scaleZ":
+      return `scaleZ(${value})`
+    case "rotate":
+      return `rotate(${withUnit(value, "deg")})`
+    case "rotateX":
+      return `rotateX(${withUnit(value, "deg")})`
+    case "rotateY":
+      return `rotateY(${withUnit(value, "deg")})`
+    case "rotateZ":
+      return `rotateZ(${withUnit(value, "deg")})`
+    case "skew":
+      return `skew(${withUnit(value, "deg")})`
+    case "skewX":
+      return `skewX(${withUnit(value, "deg")})`
+    case "skewY":
+      return `skewY(${withUnit(value, "deg")})`
+    case "transformPerspective":
+      return `perspective(${withUnit(value, "px")})`
+    default:
+      return ""
+  }
+}
+
+function withUnit(value: Leaf, unit: string): string {
+  if (typeof value === "string") return value
+  return `${value}${unit}`
+}
+
+// ---------------------------------------------------------------------------
+// Property formatting — apply unit table for non-transform CSS properties.
+// ---------------------------------------------------------------------------
+
+function formatProperty(key: string, value: Leaf): string | number {
+  if (typeof value === "string") return value
+  // CSS variables: stringify the number, never auto-unit (Q5 sub-4).
+  if (key.startsWith("--")) return String(value)
+  if (PX_PROPERTIES.has(key)) return `${value}px`
+  // Dimensionless or unknown — emit the bare number.
+  return value
+}
+
+// ---------------------------------------------------------------------------
+// targetToStyle — the SSR/hydration linchpin. Pure, deterministic, no DOM
+// reads, no time-dependent values, no input mutation. Same inputs → same
+// outputs on server and client.
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a {@link Target} to a Solid {@link JSX.CSSProperties} object.
+ *
+ * - Composes transform shorthand (`x`, `y`, `scale`, `rotate`, etc.) into a
+ *   single `transform: "..."` string in motion's canonical order.
+ * - Applies the default-unit table (px for dimensional CSS, deg for rotate/
+ *   skew, dimensionless for scale/opacity/etc.).
+ * - For keyframe arrays, uses the first frame; a leading `null`/`undefined`
+ *   keyframe omits the property entirely.
+ * - MotionValues and Solid Accessors are snapshotted at call time. Callers
+ *   wrap in `untrack` if they don't want the read to subscribe.
+ * - Skips the `transition` key (animation config, not style).
+ * - CSS variables (`--foo`) emit raw values, no unit guess.
+ *
+ * @example
+ * targetToStyle({ x: 100, scale: 0.9, opacity: 0.5 })
+ * // { transform: "translateX(100px) scale(0.9)", opacity: 0.5 }
+ */
+export function targetToStyle(target: Target): JSX.CSSProperties {
+  const out: Record<string, string | number> = {}
+  const transforms: Record<string, Leaf> = {}
+
+  for (const key in target) {
+    if (key === "transition") continue
+    const raw = target[key as keyof Target]
+    const snapshot = snapshotValue(raw)
+    if (snapshot === undefined) continue
+
+    if (TRANSFORM_KEYS.has(key)) {
+      transforms[key] = snapshot
+    } else {
+      out[key] = formatProperty(key, snapshot)
+    }
+  }
+
+  // Compose transform string in motion's canonical order.
+  const parts: string[] = []
+  for (const key of TRANSFORM_ORDER) {
+    if (key in transforms) {
+      parts.push(transformFunctionFor(key, transforms[key] as Leaf))
+    }
+  }
+  if (parts.length > 0) {
+    out.transform = parts.join(" ")
+  }
+
+  return out as JSX.CSSProperties
+}

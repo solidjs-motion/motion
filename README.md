@@ -40,8 +40,8 @@ bun run format                 # biome format --write .
 To target a single workspace package directly, use Bun's `--filter`:
 
 ```bash
-bun --filter motion test
-bun --filter motion build
+bun --filter solidjs-motion test
+bun --filter solidjs-motion build
 bun --filter basic dev
 ```
 

@@ -79,13 +79,13 @@ bun run format                    # biome format --write .
 bun run clean                     # remove dist/.turbo/node_modules everywhere
 
 # Single-package targeting
-bun --filter motion test          # library tests only
-bun --filter motion test:watch    # library tests in watch mode
-bun --filter motion build         # library build only
+bun --filter solidjs-motion test          # library tests only
+bun --filter solidjs-motion test:watch    # library tests in watch mode
+bun --filter solidjs-motion build         # library build only
 bun --filter basic dev            # example dev server only
 
 # Run a single test file
-bun --filter motion vitest tests/path/to/file.test.ts
+bun --filter solidjs-motion vitest tests/path/to/file.test.ts
 ```
 
 **Verifying a build locally before publishing**: temporarily strip `"development"` and `"solid"` from `examples/basic/vite.config.ts`'s `resolve.conditions`, then run `bun --filter basic dev`. The example will import from `dist/index.js` instead of source. Revert after testing.
