@@ -6,7 +6,9 @@ export { animate, inView, isMotionValue, motionValue, scroll, spring } from "mot
 export { MotionConfig, MotionConfigContext, useMotionConfig } from "./motion-config"
 export { PresenceContext, usePresenceContext } from "./presence-context"
 // Imperative motion primitive (advanced — most users want useMotion instead).
+export { createInView } from "./primitives/createInView"
 export { createMotion } from "./primitives/createMotion"
+export { createScroll } from "./primitives/createScroll"
 // MotionValue family + Solid signal bridge.
 export {
   createMotionSignal,
