@@ -23,6 +23,23 @@ export type {
   Transition,
 }
 
+/**
+ * Callable {@link MotionValue} — has every MotionValue method (`.get`, `.set`,
+ * `.jump`, `.on`, `.getVelocity`, ...) AND can be invoked as a Solid-tracked
+ * Accessor. Returned by `createMotionValue`, `createTransform`,
+ * `createSpring`, `createTime`, `createVelocity`, and `createTemplate`.
+ *
+ * - `mv()` — Solid-tracked read (use in JSX, `createEffect`, `createMemo`)
+ * - `mv.get()` — sync untracked read (motion engine's API; matches motion/react)
+ * - `mv.set(v)` / `mv.jump(v)` — imperative writes (also trigger the Solid
+ *   signal via an internal `mv.on("change", ...)` bridge)
+ *
+ * Passes motion's `isMotionValue` (duck-typed on `.getVelocity`), so the same
+ * value can be used as a target in `useMotion({ animate: { x: mv } })` or as
+ * the target of `animate(mv, 100)`.
+ */
+export type MotionValueAccessor<T> = MotionValue<T> & (() => T)
+
 /** Per-press info delivered to onPressStart / onPress / onPressCancel. */
 export type PressInfo = PressGestureInfo
 

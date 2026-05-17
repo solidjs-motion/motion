@@ -2,7 +2,6 @@ import { animate, isMotionValue, motionValue } from "motion"
 import { createComputed, createRoot, createSignal } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
-  createMotionSignal,
   createMotionValue,
   createMotionValueEvent,
   createSpring,
@@ -87,35 +86,50 @@ describe("toSignal", () => {
   })
 })
 
-describe("createMotionSignal", () => {
-  it("returns [Accessor, MotionValue] mirroring createSignal's shape", () => {
+describe("createMotionValue — callable hybrid", () => {
+  it("is callable as an Accessor AND has MotionValue methods", () => {
     inRoot((dispose) => {
-      const [x, xValue] = createMotionSignal(0)
+      const x = createMotionValue(0)
+      // Callable: invoking returns the current value (and tracks in a reactive scope).
       expect(typeof x).toBe("function")
-      expect(isMotionValue(xValue)).toBe(true)
       expect(x()).toBe(0)
-      expect(xValue.get()).toBe(0)
+      // MotionValue surface: methods bound to the underlying value.
+      expect(typeof x.get).toBe("function")
+      expect(typeof x.set).toBe("function")
+      expect(typeof x.jump).toBe("function")
+      expect(typeof x.on).toBe("function")
+      expect(typeof x.getVelocity).toBe("function")
+      // Duck-type check that motion's engine uses.
+      expect(isMotionValue(x)).toBe(true)
       dispose()
     })
   })
 
-  it("propagates writes to the accessor through the MotionValue", () => {
+  it("propagates set/jump writes to the callable Accessor", () => {
     inRoot((dispose) => {
-      const [x, xValue] = createMotionSignal(0)
+      const x = createMotionValue(0)
       const seen: number[] = []
       createComputed(() => seen.push(x()))
-      xValue.set(10)
-      xValue.set(20)
-      expect(seen).toEqual([0, 10, 20])
+      x.set(10)
+      x.set(20)
+      x.jump(99)
+      expect(seen).toEqual([0, 10, 20, 99])
       dispose()
     })
   })
 
-  it("treats jump() the same as set() for the accessor view", () => {
+  it("get() returns the current value without tracking", () => {
     inRoot((dispose) => {
-      const [x, xValue] = createMotionSignal(5)
-      xValue.jump(99)
-      expect(x()).toBe(99)
+      const x = createMotionValue(5)
+      const seen: number[] = []
+      createComputed(() => {
+        // .get() is the untracked read — wrapping in createComputed should
+        // NOT subscribe to changes.
+        seen.push(x.get())
+      })
+      x.set(10) // does NOT re-run the computation
+      x.set(20)
+      expect(seen).toEqual([5])
       dispose()
     })
   })

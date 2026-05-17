@@ -9,13 +9,13 @@ import { describe, expectTypeOf, it } from "vitest"
 import {
   type AnimateValue,
   type AnimationPlaybackControls,
-  createMotionSignal,
   createMotionValue,
   type DragControls,
   type ElementProps,
   type MotionMergedProps,
   type MotionOptions,
   type MotionValue,
+  type MotionValueAccessor,
   type PanInfo,
   type PressInfo,
   type ResolvedValues,
@@ -53,7 +53,6 @@ describe("useMotion return type", () => {
 
   it("preserves user prop keys, replacing ref/style with merged versions", () => {
     const m = useMotion({ initial: { opacity: 0 } })
-    // biome-ignore lint/correctness/noUnusedVariables: type-level test
     const merged = m({ class: "card", onClick: () => {} })
     // class and onClick pass through; ref + style replaced.
     expectTypeOf(merged).toExtend<{
@@ -235,36 +234,41 @@ describe("Variants", () => {
 })
 
 // ---------------------------------------------------------------------------
-// createMotionSignal tuple shape
+// createMotionValue — callable hybrid (MotionValueAccessor)
 // ---------------------------------------------------------------------------
 
-describe("createMotionSignal", () => {
-  it("returns [Accessor<T>, MotionValue<T>]", () => {
-    const result = createMotionSignal(0)
-    expectTypeOf(result).toEqualTypeOf<[Accessor<number>, MotionValue<number>]>()
-
-    const [reader, value] = result
-    expectTypeOf(reader).toEqualTypeOf<Accessor<number>>()
-    expectTypeOf(value).toEqualTypeOf<MotionValue<number>>()
-    expectTypeOf(reader()).toEqualTypeOf<number>()
+describe("createMotionValue — MotionValueAccessor shape", () => {
+  it("returns a value that's both callable AND a MotionValue", () => {
+    const x = createMotionValue(42)
+    // Callable as a Solid Accessor: invoking returns the underlying value.
+    expectTypeOf(x).toBeCallableWith()
+    expectTypeOf(x()).toEqualTypeOf<number>()
+    // MotionValue surface: .get, .set, .jump, .on, .getVelocity exist.
+    expectTypeOf(x.get()).toEqualTypeOf<number>()
+    expectTypeOf(x.set).toBeFunction()
+    expectTypeOf(x.jump).toBeFunction()
+    expectTypeOf(x.on).toBeFunction()
+    expectTypeOf(x.getVelocity).toBeFunction()
+    // Assignable to both base types.
+    expectTypeOf(x).toExtend<MotionValueAccessor<number>>()
+    expectTypeOf(x).toExtend<MotionValue<number>>()
   })
 
   it("preserves the value type for non-number types", () => {
-    const [reader, value] = createMotionSignal("hello")
-    expectTypeOf(reader).toEqualTypeOf<Accessor<string>>()
-    expectTypeOf(value).toEqualTypeOf<MotionValue<string>>()
+    const s = createMotionValue("hello")
+    expectTypeOf(s).toExtend<MotionValueAccessor<string>>()
+    expectTypeOf(s()).toEqualTypeOf<string>()
+    expectTypeOf(s.get()).toEqualTypeOf<string>()
   })
-})
 
-// ---------------------------------------------------------------------------
-// createMotionValue return type
-// ---------------------------------------------------------------------------
-
-describe("createMotionValue", () => {
-  it("returns the upstream MotionValue<T>", () => {
-    const x = createMotionValue(42)
-    expectTypeOf(x).toEqualTypeOf<MotionValue<number>>()
-    expectTypeOf(x.get()).toEqualTypeOf<number>()
+  it("is acceptable as both a MotionValue input AND an Accessor input", () => {
+    // Used to verify functions that accept `MotionValue | Accessor` also
+    // accept the hybrid. Compile-time only.
+    const x = createMotionValue(0)
+    const asAccessor: Accessor<number> = x
+    const asMotionValue: MotionValue<number> = x
+    expectTypeOf(asAccessor).toExtend<Accessor<number>>()
+    expectTypeOf(asMotionValue).toExtend<MotionValue<number>>()
   })
 })
 

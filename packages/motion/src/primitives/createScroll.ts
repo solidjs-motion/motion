@@ -1,5 +1,6 @@
-import { type MotionValue, scroll as motionScroll } from "motion"
+import { scroll as motionScroll } from "motion"
 import { createComputed, onCleanup } from "solid-js"
+import type { MotionValueAccessor } from "../types"
 import { createMotionValue } from "./motion-value"
 
 // ---------------------------------------------------------------------------
@@ -33,19 +34,22 @@ export type CreateScrollOptions = {
 }
 
 export type CreateScrollResult = {
-  /** Current scroll-x position in px. */
-  scrollX: MotionValue<number>
-  /** Current scroll-y position in px. */
-  scrollY: MotionValue<number>
+  /** Current scroll-x position in px. Callable: `scrollX()` for reactive read. */
+  scrollX: MotionValueAccessor<number>
+  /** Current scroll-y position in px. Callable: `scrollY()` for reactive read. */
+  scrollY: MotionValueAccessor<number>
   /** Normalized scroll-x progress in `[0, 1]` (or `[0, n]` for multi-offset). */
-  scrollXProgress: MotionValue<number>
+  scrollXProgress: MotionValueAccessor<number>
   /** Normalized scroll-y progress in `[0, 1]`. */
-  scrollYProgress: MotionValue<number>
+  scrollYProgress: MotionValueAccessor<number>
 }
 
 /**
- * Bind four {@link MotionValue}s to a scroll source. Mirrors motion/react's
- * `useScroll`; defaults to the window when no container is supplied.
+ * Bind four {@link MotionValueAccessor}s to a scroll source. Mirrors
+ * motion/react's `useScroll`; defaults to the window when no container is
+ * supplied. Each returned value is callable as a Solid Accessor AND has the
+ * full MotionValue surface, so it composes with `useMotion`'s target,
+ * `animate()`, `createTransform`, and direct JSX reactivity.
  *
  * @example
  * const { scrollY, scrollYProgress } = createScroll()

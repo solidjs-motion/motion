@@ -9,9 +9,10 @@ export { PresenceContext, usePresenceContext } from "./presence-context"
 export { createInView } from "./primitives/createInView"
 export { createMotion } from "./primitives/createMotion"
 export { createScroll } from "./primitives/createScroll"
-// MotionValue family + Solid signal bridge.
+// MotionValue family — callable-hybrid primitives. Every value returned here
+// is both a Solid Accessor (call it: `mv()`) AND a motion.MotionValue
+// (methods: `.get`, `.set`, `.jump`, `.on`, etc.).
 export {
-  createMotionSignal,
   createMotionValue,
   createMotionValueEvent,
   createSpring,
@@ -30,7 +31,3 @@ export type * from "./types"
 export { useMotion } from "./use-motion"
 // Variant resolution.
 export { effectiveLabels, resolveVariant, useVariantContext, VariantContext } from "./variants"
-
-// Placeholder kept so examples that already import the package continue to resolve
-// during Phase 1; removed once useMotion lands.
-export const placeholder = true

@@ -196,6 +196,32 @@ describe("createMotion — reactive form", () => {
     expect(animateSpy.mock.calls[1]?.[1]).toMatchObject({ x: 100 })
     unmount()
   })
+
+  it("re-fires animate when a MotionValue in target changes (createMotion subscribes via mv.on)", async () => {
+    // Use the real motion package's motionValue here — vi.mock only replaces
+    // animate, not motionValue.
+    const { motionValue } = await import("motion")
+    const size = motionValue(80)
+    const { unmount } = render(() => {
+      const m = useMotion({ animate: { width: size } })
+      return <div {...m()} />
+    })
+    // Initial call uses the MV's current snapshot.
+    expect(animateSpy).toHaveBeenCalledTimes(1)
+    expect(animateSpy.mock.calls[0]?.[1]).toMatchObject({ width: 80 })
+
+    // Imperative MV update should trigger a per-property re-animate. The
+    // createEffect doesn't track motion values; the mv.on("change", ...)
+    // subscription set up by createMotion is what re-fires animate here.
+    size.set(120)
+    expect(animateSpy).toHaveBeenCalledTimes(2)
+    expect(animateSpy.mock.calls[1]?.[1]).toMatchObject({ width: 120 })
+
+    size.set(160)
+    expect(animateSpy).toHaveBeenCalledTimes(3)
+    expect(animateSpy.mock.calls[2]?.[1]).toMatchObject({ width: 160 })
+    unmount()
+  })
 })
 
 // ---------------------------------------------------------------------------

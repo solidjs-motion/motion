@@ -1,4 +1,4 @@
-import { type AnimationPlaybackControls, animate, isMotionValue } from "motion"
+import { type AnimationPlaybackControls, animate, isMotionValue, type MotionValue } from "motion"
 import { createEffect, onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
@@ -79,34 +79,46 @@ export function mergeTransition(
 }
 
 /**
- * Inside the createEffect, Solid Accessors in target values are snapshotted
- * (re-reading on next effect run). MotionValues pass through verbatim — motion's
- * engine subscribes to them directly.
+ * Result of splitting a target into engine-ready plain values vs. MotionValue
+ * refs that need to drive per-change re-animation. Solid Accessors are
+ * snapshotted by calling them (the surrounding createEffect tracks them);
+ * MotionValues take the dedicated subscription path.
  *
  * The `transition` key is stripped — it's animation config consumed by
  * mergeTransition, not a style property.
  */
-function snapshotAccessorsInTarget(target: Target): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+type SplitTarget = {
+  /** Plain values ready to pass into motion's `animate(el, target, opts)`. */
+  plain: Record<string, unknown>
+  /** MotionValue refs found at the top level; each gets a per-change handler. */
+  motionValues: Array<{ key: string; mv: MotionValue<unknown> }>
+}
+
+function splitTarget(target: Target): SplitTarget {
+  const plain: Record<string, unknown> = {}
+  const motionValues: Array<{ key: string; mv: MotionValue<unknown> }> = []
   for (const key in target) {
     if (key === "transition") continue
     const value = (target as Record<string, unknown>)[key]
     if (value === undefined || value === null) continue
     if (isMotionValue(value)) {
-      out[key] = value
+      // Capture for change-subscription; seed the initial animate call with
+      // the current MotionValue snapshot so the first frame is correct.
+      motionValues.push({ key, mv: value as MotionValue<unknown> })
+      plain[key] = (value as MotionValue<unknown>).get()
     } else if (typeof value === "function") {
-      out[key] = (value as () => unknown)()
+      plain[key] = (value as () => unknown)()
     } else if (Array.isArray(value)) {
-      out[key] = value.map((v) => {
-        if (isMotionValue(v)) return v
+      plain[key] = value.map((v) => {
+        if (isMotionValue(v)) return (v as MotionValue<unknown>).get()
         if (typeof v === "function") return (v as () => unknown)()
         return v
       })
     } else {
-      out[key] = value
+      plain[key] = value
     }
   }
-  return out
+  return { plain, motionValues }
 }
 
 /**
@@ -237,11 +249,10 @@ export function createMotion(
     // Cancel any in-flight animation before kicking off the next one.
     prevControls?.stop()
 
-    const renderTarget = snapshotAccessorsInTarget(target)
+    const { plain, motionValues } = splitTarget(target)
     const effectiveAnimateValue = animateValue ?? parentVariantCtx.animate?.()
 
-    // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
-    prevControls = animate(el, renderTarget as any, {
+    const buildAnimateOptions = () => ({
       ...transition,
       onPlay: opts.onAnimationStart ? () => untrack(() => opts.onAnimationStart?.()) : undefined,
       onComplete: opts.onAnimationComplete
@@ -257,6 +268,23 @@ export function createMotion(
         ? (latest: ResolvedValues) => untrack(() => opts.onUpdate?.(latest))
         : undefined,
     })
+
+    // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
+    prevControls = animate(el, plain as any, buildAnimateOptions())
+
+    // For every MotionValue captured at the top level of `target`, subscribe
+    // to changes and re-tween that single property to the new value. This is
+    // what makes `animate: { width: mv }` follow imperative `mv.set(...)`
+    // updates — the surrounding createEffect only tracks Solid signals, so MV
+    // changes need their own bridge.
+    for (const { key, mv } of motionValues) {
+      onCleanup(
+        mv.on("change", (v) => {
+          // biome-ignore lint/suspicious/noExplicitAny: same reason as above
+          animate(el, { [key]: v } as any, buildAnimateOptions())
+        }),
+      )
+    }
 
     // Mark first-run state has been consumed (used in tests).
     void wasFirstRun

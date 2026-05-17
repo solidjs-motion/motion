@@ -9,6 +9,7 @@ import {
   springValue,
 } from "motion"
 import { type Accessor, createComputed, createSignal, onCleanup } from "solid-js"
+import type { MotionValueAccessor } from "../types"
 
 // ---------------------------------------------------------------------------
 // MotionValue events the engine can fire — kept narrow so TypeScript autocomplete
@@ -18,65 +19,105 @@ import { type Accessor, createComputed, createSignal, onCleanup } from "solid-js
 type MotionValueEvent = "change" | "animationStart" | "animationComplete" | "animationCancel"
 
 // ---------------------------------------------------------------------------
-// createMotionValue — bare upstream MotionValue, auto-disposed on cleanup.
+// makeAccessor — wrap a raw motion.MotionValue as a callable hybrid. Invoking
+// `mv()` returns a Solid-tracked read; every MotionValue method (.get, .set,
+// .jump, .on, .getVelocity, etc.) forwards to the underlying value. Both
+// `isMotionValue(mv)` (duck-typed on .getVelocity) and `typeof mv === "function"`
+// are true; createMotion's splitTarget checks isMotionValue first, so the engine
+// treats hybrids as MotionValues.
 // ---------------------------------------------------------------------------
 
-/**
- * Create a {@link MotionValue} bound to the current reactive scope. The value
- * is destroyed automatically via `onCleanup` when the owner is disposed.
- *
- * @example
- * const x = createMotionValue(0)
- * animate(x, 100, { duration: 0.5 })
- * x.get() // current value
- * x.set(50)
- */
-export function createMotionValue<T>(initial: T): MotionValue<T> {
-  const mv = motionValue(initial)
-  onCleanup(() => mv.destroy())
-  return mv
+function makeAccessor<T>(mv: MotionValue<T>): MotionValueAccessor<T> {
+  // Solid signal bridge — kept in sync via `mv.on("change", ...)`.
+  const [signal, setSignal] = createSignal<T>(mv.get())
+  // Wrap in updater form so Setter accepts T regardless of its shape (T could
+  // include Function for callback-like motion values).
+  onCleanup(mv.on("change", (v) => setSignal(() => v)))
+
+  // The callable: invoking returns the tracked signal value.
+  const fn = (() => signal()) as MotionValueAccessor<T>
+
+  return new Proxy(fn, {
+    get(target, prop, receiver) {
+      // Function intrinsics (call/apply/bind) stay on the function itself so
+      // `fn.call(...)` etc. behave normally.
+      if (prop === "call" || prop === "apply" || prop === "bind") {
+        return Reflect.get(target, prop, receiver)
+      }
+      // If we ever attach our own properties to `fn`, prefer those.
+      if (Reflect.has(target, prop)) return Reflect.get(target, prop, receiver)
+      // Forward to the MotionValue. Methods are bound so `this` is the MV.
+      const value = Reflect.get(mv as object, prop, mv)
+      return typeof value === "function" ? value.bind(mv) : value
+    },
+    has(target, prop) {
+      return Reflect.has(target, prop) || prop in (mv as object)
+    },
+  })
 }
 
 // ---------------------------------------------------------------------------
-// toSignal — adapt a MotionValue to a Solid Accessor via from(). The cast
-// drops `| undefined` because MotionValue<T> always has a value.
+// createMotionValue — callable-hybrid MotionValue auto-disposed on cleanup.
 // ---------------------------------------------------------------------------
 
 /**
- * Bridge a {@link MotionValue} to a Solid {@link Accessor}. The signal seeds
- * with the motion value's current value and updates on every `change` event.
+ * Create a {@link MotionValueAccessor} bound to the current reactive scope.
+ *
+ * The returned value has two access patterns:
+ *
+ * - `mv()` — invoke as a Solid Accessor. Tracks in JSX, `createEffect`,
+ *   `createMemo`, etc.
+ * - `mv.get()` / `mv.set(v)` / `mv.jump(v)` / `mv.on(...)` — the full upstream
+ *   {@link MotionValue} surface. Matches motion/react idioms.
+ *
+ * The same value can be passed as a target in
+ * `useMotion({ animate: { x: mv } })` (motion engine sees `.getVelocity` via
+ * the Proxy and treats it as a motion value) or directly as the target of
+ * `animate(mv, 100)`.
+ *
+ * Auto-destroyed via `onCleanup` when the owner is disposed.
  *
  * @example
  * const x = createMotionValue(0)
- * const xSignal = toSignal(x)
- * createComputed(() => console.log(xSignal()))
+ * x.set(100)
+ * animate(x, 200, { duration: 0.5 })
+ * <p>{x()}</p>           // reactive read in JSX
+ */
+export function createMotionValue<T>(initial: T): MotionValueAccessor<T> {
+  const mv = motionValue(initial)
+  const accessor = makeAccessor(mv)
+  // Route the cleanup call through the accessor so test-time spies on
+  // `accessor.destroy` are invoked (the Proxy forwards to the underlying mv).
+  onCleanup(() => accessor.destroy())
+  return accessor
+}
+
+// ---------------------------------------------------------------------------
+// toSignal — adapt any raw MotionValue (e.g. from motion's `motionValue()`
+// factory) to a Solid Accessor. Useful when interoperating with motion APIs
+// that return raw MotionValues outside our hybrid factories.
+// ---------------------------------------------------------------------------
+
+/**
+ * Bridge a raw {@link MotionValue} (from motion's `motionValue()` factory or
+ * any other motion API that doesn't return our hybrid) to a Solid
+ * {@link Accessor}. Seeds with the current value and updates on every
+ * `change` event.
+ *
+ * **You usually don't need this.** Values returned by `createMotionValue`,
+ * `createTransform`, `createSpring`, `createTime`, `createVelocity`, and
+ * `createTemplate` are already callable — you can do `mv()` directly. Reach
+ * for `toSignal` only when you receive a raw MotionValue from an external API.
+ *
+ * @example
+ * import { motionValue } from "motion"
+ * const rawMv = motionValue(0)
+ * const xSignal = toSignal(rawMv)
  */
 export function toSignal<T>(mv: MotionValue<T>): Accessor<T> {
   const [value, setValue] = createSignal<T>(mv.get())
-  // Wrap in updater form so Solid's Setter accepts T regardless of its shape.
   onCleanup(mv.on("change", (v) => setValue(() => v)))
   return value
-}
-
-// ---------------------------------------------------------------------------
-// createMotionSignal — convenience pair: an Accessor for reactive reads and a
-// MotionValue for imperative writes / motion-engine consumption.
-// ---------------------------------------------------------------------------
-
-/**
- * Returns `[Accessor<T>, MotionValue<T>]` — a Solid-reactive read alongside the
- * MotionValue for `.set()`, `.jump()`, `.get()`, and motion engine integration.
- * Mirrors the shape of {@link createSignal}.
- *
- * @example
- * const [x, xValue] = createMotionSignal(0)
- * xValue.set(100)
- * x()           // reactive read
- * animate(xValue, 200)
- */
-export function createMotionSignal<T>(initial: T): [Accessor<T>, MotionValue<T>] {
-  const mv = createMotionValue(initial)
-  return [toSignal(mv), mv]
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +128,7 @@ export function createMotionSignal<T>(initial: T): [Accessor<T>, MotionValue<T>]
  * Subscribe to a {@link MotionValue} event with automatic cleanup. Convenience
  * wrapper around `mv.on(event, cb)` for parity with motion/react's
  * `useMotionValueEvent`. For per-change reactivity, prefer
- * `createComputed(() => fn(mv()))` after wrapping with {@link toSignal}.
+ * `createComputed(() => fn(mv()))` since hybrids are directly callable.
  *
  * @example
  * const x = createMotionValue(0)
@@ -102,7 +143,7 @@ export function createMotionValueEvent<T>(
 }
 
 // ---------------------------------------------------------------------------
-// readInputValue — shared helper that handles MotionValue and Accessor inputs.
+// Shared helpers
 // ---------------------------------------------------------------------------
 
 function readInputValue<T>(input: MotionValue<T> | Accessor<T>): T {
@@ -123,40 +164,42 @@ function subscribeInput<T>(
 
 // ---------------------------------------------------------------------------
 // createTransform — interpolate one MotionValue/Accessor through a range.
-// Returns a MotionValue so it composes with animate() and style bindings.
+// Returns a MotionValueAccessor so callable behavior is preserved end-to-end.
 // ---------------------------------------------------------------------------
 
 type TransformOptions = NonNullable<Parameters<typeof motionTransform>[2]>
 
 /**
- * Create a {@link MotionValue} that maps an input through a range/output pair.
- * Mirrors motion/react's `useTransform`. The input can be a MotionValue or any
- * Solid Accessor; the output composes with `animate()` and motion-driven
- * `style` bindings.
+ * Create a {@link MotionValueAccessor} that maps an input through a range/
+ * output pair. Mirrors motion/react's `useTransform`. The input can be a
+ * MotionValue, our hybrid, or any Solid Accessor; the output composes with
+ * `animate()`, `useMotion`'s targets, and JSX reactivity.
  *
  * @example
- * const scrollY = createMotionValue(0)
+ * const { scrollY } = createScroll()
  * const opacity = createTransform(scrollY, [0, 200], [1, 0])
+ * <div style={{ opacity: opacity() }}>...</div>
  */
 export function createTransform<I extends number, O>(
   input: MotionValue<I> | Accessor<I>,
   inputRange: I[],
   outputRange: O[],
   options?: TransformOptions,
-): MotionValue<O> {
+): MotionValueAccessor<O> {
   const mapper = motionTransform(inputRange, outputRange, options)
-  const mv = createMotionValue(mapper(readInputValue(input)))
+  const mv = motionValue(mapper(readInputValue(input)))
+  onCleanup(() => mv.destroy())
   subscribeInput(input, (v) => mv.set(mapper(v)))
-  return mv
+  return makeAccessor(mv)
 }
 
 // ---------------------------------------------------------------------------
-// createSpring — produce a MotionValue that spring-tracks an input source.
+// createSpring — produce a MotionValueAccessor that spring-tracks an input.
 // ---------------------------------------------------------------------------
 
 /**
- * Spring-smoothed mirror of a numeric input. Returns a {@link MotionValue} that
- * tracks the source with physics-based easing.
+ * Spring-smoothed mirror of a numeric input. Returns a
+ * {@link MotionValueAccessor} that tracks the source with physics-based easing.
  *
  * @example
  * const x = createMotionValue(0)
@@ -165,84 +208,85 @@ export function createTransform<I extends number, O>(
 export function createSpring(
   source: MotionValue<number> | Accessor<number>,
   options?: SpringOptions,
-): MotionValue<number> {
+): MotionValueAccessor<number> {
   if (isMotionValue(source)) {
     const mv = springValue(source as MotionValue<number>, options)
     onCleanup(() => mv.destroy())
-    return mv
+    return makeAccessor(mv)
   }
   // Accessor input — bridge through an intermediate MotionValue that mirrors it.
-  const bridge = createMotionValue((source as Accessor<number>)())
+  const bridge = motionValue((source as Accessor<number>)())
+  onCleanup(() => bridge.destroy())
   createComputed(() => bridge.set((source as Accessor<number>)()))
   const mv = springValue(bridge, options)
   onCleanup(() => mv.destroy())
-  return mv
+  return makeAccessor(mv)
 }
 
 // ---------------------------------------------------------------------------
-// createTime — a MotionValue that updates each frame with elapsed milliseconds.
+// createTime — MotionValueAccessor that advances each frame with elapsed ms.
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a {@link MotionValue} that advances every animation frame, holding
- * the milliseconds elapsed since this primitive was called. Useful as a driver
- * for time-based animations and {@link createTransform}-derived motion values.
+ * {@link MotionValueAccessor} that advances every animation frame, holding
+ * the milliseconds elapsed since this primitive was called. Driver for
+ * time-based animations and {@link createTransform}-derived values.
  *
  * @example
  * const t = createTime()
  * const wobble = createTransform(t, [0, 1000, 2000], [0, 10, 0])
  */
-export function createTime(): MotionValue<number> {
-  const mv = createMotionValue(0)
+export function createTime(): MotionValueAccessor<number> {
+  const mv = motionValue(0)
+  onCleanup(() => mv.destroy())
   const startedAt = performance.now()
   const tick = () => mv.set(performance.now() - startedAt)
-  // keepAlive=true → schedule indefinitely until cancelFrame
   frame.update(tick, true)
   onCleanup(() => cancelFrame(tick))
-  return mv
+  return makeAccessor(mv)
 }
 
 // ---------------------------------------------------------------------------
-// createVelocity — a MotionValue mirroring an input's instantaneous velocity.
+// createVelocity — MotionValueAccessor mirroring an input's instantaneous velocity.
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a {@link MotionValue} that reports the velocity of a source motion
- * value. Updated whenever the source changes.
+ * {@link MotionValueAccessor} reporting the velocity of a source motion value.
+ * Updated whenever the source changes.
  *
  * @example
  * const x = createMotionValue(0)
  * const xVelocity = createVelocity(x)
  */
-export function createVelocity(source: MotionValue<number>): MotionValue<number> {
-  const mv = createMotionValue(source.getVelocity())
+export function createVelocity(source: MotionValue<number>): MotionValueAccessor<number> {
+  const mv = motionValue(source.getVelocity())
+  onCleanup(() => mv.destroy())
   onCleanup(source.on("change", () => mv.set(source.getVelocity())))
-  return mv
+  return makeAccessor(mv)
 }
 
 // ---------------------------------------------------------------------------
-// createTemplate — tagged template producing a MotionValue<string> that
-// follows interpolated MotionValues / Accessors.
+// createTemplate — tagged template producing a MotionValueAccessor<string>.
 // ---------------------------------------------------------------------------
 
 // biome-ignore lint/suspicious/noExplicitAny: MotionValue is invariant in T; `any` lets the template accept MotionValues of any value type.
 type TemplateInput = MotionValue<any> | Accessor<unknown> | string | number
 
 /**
- * Tagged template producing a {@link MotionValue}\<string\>. Interpolated
- * {@link MotionValue}s and Solid Accessors recompute the output string on
- * change; primitives and static strings are baked in once.
+ * Tagged template producing a {@link MotionValueAccessor}\<string\>.
+ * Interpolated {@link MotionValue}s, hybrids, and Solid Accessors recompute
+ * the output string on change; primitives and static strings are baked in.
  *
  * @example
  * const x = createMotionValue(0)
  * const y = createMotionValue(0)
- * const transformStr = createTemplate`translate(${x}px, ${y}px) scale(1.1)`
- * <motion.div style={{ transform: transformStr }} />
+ * const transform = createTemplate`translate(${x}px, ${y}px) scale(1.1)`
+ * <div style={{ transform: transform() }} />
  */
 export function createTemplate(
   strings: TemplateStringsArray,
   ...values: TemplateInput[]
-): MotionValue<string> {
+): MotionValueAccessor<string> {
   const compute = (): string => {
     let out = ""
     for (let i = 0; i < strings.length; i++) {
@@ -261,16 +305,15 @@ export function createTemplate(
     return out
   }
 
-  const mv = createMotionValue(compute())
+  const mv = motionValue(compute())
+  onCleanup(() => mv.destroy())
 
-  // Subscribe to every MotionValue input — change fires recompute.
   for (const v of values) {
     if (isMotionValue(v)) {
       onCleanup((v as MotionValue<unknown>).on("change", () => mv.set(compute())))
     }
   }
 
-  // Accessors are tracked by a single effect (Solid handles the multi-track).
   const hasAccessor = values.some((v) => typeof v === "function" && !isMotionValue(v))
   if (hasAccessor) {
     createComputed(() => {
@@ -281,5 +324,5 @@ export function createTemplate(
     })
   }
 
-  return mv
+  return makeAccessor(mv)
 }
