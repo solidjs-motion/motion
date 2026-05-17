@@ -100,8 +100,8 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   )
 
   // Attach Provider to the callable function. Object.assign merges types
-  // cleanly for callable-with-properties.
-  return Object.assign(getProps, { Provider }) as UseMotionResult
+  // cleanly for callable-with-properties — TS infers the intersection.
+  return Object.assign(getProps, { Provider })
 }
 
 // ---------------------------------------------------------------------------
