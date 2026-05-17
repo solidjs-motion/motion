@@ -54,8 +54,7 @@ bun --filter basic dev
 ## Status
 
 Phase 0 (workspace scaffold). The library is a placeholder; Phase 1 lands the real
-`useMotion` primitive. See [`solid-motion-port-plan.md`](./solid-motion-port-plan.md) for
-the full roadmap.
+`useMotion` primitive.
 
 ## License
 
