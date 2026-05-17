@@ -1,12 +1,12 @@
-import { createSignal } from "solid-js";
-import { render } from "solid-js/web";
+import { createSignal } from "solid-js"
+import { render } from "solid-js/web"
 import {
   createMotionValue,
   createReducedMotion,
   createScroll,
   createTransform,
   useMotion,
-} from "solidjs-motion";
+} from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
 // FadeIn — the canonical mount-fade-and-slide-up. Demonstrates static useMotion,
@@ -18,7 +18,7 @@ function FadeIn() {
     initial: { opacity: 0, y: 20 },
     animate: { opacity: 1, y: 0 },
     transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] },
-  });
+  })
   return (
     <h1
       {...motion({
@@ -31,7 +31,7 @@ function FadeIn() {
     >
       solidjs-motion is alive
     </h1>
-  );
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ function FadeIn() {
 // ---------------------------------------------------------------------------
 
 function Toggle() {
-  const [open, setOpen] = createSignal(false);
+  const [open, setOpen] = createSignal(false)
   const motion = useMotion(() => ({
     initial: "closed",
     variants: {
@@ -55,7 +55,7 @@ function Toggle() {
     },
     animate: open() ? "open" : "closed",
     transition: { type: "spring", stiffness: 200, damping: 20 },
-  }));
+  }))
   return (
     <section style={{ "margin-bottom": "2rem" }}>
       <button
@@ -84,7 +84,7 @@ function Toggle() {
         })}
       />
     </section>
-  );
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -99,10 +99,10 @@ function SignalDrivenSize() {
   // Solid-tracked read; call `size.set(...)` / `size.get()` for the
   // imperative MotionValue API. Same value drives the JSX text AND
   // useMotion's per-property animation target.
-  const size = createMotionValue(80);
+  const size = createMotionValue(80)
   const motion = useMotion({
     animate: { width: size, height: size },
-  });
+  })
   return (
     <section style={{ "margin-bottom": "2rem" }}>
       <button
@@ -129,7 +129,7 @@ function SignalDrivenSize() {
         })}
       />
     </section>
-  );
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -139,9 +139,9 @@ function SignalDrivenSize() {
 // ---------------------------------------------------------------------------
 
 function ScrollLinked() {
-  const { scrollYProgress } = createScroll();
-  const widthPct = createTransform(scrollYProgress, [0, 1], ["0%", "100%"]);
-  const motion = useMotion({ animate: { width: widthPct } });
+  const { scrollYProgress } = createScroll()
+  const widthPct = createTransform(scrollYProgress, [0, 1], ["0%", "100%"])
+  const motion = useMotion({ animate: { width: widthPct } })
   return (
     <div
       style={{
@@ -160,7 +160,7 @@ function ScrollLinked() {
         })}
       />
     </div>
-  );
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -168,12 +168,12 @@ function ScrollLinked() {
 // ---------------------------------------------------------------------------
 
 function ReducedMotionStatus() {
-  const reduced = createReducedMotion();
+  const reduced = createReducedMotion()
   return (
     <p style={{ color: "#666", "font-size": "0.875rem", "margin-top": "2rem" }}>
       prefers-reduced-motion: <strong>{String(reduced())}</strong>
     </p>
-  );
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -192,8 +192,8 @@ function App() {
       <ScrollLinked />
       <FadeIn />
       <p style={{ color: "#444", "margin-bottom": "2rem" }}>
-        Phase 1 demos: mount-fade, signal-driven spring, MotionValue-driven
-        size, scroll-linked progress bar (top), reduced-motion accessor.
+        Phase 1 demos: mount-fade, signal-driven spring, MotionValue-driven size, scroll-linked
+        progress bar (top), reduced-motion accessor.
       </p>
       <Toggle />
       <SignalDrivenSize />
@@ -201,9 +201,9 @@ function App() {
       {/* Spacer to make the page scrollable for the progress bar */}
       <div style={{ height: "120vh" }} />
     </main>
-  );
+  )
 }
 
-const root = document.getElementById("root");
-if (!root) throw new Error("missing #root");
-render(() => <App />, root);
+const root = document.getElementById("root")
+if (!root) throw new Error("missing #root")
+render(() => <App />, root)
