@@ -79,14 +79,22 @@ bun run format                    # biome format --write .
 bun run clean                     # remove dist/.turbo/node_modules everywhere
 
 # Single-package targeting
-bun --filter solidjs-motion test          # library tests only
+bun --filter solidjs-motion test          # library tests only (browser + SSR)
+bun --filter solidjs-motion test:ssr      # library SSR tests only
 bun --filter solidjs-motion test:watch    # library tests in watch mode
 bun --filter solidjs-motion build         # library build only
-bun --filter basic dev            # example dev server only
+bun --filter basic dev                    # example dev server only
 
 # Run a single test file
 bun --filter solidjs-motion vitest tests/path/to/file.test.ts
 ```
+
+**⚠️ `bun test` vs `bun run test`.** They route to different test runners.
+
+- `bun run test` (always use this) → calls the `package.json` test script → invokes Vitest with our `vite.config.ts` + `vitest.ssr.config.ts`. All 140+ tests pass.
+- `bun test` (avoid) → invokes Bun's *built-in* test runner. Our test files use Vitest APIs (`vi.mock`, `vi.fn`, `vi.spyOn`), jsdom env, `@solidjs/testing-library`, and the `vite-plugin-solid` JSX transform — none of which Bun's native runner understands.
+
+The `bunfig.toml` in the repo root re-routes Bun's test root to a placeholder directory, so `bun test` exits cleanly with "0 test files matching" instead of falsely reporting failures from running our files through the wrong runner.
 
 **Verifying a build locally before publishing**: temporarily strip `"development"` and `"solid"` from `examples/basic/vite.config.ts`'s `resolve.conditions`, then run `bun --filter basic dev`. The example will import from `dist/index.js` instead of source. Revert after testing.
 

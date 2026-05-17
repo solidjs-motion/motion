@@ -166,14 +166,28 @@ export function createMotion(
   const initialOpts = untrack(getOpts)
 
   // ---------- Initial style: applied in this ref-callback pre-paint ----------
+  // Priority chain (matches use-motion's computeInitialStyle):
+  //   own.initial > parent.initial > own.animate > parent.animate
   if (!config?.initialAppliedBySSR && initialOpts.initial !== false) {
-    const initialAnimateValue = initialOpts.initial ?? initialOpts.animate
-    const initialTarget = resolveTarget(
-      initialAnimateValue,
-      initialOpts.variants,
-      asVariantLabels(parentVariantCtx.animate?.()),
-      initialOpts.custom ?? parentVariantCtx.custom?.(),
-    )
+    const inheritedInitial = parentVariantCtx.initial?.()
+    const inheritedAnimate = parentVariantCtx.animate?.()
+    const effective =
+      initialOpts.initial !== undefined
+        ? initialOpts.initial
+        : inheritedInitial !== undefined
+          ? inheritedInitial
+          : initialOpts.animate !== undefined
+            ? initialOpts.animate
+            : inheritedAnimate
+    const initialTarget =
+      effective !== undefined
+        ? resolveTarget(
+            effective,
+            initialOpts.variants,
+            undefined, // priority chain already consumed parent's labels
+            initialOpts.custom ?? parentVariantCtx.custom?.(),
+          )
+        : null
     if (initialTarget) {
       applyStaticStyle(el, initialTarget)
     }

@@ -30,6 +30,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setup.ts"],
     passWithNoTests: true,
+    // tests/ssr/ runs under vitest.ssr.config.ts (node env + server condition).
+    exclude: ["**/node_modules/**", "**/dist/**", "tests/ssr/**"],
     deps: { optimizer: { web: { include: ["solid-js"] } } },
   },
   resolve: {

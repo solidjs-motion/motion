@@ -1,0 +1,16 @@
+# Bun config.
+#
+# The `[test]` block intentionally points Bun's *built-in* test runner at an
+# empty directory. Every test file in this repo is authored for Vitest (jsdom
+# env, vi.mock, @solidjs/testing-library, etc.) and runs via:
+#
+#   bun run test            # the package.json script — calls vitest twice
+#                           # (once browser, once SSR-config)
+#   bun run test:ssr        # SSR config only
+#   bun --filter solidjs-motion test
+#
+# Without this, `bun test` would auto-discover *.test.tsx files and try to run
+# them with the built-in runner, which fails on Vitest APIs and React-JSX
+# defaults. See CLAUDE.md "Common commands" for the canonical entrypoints.
+[test]
+root = "./.bun-test-no-op"

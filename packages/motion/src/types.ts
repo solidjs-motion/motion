@@ -249,6 +249,8 @@ export type UseMotionResult = MotionGetProps & {
 /** Propagates the variant state from a parent motion element to descendants. */
 export type VariantContextValue = {
   variants?: Accessor<Variants | undefined>
+  /** Propagated only when the parent's `initial` is a variant name (not `false` or an explicit Target). */
+  initial?: Accessor<VariantLabels | undefined>
   animate?: Accessor<VariantLabels | undefined>
   hover?: Accessor<VariantLabels | undefined>
   press?: Accessor<VariantLabels | undefined>

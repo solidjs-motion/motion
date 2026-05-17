@@ -10,7 +10,6 @@ import type {
   Transition,
   UseMotionResult,
   VariantContextValue,
-  VariantLabels,
   Variants,
 } from "./types"
 import { useVariantContext, VariantContext } from "./variants"
@@ -85,6 +84,12 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // options (variant name changes propagate to descendants).
   const myVariantCtx: VariantContextValue = {
     variants: () => getOpts().variants,
+    // `initial: false` is a parent-only opt-out — don't propagate it. Only
+    // variant names (string / string[]) propagate to descendants.
+    initial: () => {
+      const v = getOpts().initial
+      return v === false ? undefined : asVariantLabels(v)
+    },
     animate: () => asVariantLabels(getOpts().animate),
     hover: () => asVariantLabels(getOpts().hover),
     press: () => asVariantLabels(getOpts().press),
@@ -114,13 +119,27 @@ function computeInitialStyle(
 ): JSX.CSSProperties | null {
   if (opts.initial === false) return null
 
-  const initialAnimateValue = opts.initial ?? opts.animate
-  if (initialAnimateValue === undefined) return null
+  // Priority chain for the initial-state target:
+  //   own.initial > parent.initial > own.animate > parent.animate
+  // Each level is consulted only if the previous is undefined. This matches
+  // motion/react's variant-context behavior — children without their own
+  // initial/animate props inherit from the ancestor motion element.
+  const inheritedInitial = parentVariantCtx.initial?.()
+  const inheritedAnimate = parentVariantCtx.animate?.()
+  const effective =
+    opts.initial !== undefined
+      ? opts.initial
+      : inheritedInitial !== undefined
+        ? inheritedInitial
+        : opts.animate !== undefined
+          ? opts.animate
+          : inheritedAnimate
+  if (effective === undefined) return null
 
   const target = resolveTarget(
-    initialAnimateValue,
+    effective,
     opts.variants as Variants | undefined,
-    parentVariantCtx.animate?.() as VariantLabels | undefined,
+    undefined, // priority chain already consumed parent's labels
     opts.custom ?? parentVariantCtx.custom?.(),
   )
   return target ? targetToStyle(target as Target) : null
