@@ -33,7 +33,8 @@ export function createInView(
 
   // createComputed runs both first iteration and updates synchronously, so the
   // IntersectionObserver attaches as soon as the ref accessor resolves to an
-  // element (no microtask deferral) and re-attaches synchronously on changes.
+  // element and re-attaches synchronously on changes. onCleanup is scoped to
+  // each iteration — fires on re-run AND on owner disposal.
   createComputed(() => {
     const el = ref()
     if (!el) return

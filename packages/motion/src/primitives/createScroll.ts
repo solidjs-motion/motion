@@ -73,24 +73,24 @@ export function createScroll(options?: CreateScrollOptions): CreateScrollResult 
   }
 
   // Reactive setup: accessors inside the computation are tracked, so re-init
-  // happens when container/target refs change. createComputed runs both its
-  // first iteration and subsequent updates synchronously, so the motion
-  // subscription is registered before the createRoot/render call returns.
-  // The previous subscription is torn down before each new one is created.
-  let cleanupCurrent: (() => void) | null = null
+  // happens when container/target refs change. createComputed runs both first
+  // iteration and updates synchronously, so the motion subscription registers
+  // before createRoot/render returns.
+  //
+  // Each iteration's onCleanup is scoped to that iteration — Solid fires it
+  // when the computation re-runs (tearing down the previous subscription) and
+  // again when the outer owner disposes (tearing down the final one).
   createComputed(() => {
-    cleanupCurrent?.()
     const container = options?.container?.() ?? undefined
     const target = options?.target?.() ?? undefined
-    cleanupCurrent = motionScroll(handler, {
+    const cleanup = motionScroll(handler, {
       container: container as HTMLElement | undefined,
       target: target as HTMLElement | undefined,
       axis: options?.axis,
       offset: options?.offset,
     } as Parameters<typeof motionScroll>[1])
+    onCleanup(cleanup)
   })
-
-  onCleanup(() => cleanupCurrent?.())
 
   return { scrollX, scrollY, scrollXProgress, scrollYProgress }
 }
