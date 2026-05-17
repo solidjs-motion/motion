@@ -11,3 +11,7 @@ coverage
 # Local-only planning notes (not part of the public repo)
 solid-motion-port-plan.md
 solid-motion-phase-notes.md
+
+# Nix/direnv local cache
+.direnv/
+.envrc
