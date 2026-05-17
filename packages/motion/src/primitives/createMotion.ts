@@ -1,13 +1,11 @@
-import { type AnimationPlaybackControls, animate, isMotionValue, type MotionValue } from "motion"
-import { createEffect, onCleanup, untrack } from "solid-js"
+import { onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
-import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
+import { createReducedMotion } from "../reduced-motion"
 import { targetToStyle } from "../style"
 import type {
   AnimateValue,
   MotionOptions,
-  ResolvedValues,
   Target,
   Transition,
   VariantContextValue,
@@ -15,6 +13,7 @@ import type {
   Variants,
 } from "../types"
 import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
+import { createGestureStateMachine } from "./gesture-state"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,49 +78,6 @@ export function mergeTransition(
 }
 
 /**
- * Result of splitting a target into engine-ready plain values vs. MotionValue
- * refs that need to drive per-change re-animation. Solid Accessors are
- * snapshotted by calling them (the surrounding createEffect tracks them);
- * MotionValues take the dedicated subscription path.
- *
- * The `transition` key is stripped — it's animation config consumed by
- * mergeTransition, not a style property.
- */
-type SplitTarget = {
-  /** Plain values ready to pass into motion's `animate(el, target, opts)`. */
-  plain: Record<string, unknown>
-  /** MotionValue refs found at the top level; each gets a per-change handler. */
-  motionValues: Array<{ key: string; mv: MotionValue<unknown> }>
-}
-
-function splitTarget(target: Target): SplitTarget {
-  const plain: Record<string, unknown> = {}
-  const motionValues: Array<{ key: string; mv: MotionValue<unknown> }> = []
-  for (const key in target) {
-    if (key === "transition") continue
-    const value = (target as Record<string, unknown>)[key]
-    if (value === undefined || value === null) continue
-    if (isMotionValue(value)) {
-      // Capture for change-subscription; seed the initial animate call with
-      // the current MotionValue snapshot so the first frame is correct.
-      motionValues.push({ key, mv: value as MotionValue<unknown> })
-      plain[key] = (value as MotionValue<unknown>).get()
-    } else if (typeof value === "function") {
-      plain[key] = (value as () => unknown)()
-    } else if (Array.isArray(value)) {
-      plain[key] = value.map((v) => {
-        if (isMotionValue(v)) return (v as MotionValue<unknown>).get()
-        if (typeof v === "function") return (v as () => unknown)()
-        return v
-      })
-    } else {
-      plain[key] = value
-    }
-  }
-  return { plain, motionValues }
-}
-
-/**
  * Apply a static target to an element's inline style before paint. Used on
  * mount when no SSR style was emitted. The ref callback fires before the
  * browser yields, so this avoids a frame of flicker.
@@ -177,10 +133,17 @@ export function createMotion(
   // the createEffect below, so we don't subscribe in the body of this fn.
   const initialOpts = untrack(getOpts)
 
-  // ---------- Initial style: applied in this ref-callback pre-paint ----------
+  // ---------- Resolve the initial target (used for BOTH static-style write AND
+  //            the state machine's removed-key fallback chain, Q7) ----------
   // Priority chain (matches use-motion's computeInitialStyle):
   //   own.initial > parent.initial > own.animate > parent.animate
-  if (!config?.initialAppliedBySSR && initialOpts.initial !== false) {
+  //
+  // We resolve this regardless of `initialAppliedBySSR` because the state
+  // machine needs it even when SSR already wrote the inline style — the user's
+  // explicit `initial` value is part of their intent and should anchor the
+  // removed-key fallback regardless of who painted it.
+  let capturedInitialTarget: Target | null = null
+  if (initialOpts.initial !== false) {
     const inheritedInitial = parentVariantCtx.initial?.()
     const inheritedAnimate = parentVariantCtx.animate?.()
     const effective =
@@ -191,18 +154,19 @@ export function createMotion(
           : initialOpts.animate !== undefined
             ? initialOpts.animate
             : inheritedAnimate
-    const initialTarget =
-      effective !== undefined
-        ? resolveTarget(
-            effective,
-            initialOpts.variants,
-            undefined, // priority chain already consumed parent's labels
-            initialOpts.custom ?? parentVariantCtx.custom?.(),
-          )
-        : null
-    if (initialTarget) {
-      applyStaticStyle(el, initialTarget)
+    if (effective !== undefined) {
+      capturedInitialTarget = resolveTarget(
+        effective,
+        initialOpts.variants,
+        undefined, // priority chain already consumed parent's labels
+        initialOpts.custom ?? parentVariantCtx.custom?.(),
+      )
     }
+  }
+
+  // ---------- Apply the initial style pre-paint, unless SSR already did it ----------
+  if (!config?.initialAppliedBySSR && capturedInitialTarget) {
+    applyStaticStyle(el, capturedInitialTarget)
   }
 
   // ---------- Presence registration ----------
@@ -211,92 +175,23 @@ export function createMotion(
     onCleanup(() => presence.unregister(el))
   }
 
-  // ---------- Animate effect ----------
-  let prevControls: AnimationPlaybackControls | null = null
-  let isFirstRun = true
-
-  createEffect(() => {
-    const opts = getOpts()
-    const animateValue = opts.animate
-    if (animateValue === undefined && parentVariantCtx.animate?.() === undefined) return
-
-    // First-run guard for initial:false (Q6 sub-3). The very first effect
-    // tick after construction is skipped when initial:false; subsequent
-    // signal-driven runs animate normally.
-    if (isFirstRun && opts.initial === false) {
-      isFirstRun = false
-      return
-    }
-    const wasFirstRun = isFirstRun
-    isFirstRun = false
-
-    const target = resolveTarget(
-      animateValue,
-      opts.variants,
-      asVariantLabels(parentVariantCtx.animate?.()),
-      opts.custom ?? parentVariantCtx.custom?.(),
-    )
-    if (!target) return
-
-    const reduced = shouldReduceMotion(motionConfig.reducedMotion(), systemReducedMotion())
-    const transition = mergeTransition(
-      motionConfig.transition(),
-      opts.transition,
-      target.transition,
-      reduced,
-    )
-
-    // Cancel any in-flight animation before kicking off the next one.
-    prevControls?.stop()
-
-    const { plain, motionValues } = splitTarget(target)
-    const effectiveAnimateValue = animateValue ?? parentVariantCtx.animate?.()
-
-    const buildAnimateOptions = () => ({
-      ...transition,
-      onPlay: opts.onAnimationStart ? () => untrack(() => opts.onAnimationStart?.()) : undefined,
-      onComplete: opts.onAnimationComplete
-        ? () =>
-            untrack(() => {
-              if (effectiveAnimateValue !== undefined) {
-                opts.onAnimationComplete?.(effectiveAnimateValue)
-              }
-            })
-        : undefined,
-      onStop: opts.onAnimationCancel ? () => untrack(() => opts.onAnimationCancel?.()) : undefined,
-      onUpdate: opts.onUpdate
-        ? (latest: ResolvedValues) => untrack(() => opts.onUpdate?.(latest))
-        : undefined,
-    })
-
-    // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
-    prevControls = animate(el, plain as any, buildAnimateOptions())
-
-    // For every MotionValue captured at the top level of `target`, subscribe
-    // to changes and re-tween that single property to the new value. This is
-    // what makes `animate: { width: mv }` follow imperative `mv.set(...)`
-    // updates — the surrounding createEffect only tracks Solid signals, so MV
-    // changes need their own bridge.
-    for (const { key, mv } of motionValues) {
-      onCleanup(
-        mv.on("change", (v) => {
-          // biome-ignore lint/suspicious/noExplicitAny: same reason as above
-          animate(el, { [key]: v } as any, buildAnimateOptions())
-        }),
-      )
-    }
-
-    // Mark first-run state has been consumed (used in tests).
-    void wasFirstRun
-  })
-
-  onCleanup(() => {
-    prevControls?.stop()
+  // ---------- Gesture state machine (Q3b, ADR 0002) ----------
+  // Owns target resolution, priority winners, and the diff-and-animate loop.
+  // Returns `setActive` which Phase 2 gesture wiring (Commit 2+) uses to
+  // toggle the active flags as gesture events fire.
+  // biome-ignore lint/correctness/noUnusedVariables: setActive used by gesture wiring in subsequent commits.
+  const { setActive } = createGestureStateMachine({
+    el,
+    getOpts,
+    parentVariantCtx,
+    motionConfig,
+    systemReducedMotion,
+    initialTarget: capturedInitialTarget,
   })
 
   // Phase 2 hooks:
-  //   createGestures(el, getOpts)
-  //   createDrag(el, getOpts)
+  //   createGestures(el, getOpts, setActive)
+  //   createDrag(el, getOpts, setActive)
 }
 
 // Re-export for useMotion to consume the same helpers without circular deps.

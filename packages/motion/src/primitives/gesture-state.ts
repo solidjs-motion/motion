@@ -1,0 +1,414 @@
+import { type AnimationPlaybackControls, animate, isMotionValue, type MotionValue } from "motion"
+import { type Accessor, createEffect, createMemo, onCleanup, untrack } from "solid-js"
+import { createStore } from "solid-js/store"
+import { getMotionDefault } from "../default-values"
+import { shouldReduceMotion } from "../reduced-motion"
+import type {
+  AnimateValue,
+  MotionConfigContextValue,
+  MotionOptions,
+  ResolvedValues,
+  Target,
+  Transition,
+  VariantContextValue,
+} from "../types"
+import { asVariantLabels, mergeTransition, resolveTarget } from "./createMotion"
+
+// ---------------------------------------------------------------------------
+// Solid-native fine-grained gesture state machine (ADR 0002).
+//
+// Implements three of the four jobs motion's createAnimationState handles:
+//   1. Priority resolution — high-to-low among active states
+//   2. Per-key handoff — when a higher-priority state deactivates, lower-priority
+//      states (or fallbacks) take over each key it was animating
+//   3. Variant resolution — reuses Phase 1's resolveTarget for label→Target lookup
+//
+// Job 4 (parent-child variant inheritance via variantChildren) is handled
+// reactively through Phase 1's VariantContext + Q4's active-gated label slots,
+// NOT via this state machine — keeping the inheritance tree Solid-owned.
+// ---------------------------------------------------------------------------
+
+/** State names, ordered low → high priority. Matches motion-dom's variantPriorityOrder. */
+const STATE_NAMES = [
+  "animate",
+  "whileInView",
+  "whileHover",
+  "whilePress",
+  "whileFocus",
+  "whileDrag",
+  "exit",
+] as const
+
+export type GestureStateName = (typeof STATE_NAMES)[number]
+
+/** High → low priority for the winners walk. Materialized once. */
+const PRIORITY_HIGH_TO_LOW: readonly GestureStateName[] = [...STATE_NAMES].reverse()
+
+/** A key's resolved value plus the (optional) per-target transition that produced it. */
+type WinnerEntry = {
+  value: unknown
+  transition: Transition | undefined
+  /** Which state contributed this key — used by the diff effect's onAnimationComplete bookkeeping. */
+  stateName: GestureStateName
+}
+
+export type SetActive = (state: GestureStateName, isActive: boolean) => void
+
+export type CreateGestureStateMachineDeps = {
+  el: HTMLElement
+  getOpts: () => MotionOptions
+  parentVariantCtx: VariantContextValue
+  motionConfig: MotionConfigContextValue
+  systemReducedMotion: Accessor<boolean>
+  /** Captured at construction. Used as the first stop in the removed-key fallback chain (Q7). */
+  initialTarget: Target | null
+}
+
+export type GestureStateMachine = {
+  /** Imperatively toggle a gesture state. Triggers re-resolution + animate(). */
+  setActive: SetActive
+}
+
+/**
+ * Construct the per-element gesture state machine.
+ *
+ * Wired primitives:
+ * - `createStore` for the seven active flags — Solid tracks per-path, so
+ *   toggling `whileHover` doesn't dirty memos reading `whilePress`.
+ * - `createMemo` for `stateTargets` — cached, re-runs only when opts/parent
+ *   context change.
+ * - `createMemo` for `winners` — same caching, re-runs when `active` flags or
+ *   `stateTargets` change.
+ * - `createEffect` for the diff-and-animate loop — fires on `winners` change;
+ *   compares against `lastApplied` to compute changed/removed keys.
+ * - `onCleanup` inside the effect for per-iteration MV subscriptions — scoped
+ *   to each effect run (fires on re-run AND owner disposal). Same iteration-
+ *   scoped cleanup pattern Phase 1 established.
+ */
+export function createGestureStateMachine(
+  deps: CreateGestureStateMachineDeps,
+): GestureStateMachine {
+  const { el, getOpts, parentVariantCtx, motionConfig, systemReducedMotion, initialTarget } = deps
+
+  // ---------- Active flags ----------
+  // `animate` defaults true: it's the baseline state (mirrors motion's
+  // createTypeState(true) for animate). All other states start inactive.
+  const [active, setActiveStore] = createStore<Record<GestureStateName, boolean>>({
+    animate: true,
+    whileInView: false,
+    whileHover: false,
+    whilePress: false,
+    whileFocus: false,
+    whileDrag: false,
+    exit: false,
+  })
+
+  // ---------- Per-state resolved targets ----------
+  // createMemo (not createComputed): reads only run when opts/parent change,
+  // and the value is cached for downstream consumers. The animate call is
+  // frame-async tolerant — the side-effect createEffect below handles timing.
+  const stateTargets = createMemo<Record<GestureStateName, Target | null>>(() => {
+    const opts = getOpts()
+    const variants = opts.variants
+    const custom = opts.custom ?? parentVariantCtx.custom?.()
+    return {
+      animate: resolveTarget(
+        opts.animate,
+        variants,
+        asVariantLabels(parentVariantCtx.animate?.()),
+        custom,
+      ),
+      whileInView: resolveTarget(
+        opts.inView,
+        variants,
+        asVariantLabels(parentVariantCtx.inView?.()),
+        custom,
+      ),
+      whileHover: resolveTarget(
+        opts.hover,
+        variants,
+        asVariantLabels(parentVariantCtx.hover?.()),
+        custom,
+      ),
+      whilePress: resolveTarget(
+        opts.press,
+        variants,
+        asVariantLabels(parentVariantCtx.press?.()),
+        custom,
+      ),
+      whileFocus: resolveTarget(
+        opts.focus,
+        variants,
+        asVariantLabels(parentVariantCtx.focus?.()),
+        custom,
+      ),
+      // whileDrag's target resolution lands with the drag commit (Q5/C-lean).
+      // Until then this slot stays null — `winners` skips null entries naturally.
+      whileDrag: null,
+      exit: resolveTarget(opts.exit, variants, asVariantLabels(parentVariantCtx.exit?.()), custom),
+    }
+  })
+
+  // ---------- Per-key winners (priority resolution + per-key claim) ----------
+  // Walks PRIORITY_HIGH_TO_LOW. The first active state that defines a key
+  // claims it; lower-priority states are skipped for that key. This is the
+  // structural difference vs Phase 1's whole-target-wins effect.
+  const winners = createMemo<Record<string, WinnerEntry>>(() => {
+    const targets = stateTargets()
+    const out: Record<string, WinnerEntry> = {}
+    for (const stateName of PRIORITY_HIGH_TO_LOW) {
+      if (!active[stateName]) continue
+      const target = targets[stateName]
+      if (!target) continue
+      for (const key in target) {
+        // `transition` is animation config, not a style key — never a winner.
+        if (key === "transition") continue
+        // Higher-priority state already won this key.
+        if (key in out) continue
+        out[key] = {
+          value: (target as Record<string, unknown>)[key],
+          transition: target.transition,
+          stateName,
+        }
+      }
+    }
+    return out
+  })
+
+  // ---------- Diff-and-animate effect ----------
+  // The single site that calls motion's animate(). Diffs winners against
+  // lastApplied to compute changed keys (a) and removed keys (b). Removed keys
+  // walk Q7's fallback chain: initial → motion default → null.
+  let prevControls: AnimationPlaybackControls | null = null
+  let lastApplied: Record<string, unknown> = {}
+  let isFirstRun = true
+
+  createEffect(() => {
+    const next = winners()
+    const opts = getOpts()
+
+    // Q6 sub-3: `initial: false` skips the very first animate. Subsequent
+    // signal-driven runs animate normally. We seed lastApplied so the next
+    // iteration's diff treats the current winners as already-applied.
+    if (isFirstRun && untrack(() => opts.initial) === false) {
+      isFirstRun = false
+      lastApplied = snapshotValues(next)
+      return
+    }
+    isFirstRun = false
+
+    // Phase 1 invariant preserved: if no animate target AND no parent animate
+    // context AND no other active state contributes any key, do nothing. This
+    // matches the early-return guard from Phase 1's createMotion effect.
+    if (
+      Object.keys(next).length === 0 &&
+      opts.animate === undefined &&
+      parentVariantCtx.animate?.() === undefined
+    ) {
+      return
+    }
+
+    // Compute changes: (a) keys with new/changed values, (b) removed keys.
+    const changes: Record<string, unknown> = {}
+    let mergedPerTargetTransition: Transition | undefined
+
+    for (const key in next) {
+      const entry = next[key]
+      // `noUncheckedIndexedAccess` widens record reads to `T | undefined`,
+      // but `for (key in obj)` only yields present keys — entry is real.
+      if (!entry) continue
+      if (lastApplied[key] !== entry.value) {
+        changes[key] = entry.value
+        // First non-undefined per-target transition wins. (If multiple winners
+        // contribute conflicting transitions, the highest-priority one already
+        // took precedence in the priority walk.)
+        mergedPerTargetTransition ??= entry.transition
+      }
+    }
+    for (const key in lastApplied) {
+      if (key in next) continue
+      // Removed-key fallback: own initial → motion default → null.
+      const initialValue =
+        initialTarget && key in (initialTarget as Record<string, unknown>)
+          ? (initialTarget as Record<string, unknown>)[key]
+          : undefined
+      changes[key] = initialValue !== undefined ? initialValue : getMotionDefault(key)
+    }
+
+    if (Object.keys(changes).length === 0) return
+
+    // Update lastApplied to the new winner snapshot (NOT including removed-key
+    // fallback values — those become "applied" only after the animation lands,
+    // but tracking that requires onUpdate plumbing. For diff purposes, we
+    // consider them applied immediately; if the user re-activates a state that
+    // brings the key back, the diff sees `lastApplied[key] = fallback` vs
+    // `next[key] = newValue` and animates correctly).
+    lastApplied = { ...lastApplied, ...changes }
+    // Then drop keys that don't appear in `next` from lastApplied so future
+    // re-removals don't compare against stale fallback values.
+    for (const key in lastApplied) {
+      if (!(key in next) && !(key in changes)) delete lastApplied[key]
+    }
+
+    // Transition merge: MotionConfig default < user's transition < per-target
+    // transition < reduced-motion override (Phase 1's mergeTransition).
+    const reduced = shouldReduceMotion(motionConfig.reducedMotion(), systemReducedMotion())
+    const transition = mergeTransition(
+      motionConfig.transition(),
+      opts.transition,
+      mergedPerTargetTransition,
+      reduced,
+    )
+
+    // ---------- splitTarget: separate MotionValue refs from plain values ----------
+    // Preserved from Phase 1: motion's vanilla animate(el, target) doesn't
+    // subscribe to MotionValue refs in target values. We split, seed the
+    // animate call with snapshots, then subscribe each MV separately.
+    const { plain, motionValues } = splitTarget(changes)
+
+    // Cancel any in-flight animation before kicking off the next one.
+    prevControls?.stop()
+
+    // Track which animate value triggered this — used by onAnimationComplete.
+    // If `next` has any key from `animate` state, the effective value is opts.animate.
+    // If only gesture states are active, the highest-priority active state's value drives.
+    const driverState = highestActiveDriverState(next)
+    const effectiveAnimateValue = animateValueForState(driverState, opts, parentVariantCtx)
+
+    const buildAnimateOptions = () => ({
+      ...transition,
+      onPlay: opts.onAnimationStart ? () => untrack(() => opts.onAnimationStart?.()) : undefined,
+      onComplete: opts.onAnimationComplete
+        ? () =>
+            untrack(() => {
+              if (effectiveAnimateValue != null) {
+                opts.onAnimationComplete?.(effectiveAnimateValue)
+              }
+            })
+        : undefined,
+      onStop: opts.onAnimationCancel ? () => untrack(() => opts.onAnimationCancel?.()) : undefined,
+      onUpdate: opts.onUpdate
+        ? (latest: ResolvedValues) => untrack(() => opts.onUpdate?.(latest))
+        : undefined,
+    })
+
+    // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
+    prevControls = animate(el, plain as any, buildAnimateOptions())
+
+    // Per-MotionValue change subscription. iteration-scoped onCleanup fires
+    // on next effect run AND owner disposal (Phase 1 pattern).
+    for (const { key, mv } of motionValues) {
+      onCleanup(
+        mv.on("change", (v) => {
+          // biome-ignore lint/suspicious/noExplicitAny: same as above
+          animate(el, { [key]: v } as any, buildAnimateOptions())
+        }),
+      )
+    }
+  })
+
+  // Owner-disposal cleanup: stop any in-flight animation.
+  onCleanup(() => prevControls?.stop())
+
+  function setActive(state: GestureStateName, isActive: boolean): void {
+    setActiveStore(state, isActive)
+  }
+
+  return { setActive }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Convert a winners map into the flat value snapshot used by `lastApplied`. */
+function snapshotValues(winners: Record<string, WinnerEntry>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key in winners) {
+    const entry = winners[key]
+    if (entry) out[key] = entry.value
+  }
+  return out
+}
+
+/**
+ * Phase 1's splitTarget: separate MotionValue refs in a target from plain
+ * values. Motion-vanilla `animate(el, target)` doesn't subscribe to MV refs
+ * passed in target — we handle that bridge ourselves.
+ */
+function splitTarget(target: Record<string, unknown>): {
+  plain: Record<string, unknown>
+  motionValues: Array<{ key: string; mv: MotionValue<unknown> }>
+} {
+  const plain: Record<string, unknown> = {}
+  const motionValues: Array<{ key: string; mv: MotionValue<unknown> }> = []
+  for (const key in target) {
+    const value = target[key]
+    if (value === undefined || value === null) {
+      plain[key] = value
+      continue
+    }
+    if (isMotionValue(value)) {
+      motionValues.push({ key, mv: value as MotionValue<unknown> })
+      plain[key] = (value as MotionValue<unknown>).get()
+    } else if (typeof value === "function") {
+      plain[key] = (value as () => unknown)()
+    } else if (Array.isArray(value)) {
+      plain[key] = value.map((v) => {
+        if (isMotionValue(v)) return (v as MotionValue<unknown>).get()
+        if (typeof v === "function") return (v as () => unknown)()
+        return v
+      })
+    } else {
+      plain[key] = value
+    }
+  }
+  return { plain, motionValues }
+}
+
+/**
+ * Return the highest-priority active state that contributed any key in the
+ * current winners map. Used to identify the "driver" for onAnimationComplete
+ * (which receives the AnimateValue that drove the animation).
+ *
+ * `animate` is the fallback when no gesture is contributing — matches Phase 1's
+ * effectiveAnimateValue semantic.
+ */
+function highestActiveDriverState(winners: Record<string, WinnerEntry>): GestureStateName {
+  // Walk PRIORITY_HIGH_TO_LOW and find the first state name that appears.
+  for (const stateName of PRIORITY_HIGH_TO_LOW) {
+    for (const key in winners) {
+      const entry = winners[key]
+      if (entry && entry.stateName === stateName) return stateName
+    }
+  }
+  return "animate"
+}
+
+/**
+ * Look up the AnimateValue (Target | string | string[]) that corresponds to a
+ * given state — for onAnimationComplete's argument.
+ */
+function animateValueForState(
+  state: GestureStateName,
+  opts: MotionOptions,
+  parentVariantCtx: VariantContextValue,
+): AnimateValue | undefined {
+  switch (state) {
+    case "animate":
+      return opts.animate ?? parentVariantCtx.animate?.()
+    case "whileHover":
+      return opts.hover ?? parentVariantCtx.hover?.()
+    case "whilePress":
+      return opts.press ?? parentVariantCtx.press?.()
+    case "whileFocus":
+      return opts.focus ?? parentVariantCtx.focus?.()
+    case "whileInView":
+      return opts.inView ?? parentVariantCtx.inView?.()
+    case "exit":
+      return opts.exit ?? parentVariantCtx.exit?.()
+    case "whileDrag":
+      // Drag commit will plumb opts.whileDrag — for now undefined.
+      return undefined
+  }
+}
