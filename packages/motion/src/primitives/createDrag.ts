@@ -1,7 +1,14 @@
 import { type AnimationPlaybackControls, animate } from "motion"
-import { HTMLVisualElement, type MotionValue, visualElementStore } from "motion-dom"
-import { onCleanup } from "solid-js"
-import type { DragConstraints, MotionOptions, PanInfo } from "../types"
+import { HTMLVisualElement, type MotionValue, time, visualElementStore } from "motion-dom"
+import { createEffect, onCleanup } from "solid-js"
+import type {
+  DragConstraints,
+  DragControls,
+  DragControlsStartOptions,
+  MotionOptions,
+  PanInfo,
+} from "../types"
+import { DRAG_CONTROLS_REGISTER } from "./createDragControls"
 import { createPan } from "./createPan"
 import type { SetActive } from "./gesture-state"
 
@@ -441,6 +448,131 @@ export function createDrag(
       onPanEnd: handlePanEnd,
     }),
   )
+
+  // ---------- External drag (Q9 — createDragControls integration) ----------
+  // When the user wires `dragControls: someControls` into MotionOptions, an
+  // external pointerdown elsewhere in the UI (a "drag handle" button) can
+  // start a drag on this element via `controls.start(event)`. Bypasses the
+  // threshold gate — the user explicitly said "drag," no hysteresis needed.
+  //
+  // We synthesize our own pan session here rather than re-using createPan's
+  // because:
+  //   1. The originating element is the drag handle, not `el`. createPan's
+  //      pointerdown listener is bound to `el` and wouldn't see the event.
+  //   2. We need to skip threshold; createPan's threshold gate is private.
+  //
+  // The session-tracking logic (pointerId match, sample buffer for velocity,
+  // window listener attach/cleanup) is duplicated from createPan. A future
+  // refactor could extract a shared "pan session runner" if a third caller
+  // emerges; for v0.1 the duplication is contained.
+  function startExternalDrag(event: PointerEvent, options: DragControlsStartOptions): void {
+    if (!isDragEnabled()) return
+
+    // Snap-to-cursor (Q9b): move the element so its center sits under the
+    // pointer BEFORE the drag-start info captures dragStartX/Y. Otherwise
+    // the offset chain would start from the original position and the
+    // visible jump-to-cursor would be lost on first pointermove.
+    if (options.snapToCursor) {
+      const ve = ensureVisualElement(el)
+      const snapXMV = ve.getValue("x", 0) as MotionValue<number>
+      const snapYMV = ve.getValue("y", 0) as MotionValue<number>
+      const elRect = el.getBoundingClientRect()
+      const centerX = elRect.left + elRect.width / 2
+      const centerY = elRect.top + elRect.height / 2
+      const axis = getOpts().drag
+      if (axis !== "y") snapXMV.set(snapXMV.get() + (event.clientX - centerX))
+      if (axis !== "x") snapYMV.set(snapYMV.get() + (event.clientY - centerY))
+    }
+
+    // Fire handlePanStart with a synthesized initial PanInfo. This
+    // initializes xMV/yMV/dragStartX/Y, resolves bounds, sets body styles,
+    // captures pointer, activates whileDrag, and fires onDragStart.
+    const initialInfo: PanInfo = {
+      point: { x: event.clientX, y: event.clientY },
+      delta: { x: 0, y: 0 },
+      offset: { x: 0, y: 0 },
+      velocity: { x: 0, y: 0 },
+    }
+    handlePanStart(event, initialInfo)
+
+    // Track the session locally — these would normally live inside
+    // createPan's closure. Velocity samples use motion-dom's `time.now()`
+    // to stay frame-synchronous with the rest of the pipeline.
+    const sessionStartPoint = { x: event.clientX, y: event.clientY }
+    let sessionLastPoint = { ...sessionStartPoint }
+    const sessionPointerId = event.pointerId
+    const sessionSamples: Array<{ t: number; point: { x: number; y: number } }> = [
+      { t: time.now(), point: { ...sessionStartPoint } },
+    ]
+
+    function computeSessionVelocity(): { x: number; y: number } {
+      if (sessionSamples.length < 2) return { x: 0, y: 0 }
+      const first = sessionSamples[0]
+      const last = sessionSamples[sessionSamples.length - 1]
+      if (!first || !last) return { x: 0, y: 0 }
+      const dt = last.t - first.t
+      if (dt <= 0) return { x: 0, y: 0 }
+      return {
+        x: ((last.point.x - first.point.x) / dt) * 1000,
+        y: ((last.point.y - first.point.y) / dt) * 1000,
+      }
+    }
+
+    function buildSessionInfo(e: PointerEvent): PanInfo {
+      const point = { x: e.clientX, y: e.clientY }
+      return {
+        point,
+        delta: { x: point.x - sessionLastPoint.x, y: point.y - sessionLastPoint.y },
+        offset: { x: point.x - sessionStartPoint.x, y: point.y - sessionStartPoint.y },
+        velocity: computeSessionVelocity(),
+      }
+    }
+
+    function onSessionMove(e: PointerEvent): void {
+      if (e.pointerId !== sessionPointerId) return
+      const point = { x: e.clientX, y: e.clientY }
+      const now = time.now()
+      sessionSamples.push({ t: now, point })
+      const cutoff = now - 200
+      while (sessionSamples.length > 1 && (sessionSamples[0]?.t ?? 0) < cutoff) {
+        sessionSamples.shift()
+      }
+      const info = buildSessionInfo(e)
+      sessionLastPoint = point
+      handlePan(e, info)
+    }
+
+    function onSessionEnd(e: PointerEvent): void {
+      if (e.pointerId !== sessionPointerId) return
+      const info = buildSessionInfo(e)
+      handlePanEnd(e, info)
+      window.removeEventListener("pointermove", onSessionMove)
+      window.removeEventListener("pointerup", onSessionEnd)
+      window.removeEventListener("pointercancel", onSessionEnd)
+    }
+
+    window.addEventListener("pointermove", onSessionMove)
+    window.addEventListener("pointerup", onSessionEnd)
+    window.addEventListener("pointercancel", onSessionEnd)
+  }
+
+  // Register with the controls instance whenever opts.dragControls changes.
+  // createEffect re-runs on swap; the previous registration unmounts via
+  // the symbol-keyed unregister function. Q9d — last mount wins; the
+  // unregister only nulls out if we're still the active handler.
+  createEffect(() => {
+    const controls = getOpts().dragControls as DragControls | undefined
+    if (!controls) return
+    const internal = controls as DragControls & {
+      [DRAG_CONTROLS_REGISTER]?: (
+        handler: (event: PointerEvent, options: DragControlsStartOptions) => void,
+      ) => () => void
+    }
+    const register = internal[DRAG_CONTROLS_REGISTER]
+    if (!register) return
+    const unregister = register(startExternalDrag)
+    onCleanup(unregister)
+  })
 
   // Owner-disposal cleanup. Three layers:
   // 1. Stop any settling momentum animations (they hold MV references that

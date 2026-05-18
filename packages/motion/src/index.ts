@@ -6,6 +6,7 @@ export { animate, inView, isMotionValue, motionValue, scroll, spring } from "mot
 export { MotionConfig, MotionConfigContext, useMotionConfig } from "./motion-config"
 export { PresenceContext, usePresenceContext } from "./presence-context"
 // Imperative motion primitive (advanced — most users want useMotion instead).
+export { createDragControls } from "./primitives/createDragControls"
 export { createInView } from "./primitives/createInView"
 export { createMotion } from "./primitives/createMotion"
 export { type CreatePanOptions, createPan, type PanState } from "./primitives/createPan"

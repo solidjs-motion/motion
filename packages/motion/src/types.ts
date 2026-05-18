@@ -45,13 +45,43 @@ export type MotionValueAccessor<T> = MotionValue<T> & (() => T)
 export type PressInfo = PressGestureInfo
 
 /**
- * Imperative drag controls returned from createDragControls(). Defined locally
- * because motion's public `motion` export doesn't surface its DragControls
- * class type. Phase 2 instantiates and exports the concrete implementation.
+ * Options for {@link DragControls.start}.
+ *
+ * Only `snapToCursor` is exposed for v0.1 (Q9b — anything else can be added
+ * non-breakingly later).
+ */
+export type DragControlsStartOptions = {
+  /**
+   * When true, center the dragged element under the pointer on drag-start.
+   * Useful for "drag handle hand-off" patterns where the handle and the
+   * dragged element are distinct — the user clicks the handle and the
+   * dragged element jumps to follow the pointer.
+   */
+  snapToCursor?: boolean
+}
+
+/**
+ * Imperative drag controls returned from `createDragControls()`. Defined
+ * locally because motion's public `motion` export doesn't surface its
+ * DragControls class type.
+ *
+ * Usage (Q9): one controls instance binds to one motion element via
+ * `dragControls: controls` in MotionOptions. A separate UI element (e.g., a
+ * drag-handle button) captures the pointer event and forwards it via
+ * `controls.start(event)`, decoupling the drag-listener element from the
+ * element that actually moves.
  */
 export type DragControls = {
-  /** Begin a drag from an externally-captured pointer event. */
-  start: (event: PointerEvent) => void
+  /**
+   * Begin a drag from an externally-captured pointer event. Bypasses
+   * createDrag's threshold gate — drag starts immediately at the event's
+   * coordinates (the user explicitly invoked, so no "did they really
+   * mean it" hysteresis is needed).
+   *
+   * No-op when no motion element is currently registered with this
+   * controls instance.
+   */
+  start: (event: PointerEvent, options?: DragControlsStartOptions) => void
 }
 
 // ---------------------------------------------------------------------------
