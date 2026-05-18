@@ -3,9 +3,8 @@
 An animation library for [SolidJS](https://solidjs.com) — a port of `motion/react` patterns
 built on the framework-agnostic [`motion`](https://motion.dev) package.
 
-> **Status: pre-alpha (0.0.x).** Phases 1 and 2 of the
-> [implementation plan](../../solid-motion-port-plan.md) are landed. Public
-> API is stabilizing toward v0.1. Live demos:
+> **Status: pre-alpha (0.0.x).** Phases 1 and 2 are landed; public API is
+> stabilizing toward v0.1. Live demos:
 > [solidjs-motion.github.io/motion](https://solidjs-motion.github.io/motion/).
 
 ## Install

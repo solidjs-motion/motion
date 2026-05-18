@@ -55,8 +55,7 @@ bun --filter basic dev
 
 ## Status
 
-Pre-alpha (0.0.x). Phases 1 and 2 of the
-[implementation plan](./solid-motion-port-plan.md) are landed:
+Pre-alpha (0.0.x). Phases 1 and 2 are landed:
 
 - **Shipped:** `useMotion`, the full MotionValue family (`createMotionValue`,
   `createTransform`, `createSpring`, `createTime`, `createVelocity`, `createTemplate`),
