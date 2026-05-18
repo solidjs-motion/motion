@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 // Hoisted state — vi.mock factories below close over these refs, and tests
 // inspect them to verify drag wrote to the right MVs.
-const { animateSpy, captured, resetCaptured } = vi.hoisted(() => {
+const { animateSpy, captured, resetCaptured, timeMock } = vi.hoisted(() => {
   type Write = { name: string; value: number }
   const captured: { writes: Write[]; veCreated: number } = { writes: [], veCreated: 0 }
 
@@ -26,7 +26,12 @@ const { animateSpy, captured, resetCaptured } = vi.hoisted(() => {
     captured.veCreated = 0
   }
 
-  return { animateSpy, captured, resetCaptured }
+  // motion-dom's `time` drives createPan's velocity sliding window. Tests
+  // that need a deterministic non-zero velocity advance this between pointer
+  // events so dt > 0 in the velocity calc.
+  const timeMock = { now: vi.fn(() => 0) }
+
+  return { animateSpy, captured, resetCaptured, timeMock }
 })
 
 vi.mock("motion", async () => {
@@ -87,6 +92,8 @@ vi.mock("motion-dom", async () => {
     ...actual,
     HTMLVisualElement: MockHTMLVisualElement,
     visualElementStore: new WeakMap(),
+    // Pass our mock through so tests can drive createPan's velocity window.
+    time: timeMock,
   }
 })
 
@@ -95,6 +102,8 @@ const { useMotion } = await import("../../src/use-motion")
 beforeEach(() => {
   animateSpy.mockClear()
   resetCaptured()
+  timeMock.now.mockReset()
+  timeMock.now.mockReturnValue(0)
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: false,
     media: query,
@@ -110,6 +119,31 @@ beforeEach(() => {
 afterEach(() => {
   delete (window as Partial<Window>).matchMedia
 })
+
+/** Advance the mocked clock so createPan's velocity calc sees a non-zero dt. */
+function setNow(ms: number) {
+  timeMock.now.mockReturnValue(ms)
+}
+
+/** Drive a drag sequence with manual time advances between moves so the
+ * velocity sliding window produces a deterministic non-zero release velocity.
+ * Each tuple is { x, y, t } — t advances the time mock before the pointermove
+ * fires, controlling the sample's timestamp. */
+function dragWithTime(el: HTMLElement, moves: Array<{ x: number; y: number; t: number }>): void {
+  setNow(0)
+  fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+  // Threshold-cross at t=1, (5, 0).
+  setNow(1)
+  fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+  let last = { x: 5, y: 0, t: 1 }
+  for (const m of moves) {
+    setNow(m.t)
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: m.x, clientY: m.y, isPrimary: true })
+    last = m
+  }
+  setNow(last.t)
+  fireEvent.pointerUp(window, { pointerId: 1, clientX: last.x, clientY: last.y, isPrimary: true })
+}
 
 /** Convenience: drive the pointer through a pan session.
  *
@@ -204,6 +238,49 @@ describe("drag — axis lock", () => {
     expect(captured.writes.some((w) => w.name === "x")).toBe(false)
     unmount()
   })
+
+  it("drag='x' skips release-momentum on the locked y axis (regression)", () => {
+    // Without the fix, `animate()` is still called on yMV on pan-end even
+    // though drag never wrote to it — pointer y velocity feeds an inertia
+    // decay that drifts the locked axis after release. Animate is mocked
+    // here so we assert on the call shape rather than the resulting value.
+    const { container, unmount } = render(() => {
+      const m = useMotion({ drag: "x", dragMomentum: true })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Drag with non-zero vertical pointer movement — both axes have velocity,
+    // but `drag: "x"` means only x should ever receive an animate call.
+    drag(el, { x: 60, y: 60 }, { x: 120, y: 100 })
+
+    // Filter to animate calls produced by the momentum/release path. The
+    // mock's args are (value, target, transition). MV refs are the mock
+    // objects from makeMockMV; we identify them by `_name`.
+    const momentumYCalls = animateSpy.mock.calls.filter((call) => {
+      const value = call[0] as { _name?: string } | undefined
+      return value?._name === "y"
+    })
+    expect(momentumYCalls).toHaveLength(0)
+    unmount()
+  })
+
+  it("drag='y' skips release-momentum on the locked x axis (regression)", () => {
+    const { container, unmount } = render(() => {
+      const m = useMotion({ drag: "y", dragMomentum: true })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    drag(el, { x: 60, y: 60 }, { x: 100, y: 120 })
+
+    const momentumXCalls = animateSpy.mock.calls.filter((call) => {
+      const value = call[0] as { _name?: string } | undefined
+      return value?._name === "x"
+    })
+    expect(momentumXCalls).toHaveLength(0)
+    unmount()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -249,6 +326,236 @@ describe("drag — constraints", () => {
     const yWrites = captured.writes.filter((w) => w.name === "y")
     // No top bound → y can go to -50.
     expect(yWrites.at(-1)?.value).toBe(-50)
+    unmount()
+  })
+
+  it("zeros release-velocity into bounds when elastic=0 and value is at the bound", () => {
+    // Even with overdamped bounce, inertia still computes one frame of
+    // overshoot value before the spring snaps back — visibly flickering.
+    // When the user releases AT the boundary with outward velocity, the
+    // cleanest fix is to zero the velocity feeding inertia: with no
+    // velocity there's no decay step and no overshoot frame.
+    const { container, unmount } = render(() => {
+      const m = useMotion({
+        drag: "x",
+        dragConstraints: { left: -10, right: 20 },
+        dragElastic: 0,
+        dragMomentum: true,
+      })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Drag past the right bound (applyElastic clamps to 20). Time advances
+    // between moves so the velocity sliding window produces a real outward
+    // velocity at release.
+    dragWithTime(el, [
+      { x: 50, y: 0, t: 50 },
+      { x: 200, y: 0, t: 100 },
+    ])
+
+    const inertiaXCalls = animateSpy.mock.calls.filter((c) => {
+      const value = c[0] as { _name?: string } | undefined
+      const t = c[2] as { type?: string } | undefined
+      return value?._name === "x" && t?.type === "inertia"
+    })
+    expect(inertiaXCalls.length).toBeGreaterThan(0)
+    // The release momentum on x must have velocity 0 — the cursor pushed
+    // outward, but with elastic=0 and the value already at the bound, the
+    // heuristic suppresses the velocity to prevent the overshoot frame.
+    const releaseTransition = inertiaXCalls.at(-1)?.[2] as { velocity: number }
+    expect(releaseTransition.velocity).toBe(0)
+    unmount()
+  })
+
+  it("preserves release-velocity when elastic=0 and value is INSIDE bounds (inward release)", () => {
+    // Same setup but the release happens with the element well inside the
+    // container with INWARD velocity — the at-bound heuristic should not
+    // engage and the natural inertia glide must be preserved.
+    const { container, unmount } = render(() => {
+      const m = useMotion({
+        drag: "x",
+        dragConstraints: { left: -100, right: 100 },
+        dragElastic: 0,
+        dragMomentum: true,
+      })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Move to x=90 and HOLD there for >200ms so earlier samples drop out
+    // of the velocity sliding window, then sweep BACK to x=10. The
+    // window now sees only the inward sweep — release velocity is
+    // negative (inward).
+    dragWithTime(el, [
+      { x: 90, y: 0, t: 50 },
+      { x: 90, y: 0, t: 300 }, // hold — flushes the 200ms window
+      { x: 10, y: 0, t: 400 },
+    ])
+
+    const inertiaXCalls = animateSpy.mock.calls.filter((c) => {
+      const value = c[0] as { _name?: string } | undefined
+      const t = c[2] as { type?: string } | undefined
+      return value?._name === "x" && t?.type === "inertia"
+    })
+    expect(inertiaXCalls.length).toBeGreaterThan(0)
+    const releaseTransition = inertiaXCalls.at(-1)?.[2] as { velocity: number }
+    // Velocity is computed from the sliding window: samples (5, 80, 10)
+    // produce a negative net velocity. The heuristic must NOT zero it.
+    expect(releaseTransition.velocity).not.toBe(0)
+    expect(releaseTransition.velocity).toBeLessThan(0)
+    unmount()
+  })
+
+  it("hard-clamps release-momentum at boundary when dragElastic is 0 (overdamp bounce)", () => {
+    // Regression — release momentum's inertia bounce still oscillated past
+    // the constraint and sprang back even with `dragElastic: 0` (hard
+    // clamp), because the bounceStiffness/bounceDamping defaults give a
+    // soft spring physics. motion-react's solution: when dragElastic is 0,
+    // override the bounce params to very high values so the spring back is
+    // effectively instant. We assert on the inertia transition's params.
+    const { container, unmount } = render(() => {
+      const m = useMotion({
+        drag: true,
+        dragConstraints: { left: -10, right: 20 },
+        dragElastic: 0,
+        dragMomentum: true,
+      })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    drag(el, { x: 100, y: 100 })
+
+    // The release path fires an animate(MV, 0, transition). Pick the
+    // post-drag (inertia) animate calls and verify their bounce params
+    // were overdamped for the hard-clamp setting.
+    const inertiaCalls = animateSpy.mock.calls.filter((c) => {
+      const t = c[2] as { type?: string } | undefined
+      return t?.type === "inertia"
+    })
+    expect(inertiaCalls.length).toBeGreaterThan(0)
+    for (const call of inertiaCalls) {
+      const transition = call[2] as { bounceStiffness: number; bounceDamping: number }
+      // Motion-react's overdamp values (1e6 / 1e7) are the lower bound for
+      // an instant snap-back. We just check they're far above the default
+      // (200/40) so the bounce is effectively immediate.
+      expect(transition.bounceStiffness).toBeGreaterThanOrEqual(100_000)
+      expect(transition.bounceDamping).toBeGreaterThanOrEqual(1_000_000)
+    }
+    unmount()
+  })
+
+  it("uses motion-react's default bounce params (200/40) when dragElastic > 0", () => {
+    const { container, unmount } = render(() => {
+      const m = useMotion({
+        drag: true,
+        dragConstraints: { left: -10, right: 20 },
+        dragElastic: 0.5,
+        dragMomentum: true,
+      })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    drag(el, { x: 100, y: 100 })
+
+    const inertiaCalls = animateSpy.mock.calls.filter((c) => {
+      const t = c[2] as { type?: string } | undefined
+      return t?.type === "inertia"
+    })
+    expect(inertiaCalls.length).toBeGreaterThan(0)
+    for (const call of inertiaCalls) {
+      const transition = call[2] as { bounceStiffness: number; bounceDamping: number }
+      // Bounce params should be the soft-spring values that allow the
+      // visible rubber-band rebound, not the overdamped hard-clamp values.
+      expect(transition.bounceStiffness).toBeLessThan(10_000)
+      expect(transition.bounceDamping).toBeLessThan(10_000)
+    }
+    unmount()
+  })
+
+  it("springs back to bounds on release with momentum:false + elastic>0 (no momentum but bounce still applies)", () => {
+    // Regression — with dragMomentum:false and dragElastic:0.5, the user
+    // could drag the element past the bound (elastic overshoots) and
+    // release. Our `else` branch skipped the animate call entirely,
+    // leaving the element stranded outside the container.
+    //
+    // motion-react's fix: always run inertia on release; when
+    // dragMomentum is false, just zero the velocity. The bounce physics
+    // still pull the element back to the boundary on a soft spring.
+    const { container, unmount } = render(() => {
+      const m = useMotion({
+        drag: true,
+        dragConstraints: { left: -10, right: 20 },
+        dragElastic: 0.5, // elastic > 0 — overshoot allowed during drag
+        dragMomentum: false,
+      })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Drag far past the right bound. With elastic 0.5, applyElastic lets
+    // the value overshoot 20 (max) by half the overflow. On release we
+    // need an animate call that brings x back inside the bound.
+    drag(el, { x: 100, y: 0 }, { x: 200, y: 0 })
+
+    // After the fix, we expect an inertia call on the x axis whose
+    // min/max include the configured bounds — even though dragMomentum is
+    // false. Pre-fix, no such call exists.
+    const inertiaXCalls = animateSpy.mock.calls.filter((c) => {
+      const value = c[0] as { _name?: string } | undefined
+      const t = c[2] as { type?: string } | undefined
+      return value?._name === "x" && t?.type === "inertia"
+    })
+    expect(inertiaXCalls.length).toBeGreaterThan(0)
+    const release = inertiaXCalls.at(-1)?.[2] as {
+      velocity: number
+      min: number
+      max: number
+    }
+    // momentum:false → velocity zeroed.
+    expect(release.velocity).toBe(0)
+    // Bounds still flow through — spring physics will pull overshot
+    // values back to within (-10, 20).
+    expect(release.min).toBe(-10)
+    expect(release.max).toBe(20)
+    unmount()
+  })
+
+  it("clamps both sides when the cursor crosses through a bounded axis (out-then-opposite-edge)", () => {
+    // Regression — user reproduced this in the Drag demo with `drag: "x"`
+    // and a container constraint: dragging far past one edge (cursor leaving
+    // the container entirely), then sweeping the cursor toward the OPPOSITE
+    // edge, "broke" the constraint. With elastic 0 the element should clamp
+    // hard on BOTH excursions. This test pins the bidirectional clamping so
+    // any future change that violates it fails loudly.
+    const { container, unmount } = render(() => {
+      const m = useMotion({
+        drag: "x",
+        dragConstraints: { left: -10, right: 20 },
+        dragElastic: 0,
+      })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Drag far past the right edge (offset 500), then sweep the pointer
+    // past the left edge (offset -500). Each move recomputes candidateX
+    // from start + offset, so both extremes should produce a clamped write.
+    drag(el, { x: 500, y: 0 }, { x: -500, y: 0 })
+
+    const xWrites = captured.writes.filter((w) => w.name === "x")
+    // First excursion: clamp at right (20).
+    expect(xWrites).toContainEqual({ name: "x", value: 20 })
+    // Second excursion: clamp at left (-10). MUST appear.
+    expect(xWrites).toContainEqual({ name: "x", value: -10 })
+    // Last write is the leftward extreme — no values past min/max.
+    expect(xWrites.at(-1)?.value).toBe(-10)
+    for (const w of xWrites) {
+      expect(w.value).toBeGreaterThanOrEqual(-10)
+      expect(w.value).toBeLessThanOrEqual(20)
+    }
     unmount()
   })
 
@@ -495,7 +802,11 @@ describe("drag — callbacks", () => {
     unmount()
   })
 
-  it("fires onDragTransitionEnd sync when dragMomentum is false", () => {
+  it("fires onDragTransitionEnd after release with dragMomentum:false (via inertia.Promise.all)", async () => {
+    // dragMomentum:false still runs the inertia animate path so the bounce
+    // physics can pull the element back to bounds when elastic overshoots
+    // during the drag. That means onDragTransitionEnd resolves through the
+    // animate promise like the momentum:true case — async, not sync.
     const onDragTransitionEnd = vi.fn()
     const { container, unmount } = render(() => {
       const m = useMotion({ drag: true, dragMomentum: false, onDragTransitionEnd })
@@ -504,6 +815,7 @@ describe("drag — callbacks", () => {
     const el = container.firstChild as HTMLElement
     drag(el, { x: 10, y: 0 })
 
+    await new Promise((r) => setTimeout(r, 0))
     expect(onDragTransitionEnd).toHaveBeenCalledOnce()
     unmount()
   })
@@ -548,7 +860,13 @@ describe("drag — momentum", () => {
     unmount()
   })
 
-  it("dragMomentum=false does NOT trigger inertia animate calls", () => {
+  it("dragMomentum=false still triggers inertia, but with velocity 0", () => {
+    // dragMomentum:false means "don't carry pointer velocity into the
+    // release glide" — NOT "skip the release animation entirely". The
+    // inertia call still runs so its bounce physics can pull the element
+    // back from any elastic overshoot during the drag. We assert both:
+    //   (a) inertia IS called (one per axis), and
+    //   (b) the velocity passed to it is 0 in both calls.
     const { container, unmount } = render(() => {
       const m = useMotion({ drag: true, dragMomentum: false })
       return <div {...m()} />
@@ -559,7 +877,11 @@ describe("drag — momentum", () => {
     const inertiaCalls = animateSpy.mock.calls.filter(
       (c) => (c[2] as Record<string, unknown> | undefined)?.type === "inertia",
     )
-    expect(inertiaCalls.length).toBe(0)
+    expect(inertiaCalls.length).toBe(2)
+    for (const call of inertiaCalls) {
+      const t = call[2] as { velocity: number }
+      expect(t.velocity).toBe(0)
+    }
     unmount()
   })
 

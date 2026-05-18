@@ -371,6 +371,60 @@ export function createDrag(
     const momentum = opts.dragMomentum ?? true
     const userTransition = opts.dragTransition ?? {}
 
+    // Axis lock: the release path must mirror the same write-gate the drag
+    // loop uses (handlePan). Without this, pointer velocity on the locked
+    // axis feeds an inertia animation on that axis's MV — drifting the
+    // element along an axis the user explicitly locked. The cursor still
+    // has Y velocity when `drag: "x"` (any non-perfectly-horizontal motion
+    // moves the pointer through Y), so this matters in practice.
+    const dragAxis = opts.drag
+    const releaseX = dragAxis !== "y"
+    const releaseY = dragAxis !== "x"
+
+    // Reset the tracked momentum array — we'll push 1 or 2 controls below
+    // depending on axis. (handlePanStart's stopMomentum already cleared any
+    // prior session's controls, but we re-initialize here for clarity since
+    // the per-axis branches below append rather than replace.)
+    momentumControls = []
+
+    // Q15c follow-up: couple bounce physics to `dragElastic`. With elastic
+    // 0 (hard clamp), inertia's spring-back at the boundary uses default
+    // stiffness/damping that visibly overshoots before settling — even
+    // though the drag itself is clamped. Mirror motion-react's pattern
+    // (VisualElementDragControls.startAnimation): overdamp the spring with
+    // very high stiffness + damping so the snap-back is effectively
+    // instantaneous. With elastic > 0 we keep the soft spring so the
+    // rubber-band feel is preserved.
+    //
+    // Numerical choices (200/40 soft, 1e6/1e7 hard) come from motion-react.
+    const elastic = opts.dragElastic ?? DEFAULT_ELASTIC
+    const bounceParams = elastic
+      ? { bounceStiffness: 200, bounceDamping: 40 }
+      : { bounceStiffness: 1_000_000, bounceDamping: 10_000_000 }
+
+    // Flicker fix for elastic=0: motion-react's source acknowledges that
+    // overdamping the spring still computes one frame of overshoot before
+    // the snap-back. When the user releases AT a boundary with velocity
+    // pointing OUT of that boundary, there's nothing for inertia to
+    // usefully decay toward — feeding it the outward velocity produces
+    // exactly the visible flicker. Zero those release velocities and
+    // inertia settles silently at the bound. Inward velocities are
+    // preserved so a release moving back toward center still glides.
+    const xAtMax = boundsRef !== null && boundsRef.maxX !== Infinity && xRef.get() >= boundsRef.maxX
+    const xAtMin =
+      boundsRef !== null && boundsRef.minX !== -Infinity && xRef.get() <= boundsRef.minX
+    const yAtMax = boundsRef !== null && boundsRef.maxY !== Infinity && yRef.get() >= boundsRef.maxY
+    const yAtMin =
+      boundsRef !== null && boundsRef.minY !== -Infinity && yRef.get() <= boundsRef.minY
+    const xVelocity =
+      !elastic && ((xAtMax && info.velocity.x > 0) || (xAtMin && info.velocity.x < 0))
+        ? 0
+        : info.velocity.x
+    const yVelocity =
+      !elastic && ((yAtMax && info.velocity.y > 0) || (yAtMin && info.velocity.y < 0))
+        ? 0
+        : info.velocity.y
+
     /** Fire onDragTransitionEnd via getOpts so reactive callback swaps see
      * the latest value (the user may have swapped handlers between pan-end
      * and momentum-settle). */
@@ -382,53 +436,79 @@ export function createDrag(
       // the value home from wherever the user released it.
       const transitionX = {
         ...DEFAULT_DRAG_TRANSITION,
+        ...bounceParams,
         ...userTransition,
-        velocity: info.velocity.x,
+        velocity: xVelocity,
         min: 0,
         max: 0,
       }
       const transitionY = {
         ...DEFAULT_DRAG_TRANSITION,
+        ...bounceParams,
         ...userTransition,
-        velocity: info.velocity.y,
+        velocity: yVelocity,
         min: 0,
         max: 0,
       }
-      // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct. Target arg is a placeholder — inertia computes the actual settle point from velocity + min/max.
-      const ctrlX = animate(xRef, 0, transitionX as any)
-      // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct.
-      const ctrlY = animate(yRef, 0, transitionY as any)
-      momentumControls = [ctrlX, ctrlY]
-      Promise.all([ctrlX, ctrlY]).then(fireTransitionEnd)
-    } else if (momentum) {
-      // Inertia decay from current position with release velocity. Bounds
-      // (computed at drag-start in resolveConstraints) clamp the settle
-      // point; bounceStiffness/bounceDamping give the spring physics if
-      // the decay would exit the bounds.
+      const settles: Array<Promise<unknown> | AnimationPlaybackControls> = []
+      if (releaseX) {
+        // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct. Target arg is a placeholder — inertia computes the actual settle point from velocity + min/max.
+        const ctrlX = animate(xRef, 0, transitionX as any)
+        momentumControls.push(ctrlX)
+        settles.push(ctrlX)
+      }
+      if (releaseY) {
+        // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct.
+        const ctrlY = animate(yRef, 0, transitionY as any)
+        momentumControls.push(ctrlY)
+        settles.push(ctrlY)
+      }
+      if (settles.length > 0) Promise.all(settles).then(fireTransitionEnd)
+      else fireTransitionEnd()
+    } else {
+      // Inertia release path — runs regardless of `dragMomentum`. When
+      // momentum is true, we feed the (heuristic-clamped) release velocity
+      // so the element glides naturally. When momentum is false, we feed
+      // velocity 0 — there's no decay, but the bounce physics still spring
+      // the element back to the bound if elastic let it overshoot during
+      // the drag. Skipping the animate entirely (the prior behavior) left
+      // the user stranded outside the container with no way to reach the
+      // element. Matches motion-react's pattern (VisualElementDragControls
+      // .startAnimation always runs inertia, zeroing velocity when
+      // dragMomentum is false).
+      const releaseVelocityX = momentum ? xVelocity : 0
+      const releaseVelocityY = momentum ? yVelocity : 0
       const transitionX = {
         ...DEFAULT_DRAG_TRANSITION,
+        ...bounceParams,
         ...userTransition,
-        velocity: info.velocity.x,
+        velocity: releaseVelocityX,
         min: boundsRef?.minX,
         max: boundsRef?.maxX,
       }
       const transitionY = {
         ...DEFAULT_DRAG_TRANSITION,
+        ...bounceParams,
         ...userTransition,
-        velocity: info.velocity.y,
+        velocity: releaseVelocityY,
         min: boundsRef?.minY,
         max: boundsRef?.maxY,
       }
-      // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct.
-      const ctrlX = animate(xRef, 0, transitionX as any)
-      // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct.
-      const ctrlY = animate(yRef, 0, transitionY as any)
-      momentumControls = [ctrlX, ctrlY]
-      Promise.all([ctrlX, ctrlY]).then(fireTransitionEnd)
-    } else {
-      // No momentum, no snap — stay at release position (Q15e). Fire the
-      // transitionEnd hook synchronously so consumers can chain reliably.
-      fireTransitionEnd()
+      const settles: Array<Promise<unknown> | AnimationPlaybackControls> = []
+      if (releaseX) {
+        // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct.
+        const ctrlX = animate(xRef, 0, transitionX as any)
+        momentumControls.push(ctrlX)
+        settles.push(ctrlX)
+      }
+      if (releaseY) {
+        // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape; the runtime call is correct.
+        const ctrlY = animate(yRef, 0, transitionY as any)
+        momentumControls.push(ctrlY)
+        settles.push(ctrlY)
+      }
+      if (settles.length > 0) Promise.all(settles).then(fireTransitionEnd)
+      else fireTransitionEnd()
     }
 
     xMV = null
