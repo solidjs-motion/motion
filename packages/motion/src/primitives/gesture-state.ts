@@ -166,9 +166,10 @@ export function createGestureStateMachine(
         asVariantLabels(parentVariantCtx.focus?.()),
         custom,
       ),
-      // whileDrag's target resolution lands with the drag commit (Q5/C-lean).
-      // Until then this slot stays null — `winners` skips null entries naturally.
-      whileDrag: null,
+      // whileDrag — resolved like any other gesture state's target. Drag's
+      // visual state composes with drag's translation through the shared
+      // VisualElement (Q5/C-lean).
+      whileDrag: resolveTarget(opts.whileDrag, variants, undefined, custom),
       exit: resolveTarget(opts.exit, variants, asVariantLabels(parentVariantCtx.exit?.()), custom),
     }
   })
@@ -178,8 +179,16 @@ export function createGestureStateMachine(
   // own flag is true OR the parent's VariantContext provides a label for it
   // (Q4 — gesture inheritance through context). The first active state that
   // defines a key claims it; lower-priority states are skipped for that key.
+  //
+  // Q5/C-lean exclusion: when `drag` is enabled, `x` and `y` are owned by
+  // createDrag (it writes them to the VisualElement's MotionValues during
+  // pointer phase). Filter them out of the winners map so motion's animate
+  // (called from this effect) doesn't fight drag's writes. Other transform
+  // keys (scale, rotate, etc.) still flow normally — they compose with
+  // drag's translation through the shared VisualElement.
   const winners = createMemo<Record<string, WinnerEntry>>(() => {
     const targets = stateTargets()
+    const dragEnabled = Boolean(getOpts().drag)
     const out: Record<string, WinnerEntry> = {}
     for (const stateName of PRIORITY_HIGH_TO_LOW) {
       if (!isStateActive(stateName, active, parentVariantCtx)) continue
@@ -190,6 +199,8 @@ export function createGestureStateMachine(
         if (key === "transition") continue
         // Higher-priority state already won this key.
         if (key in out) continue
+        // x/y are drag-owned when drag is enabled (Q5/C-lean).
+        if (dragEnabled && (key === "x" || key === "y")) continue
         out[key] = {
           value: (target as Record<string, unknown>)[key],
           transition: target.transition,
@@ -471,7 +482,6 @@ function animateValueForState(
     case "exit":
       return opts.exit ?? parentVariantCtx.exit?.()
     case "whileDrag":
-      // Drag commit will plumb opts.whileDrag — for now undefined.
-      return undefined
+      return opts.whileDrag
   }
 }

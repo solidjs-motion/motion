@@ -7,6 +7,7 @@ import type {
   SpringOptions,
   Transition,
 } from "motion"
+import type { InertiaOptions } from "motion-dom"
 import type { Accessor, Component, JSX } from "solid-js"
 
 // ---------------------------------------------------------------------------
@@ -146,9 +147,20 @@ export type ViewportOptions = {
 // Drag options
 // ---------------------------------------------------------------------------
 
+/**
+ * Drag bounds (Q8). Three shapes:
+ *
+ * - **Numeric** (`{ top, left, right, bottom }`): absolute MV-value bounds.
+ *   Missing keys are unbounded on that side.
+ * - **HTMLElement**: container the dragged element must stay inside. Bounds
+ *   are computed at drag-start from the container's bounding rect.
+ * - **`() => HTMLElement | null`**: Solid-style accessor for a reactive
+ *   container ref. Called at drag-start.
+ */
 export type DragConstraints =
   | { top?: number; left?: number; right?: number; bottom?: number }
-  | { current: HTMLElement | null }
+  | HTMLElement
+  | (() => HTMLElement | null)
 
 export type DragOptions = {
   drag?: boolean | "x" | "y"
@@ -157,8 +169,12 @@ export type DragOptions = {
   dragElastic?: number
   /** Carry momentum after release (default true). */
   dragMomentum?: boolean
-  /** Spring options applied to the momentum-snap-back animation. */
-  dragTransition?: SpringOptions
+  /**
+   * Options for the momentum / snap-back animation. Inertia by default
+   * (Q15d preset). Shallow-merges over the defaults — user fields override
+   * any single setting (bounceStiffness, timeConstant, etc.).
+   */
+  dragTransition?: Partial<InertiaOptions>
   /** Snap back to origin on release (default false). */
   dragSnapToOrigin?: boolean
   /** Imperatively-triggered drag (from createDragControls). */
@@ -227,6 +243,15 @@ export type MotionOptions = MotionCallbacks &
     inView?: AnimateValue
     /** Viewport observer config for the inView gesture. */
     inViewOptions?: ViewportOptions
+
+    /**
+     * Visual-state target applied while a drag gesture is active. Like
+     * other gesture targets, this can be a Target object or a variant
+     * label. Common idiom: `whileDrag: { scale: 1.05 }` for a lift-while-
+     * dragging effect — composes with drag's translation via the shared
+     * VisualElement (Q5/C-lean).
+     */
+    whileDrag?: AnimateValue
 
     /**
      * Minimum cumulative pointer movement (in px) before pan/drag start fires.

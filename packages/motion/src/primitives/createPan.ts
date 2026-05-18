@@ -90,7 +90,25 @@ function zeroState(): PanState {
  * Fields update from `pointerdown` forward (including pre-threshold moves)
  * — gate reads on `pan.isPanning` if you only care about real pans.
  *
- * @example
+ * The `options` argument accepts either a static object or a function form
+ * (matching `useMotion`'s convention). The function form is read INSIDE
+ * each pointer-event handler, so reactive option changes apply on the next
+ * relevant event without re-attaching listeners:
+ *
+ * @example Static options
+ * const pan = createPan(el, {
+ *   onPanStart: (e, info) => console.log("start", info.point),
+ *   threshold: 3,
+ * })
+ *
+ * @example Reactive options (function form — signals tracked)
+ * const [threshold, setThreshold] = createSignal(3)
+ * const pan = createPan(el, () => ({
+ *   threshold: threshold(),
+ *   onPanStart: (e, info) => console.log(info),
+ * }))
+ *
+ * @example Element-ref pattern
  * const [el, setEl] = createSignal<HTMLElement>()
  * const pan = createPan(el)
  *
@@ -102,8 +120,11 @@ function zeroState(): PanState {
  */
 export function createPan(
   ref: () => HTMLElement | null | undefined,
-  options: CreatePanOptions = {},
+  options: CreatePanOptions | (() => CreatePanOptions) = {},
 ): Store<PanState> {
+  // Normalize to a function form. All option reads inside event handlers
+  // call this so the latest reactive values are seen on each event.
+  const getOpts: () => CreatePanOptions = typeof options === "function" ? options : () => options
   const [state, setState] = createStore<PanState>(zeroState())
 
   // createEffect — Solid-idiomatic for side-effect setup (DOM listeners).
@@ -119,7 +140,10 @@ export function createPan(
     const el = ref()
     if (!el) return
 
-    const threshold = options.threshold ?? DEFAULT_THRESHOLD
+    // NOTE: threshold and callbacks are read INSIDE the event handlers via
+    // getOpts(), not captured here. That way reactive opts changes apply on
+    // the next relevant event without re-attaching listeners (which would
+    // require this effect to depend on getOpts and re-run on opt changes).
 
     // Session state — reset on each pointerdown. Scoped per createComputed
     // iteration; cleanup below reaches all listeners regardless of phase.
@@ -223,15 +247,18 @@ export function createPan(
       writeInfo(info)
 
       if (!isPanning) {
-        // Threshold gate: pan hasn't started yet.
+        // Threshold gate: pan hasn't started yet. Read threshold fresh from
+        // getOpts() so reactive changes apply (a session in progress sticks
+        // with the threshold it saw when this branch first crossed).
+        const threshold = getOpts().threshold ?? DEFAULT_THRESHOLD
         const distance = Math.hypot(info.offset.x, info.offset.y)
         if (distance >= threshold) {
           isPanning = true
           setState("isPanning", true)
-          options.onPanStart?.(event, info)
+          getOpts().onPanStart?.(event, info)
         }
       } else {
-        options.onPan?.(event, info)
+        getOpts().onPan?.(event, info)
       }
       lastPoint = point
     }
@@ -241,7 +268,7 @@ export function createPan(
       // onPanEnd only fires if onPanStart fired — pan-cancelled-before-start
       // (mere clicks) shouldn't emit lifecycle callbacks.
       if (isPanning) {
-        options.onPanEnd?.(event, buildInfo(event))
+        getOpts().onPanEnd?.(event, buildInfo(event))
       }
       isPanning = false
       // Flip isPanning. Point/delta/offset/velocity are RETAINED (option Q5/3)

@@ -86,6 +86,73 @@ describe("createPan — threshold gating", () => {
     expect(onPanStart).toHaveBeenCalledOnce()
     unmount()
   })
+
+  it("reactive options form — threshold change applies to the NEXT session", () => {
+    // Function-form options let users pass reactive values. The threshold
+    // is read on each pointermove via getOpts(), so changes apply on the
+    // next pre-threshold move. (Mid-session: only matters until the
+    // threshold is crossed; after, the session continues regardless.)
+    const onPanStart = vi.fn()
+    const [threshold, setThreshold] = createSignal(3)
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, () => ({ onPanStart, threshold: threshold() }))
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Session 1: threshold 3, 5px move crosses it.
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    expect(onPanStart).toHaveBeenCalledOnce()
+    onPanStart.mockClear()
+
+    // Reactive change: bump threshold to 20.
+    setThreshold(20)
+
+    // Session 2: threshold 20, 5px move should NOT cross.
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    expect(onPanStart).not.toHaveBeenCalled()
+
+    // 22px crosses the new threshold.
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 22, clientY: 0, isPrimary: true })
+    expect(onPanStart).toHaveBeenCalledOnce()
+
+    unmount()
+  })
+
+  it("reactive options form — callback change applies on next event", () => {
+    // Callbacks are read via getOpts() each time they fire. Swapping the
+    // callback at runtime takes effect immediately.
+    const firstHandler = vi.fn()
+    const secondHandler = vi.fn()
+    const [handler, setHandler] = createSignal(firstHandler)
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, () => ({ onPan: handler() }))
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    // First move crosses threshold (onPanStart fires, NOT onPan).
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    // Second move fires onPan with firstHandler.
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    expect(firstHandler).toHaveBeenCalledOnce()
+    expect(secondHandler).not.toHaveBeenCalled()
+
+    // Swap handler.
+    setHandler(() => secondHandler)
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 15, clientY: 0, isPrimary: true })
+    expect(firstHandler).toHaveBeenCalledOnce() // still 1
+    expect(secondHandler).toHaveBeenCalledOnce()
+
+    unmount()
+  })
 })
 
 // ---------------------------------------------------------------------------

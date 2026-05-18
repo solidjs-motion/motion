@@ -13,6 +13,7 @@ import type {
   Variants,
 } from "../types"
 import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
+import { createDrag } from "./createDrag"
 import { createGestures } from "./createGestures"
 import { type ActiveStoreTuple, createGestureStateMachine } from "./gesture-state"
 
@@ -206,11 +207,17 @@ export function createMotion(
     externalActiveStore: config?.activeStore,
   })
 
-  // ---------- Pointer-event gestures (hover, press) ----------
+  // ---------- Pointer-event gestures (hover, press, focus, inView) ----------
   // Listeners attach unconditionally on mount; the state machine no-ops when
-  // an active state has no target. Focus + inView land in Commit 3, drag/pan
-  // in Commits 5-6.
+  // an active state has no target.
   createGestures(el, getOpts, setActive)
+
+  // ---------- Drag + pan (Q5/C-lean + Q11/D3) ----------
+  // createDrag layers on createPan for the pointer session and writes to the
+  // element's VisualElement x/y MotionValues during drag. Always attached;
+  // the `isDragEnabled()` check inside createDrag means listeners do nothing
+  // when `opts.drag` is falsy — toggling drag on/off doesn't churn listeners.
+  createDrag(el, getOpts, setActive)
 }
 
 // Re-export for useMotion to consume the same helpers without circular deps.
