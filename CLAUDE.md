@@ -113,15 +113,79 @@ For both `createMotion`'s initial-style application AND `computeInitialStyle` in
 `useMotion` returns a `Provider` component for opt-in propagation:
 
 ```tsx
-const m = useMotion({ animate: "visible", variants: {...} })
-<div {...m()}>
-  <m.Provider>
-    <ChildComponent />  {/* sees parent's variant context */}
-  </m.Provider>
-</div>
+function Card() {
+  const m = useMotion({ animate: "visible", hover: "big", variants: {...} })
+  return (
+    <div {...m()}>
+      <m.Provider>
+        <CardLogo />  {/* nested component — useMotion runs INSIDE Provider */}
+      </m.Provider>
+    </div>
+  )
+}
+
+function CardLogo() {
+  const m = useMotion({ variants: {...} })  // inherits parent's gesture context
+  return <div {...m()} />
+}
 ```
 
 Without `m.Provider`, children don't inherit. `useMotion` is a pure consumer of parent context, not a provider — only the JSX wrappers (`<motion.div>` etc. in Phase 4) propagate automatically.
+
+**Anti-pattern.** Defining a child's `useMotion` in the parent's component body (rather than in a nested component) breaks inheritance. Solid's `useContext` reads at the call site's owner — if the child's `useMotion` runs at the parent's owner level, `useVariantContext()` returns the empty default, not the parent's `myVariantCtx`:
+
+```tsx
+// ❌ Broken — child's useVariantContext runs at the OUTER owner.
+function Card() {
+  const parent = useMotion({ hover: "big", variants: {...} })
+  const child = useMotion({ variants: {...} })  // doesn't see parent context
+  return (
+    <div {...parent()}>
+      <parent.Provider>
+        <div {...child()} />
+      </parent.Provider>
+    </div>
+  )
+}
+
+// ✅ Correct — child is a nested component, useMotion runs inside Provider.
+```
+
+The same constraint applies to motion/react. In v0.2+ when `<motion.div>` lands, the proxy auto-wraps its children, so the explicit `<m.Provider>` becomes optional for that common case.
+
+### Controlling variants (motion-dom parity)
+
+A motion node is "controlling variants" when any of its `initial`/`animate`/`hover`/`press`/`focus`/`inView`/`exit` props carries a **variant label** (a string or array of strings, not a `Target` object). Mirrors motion-dom's `isControllingVariants` rule.
+
+A controlling node opts OUT of inheriting its parent's variant cascade — it provides its own. Descendants without controlling props of their own DO inherit from the nearest controlling ancestor.
+
+```tsx
+// Parent's "big" propagates to controllingChild? NO — controllingChild has its own animate label.
+// Parent's "big" propagates to passiveChild?    YES — passiveChild has only variants, no labels.
+function Card() {
+  const m = useMotion({ hover: "big", variants: {...} })
+  return (
+    <div {...m()}>
+      <m.Provider>
+        <ControllingChild />
+        <PassiveChild />
+      </m.Provider>
+    </div>
+  )
+}
+
+function ControllingChild() {
+  const m = useMotion({ animate: "rest", variants: {...} })  // own animate label → controlling
+  return <div {...m()} />
+}
+
+function PassiveChild() {
+  const m = useMotion({ variants: {...} })                    // no label → inherits
+  return <div {...m()} />
+}
+```
+
+`animate: { x: 100 }` (a `Target` object) does NOT make a node controlling — only variant labels do.
 
 ## Solid primitive decision matrix
 

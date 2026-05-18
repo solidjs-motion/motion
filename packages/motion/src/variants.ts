@@ -1,5 +1,12 @@
 import { createContext, useContext } from "solid-js"
-import type { Target, VariantContextValue, VariantLabels, Variants } from "./types"
+import type {
+  AnimateValue,
+  MotionOptions,
+  Target,
+  VariantContextValue,
+  VariantLabels,
+  Variants,
+} from "./types"
 
 /**
  * Empty default — descendants without an enclosing motion wrapper get a
@@ -82,4 +89,45 @@ export function effectiveLabels(
 ): VariantLabels | Target | undefined {
   if (own !== undefined) return own
   return parent
+}
+
+/**
+ * Determine whether an `AnimateValue` is a variant *label* (string or array
+ * of strings) — as opposed to a `Target` object or `false` / `undefined`.
+ *
+ * Mirrors motion-dom's `isVariantLabel`. Used by `isControllingVariants`
+ * to decide whether a prop opts the node into the "controlling" role.
+ */
+function isVariantLabelValue(v: AnimateValue | false | undefined): boolean {
+  if (typeof v === "string") return true
+  if (Array.isArray(v)) return true
+  return false
+}
+
+/**
+ * A motion node is "controlling variants" when any of its variant slots
+ * (`initial`, `animate`, `hover`, `press`, `focus`, `inView`, `exit`) carries
+ * a variant *label* (string or array of strings).
+ *
+ * Mirrors motion-dom's same-named check. A controlling node opts OUT of
+ * inheriting its parent's variant cascade — it provides its own. Descendants
+ * with no controlling props of their own DO inherit from the nearest
+ * controlling ancestor.
+ *
+ * Behavior is binary (any single controlling-slot label flips the node into
+ * controlling mode); not per-slot.
+ *
+ * Object-shaped values (`animate: \{ x: 100 \}`) do NOT make a node
+ * controlling — they're treated as targets, not as variant references.
+ */
+export function isControllingVariants(opts: MotionOptions): boolean {
+  return (
+    isVariantLabelValue(opts.initial) ||
+    isVariantLabelValue(opts.animate) ||
+    isVariantLabelValue(opts.hover) ||
+    isVariantLabelValue(opts.press) ||
+    isVariantLabelValue(opts.focus) ||
+    isVariantLabelValue(opts.inView) ||
+    isVariantLabelValue(opts.exit)
+  )
 }

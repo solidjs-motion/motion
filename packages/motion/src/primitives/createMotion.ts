@@ -14,7 +14,7 @@ import type {
 } from "../types"
 import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
 import { createGestures } from "./createGestures"
-import { createGestureStateMachine } from "./gesture-state"
+import { type ActiveStoreTuple, createGestureStateMachine } from "./gesture-state"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,6 +109,19 @@ export type CreateMotionConfig = {
    * paint. Detected via the `data-motion-hydrated` marker in useMotion.
    */
   initialAppliedBySSR?: boolean
+  /**
+   * Q4 — useMotion lifts the gesture-state active store one level up so its
+   * `myVariantCtx` can read the same flags it propagates to descendants.
+   * When omitted (standalone createMotion use), the state machine creates
+   * its own internal store.
+   */
+  activeStore?: ActiveStoreTuple
+  /**
+   * Q4 follow-up — useMotion passes a shadowed parent context here so the
+   * controlling-variants check is applied uniformly. When omitted, createMotion
+   * falls back to `useVariantContext()` directly (the standalone path).
+   */
+  parentContext?: VariantContextValue
 }
 
 /**
@@ -125,7 +138,9 @@ export function createMotion(
   getOpts: () => MotionOptions,
   config?: CreateMotionConfig,
 ): void {
-  const parentVariantCtx: VariantContextValue = useVariantContext()
+  // Q4 follow-up: useMotion passes a shadowed (controlling-aware) context;
+  // standalone callers fall back to the live VariantContext.
+  const parentVariantCtx: VariantContextValue = config?.parentContext ?? useVariantContext()
   const presence = usePresenceContext()
   const motionConfig = useMotionConfig()
   const systemReducedMotion = createReducedMotion()
@@ -179,6 +194,8 @@ export function createMotion(
   // ---------- Gesture state machine (Q3b, ADR 0002) ----------
   // Owns target resolution, priority winners, and the diff-and-animate loop.
   // Returns `setActive` which gesture wiring uses to toggle active flags.
+  // When useMotion supplies an external active store (Q4), the state machine
+  // reads/writes that one — letting myVariantCtx propagate the same flags.
   const { setActive } = createGestureStateMachine({
     el,
     getOpts,
@@ -186,6 +203,7 @@ export function createMotion(
     motionConfig,
     systemReducedMotion,
     initialTarget: capturedInitialTarget,
+    externalActiveStore: config?.activeStore,
   })
 
   // ---------- Pointer-event gestures (hover, press) ----------

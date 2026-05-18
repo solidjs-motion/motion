@@ -1,6 +1,6 @@
 import { type AnimationPlaybackControls, animate, isMotionValue, type MotionValue } from "motion"
 import { type Accessor, createEffect, createMemo, onCleanup, untrack } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { getMotionDefault } from "../default-values"
 import { shouldReduceMotion } from "../reduced-motion"
 import type {
@@ -54,6 +54,11 @@ type WinnerEntry = {
 
 export type SetActive = (state: GestureStateName, isActive: boolean) => void
 
+/** The reactive store of active gesture flags, lifted to the caller for sharing. */
+export type ActiveStore = Store<Record<GestureStateName, boolean>>
+export type SetActiveStore = SetStoreFunction<Record<GestureStateName, boolean>>
+export type ActiveStoreTuple = [ActiveStore, SetActiveStore]
+
 export type CreateGestureStateMachineDeps = {
   el: HTMLElement
   getOpts: () => MotionOptions
@@ -62,6 +67,13 @@ export type CreateGestureStateMachineDeps = {
   systemReducedMotion: Accessor<boolean>
   /** Captured at construction. Used as the first stop in the removed-key fallback chain (Q7). */
   initialTarget: Target | null
+  /**
+   * Optional external active store (Q4 — useMotion lifts this up so its
+   * `myVariantCtx` can read the same flags it propagates to descendants).
+   * When omitted, the state machine creates its own internal store —
+   * backward-compatible for `createMotion` direct users.
+   */
+  externalActiveStore?: ActiveStoreTuple
 }
 
 export type GestureStateMachine = {
@@ -88,20 +100,32 @@ export type GestureStateMachine = {
 export function createGestureStateMachine(
   deps: CreateGestureStateMachineDeps,
 ): GestureStateMachine {
-  const { el, getOpts, parentVariantCtx, motionConfig, systemReducedMotion, initialTarget } = deps
+  const {
+    el,
+    getOpts,
+    parentVariantCtx,
+    motionConfig,
+    systemReducedMotion,
+    initialTarget,
+    externalActiveStore,
+  } = deps
 
   // ---------- Active flags ----------
   // `animate` defaults true: it's the baseline state (mirrors motion's
   // createTypeState(true) for animate). All other states start inactive.
-  const [active, setActiveStore] = createStore<Record<GestureStateName, boolean>>({
-    animate: true,
-    whileInView: false,
-    whileHover: false,
-    whilePress: false,
-    whileFocus: false,
-    whileDrag: false,
-    exit: false,
-  })
+  // If the caller provided an external store (Q4 — useMotion lifts this up
+  // so myVariantCtx can read the same flags), reuse it; else create our own.
+  const [active, setActiveStore] =
+    externalActiveStore ??
+    createStore<Record<GestureStateName, boolean>>({
+      animate: true,
+      whileInView: false,
+      whileHover: false,
+      whilePress: false,
+      whileFocus: false,
+      whileDrag: false,
+      exit: false,
+    })
 
   // ---------- Per-state resolved targets ----------
   // createMemo (not createComputed): reads only run when opts/parent change,
@@ -150,14 +174,15 @@ export function createGestureStateMachine(
   })
 
   // ---------- Per-key winners (priority resolution + per-key claim) ----------
-  // Walks PRIORITY_HIGH_TO_LOW. The first active state that defines a key
-  // claims it; lower-priority states are skipped for that key. This is the
-  // structural difference vs Phase 1's whole-target-wins effect.
+  // Walks PRIORITY_HIGH_TO_LOW. A state is considered active if EITHER its
+  // own flag is true OR the parent's VariantContext provides a label for it
+  // (Q4 — gesture inheritance through context). The first active state that
+  // defines a key claims it; lower-priority states are skipped for that key.
   const winners = createMemo<Record<string, WinnerEntry>>(() => {
     const targets = stateTargets()
     const out: Record<string, WinnerEntry> = {}
     for (const stateName of PRIORITY_HIGH_TO_LOW) {
-      if (!active[stateName]) continue
+      if (!isStateActive(stateName, active, parentVariantCtx)) continue
       const target = targets[stateName]
       if (!target) continue
       for (const key in target) {
@@ -320,6 +345,44 @@ export function createGestureStateMachine(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Q4 — a state is considered active if EITHER its own flag is set OR the
+ * parent's VariantContext carries a label for it (the parent's gesture is
+ * active and propagating). The parent slots are themselves active-gated in
+ * `useMotion`'s `myVariantCtx`, so a defined return value here means the
+ * parent's gesture really is firing right now.
+ *
+ * `animate` and `exit` are special — their inheritance happens through the
+ * normal label-resolution path in `resolveTarget`, not through the active
+ * flag. We treat `animate` as always-active (matches motion's
+ * createTypeState(true)). `exit` is driven by the Presence context; the
+ * flag-based check is fine.
+ */
+function isStateActive(
+  state: GestureStateName,
+  active: ActiveStore,
+  parent: VariantContextValue,
+): boolean {
+  if (active[state]) return true
+  switch (state) {
+    case "whileHover":
+      return parent.hover?.() !== undefined
+    case "whilePress":
+      return parent.press?.() !== undefined
+    case "whileFocus":
+      return parent.focus?.() !== undefined
+    case "whileInView":
+      return parent.inView?.() !== undefined
+    // Drag inheritance through context isn't wired in Phase 1's
+    // VariantContextValue (no `drag` slot). Commit 6 will revisit if needed.
+    case "whileDrag":
+      return false
+    case "animate":
+    case "exit":
+      return false
+  }
+}
 
 /** Convert a winners map into the flat value snapshot used by `lastApplied`. */
 function snapshotValues(winners: Record<string, WinnerEntry>): Record<string, unknown> {
