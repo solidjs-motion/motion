@@ -167,8 +167,18 @@ export type ViewportOptions = {
   once?: boolean
   /** rootMargin string passed to IntersectionObserver. */
   margin?: string
-  /** Threshold; "some" = any intersection, "all" = fully visible, or number 0–1. */
-  amount?: "some" | "all" | number
+  /**
+   * Threshold(s) at which IntersectionObserver fires its callback.
+   *
+   * - `"some"` (default) — fires the moment any pixel intersects.
+   * - `"all"` — fires only when fully visible.
+   * - `number` 0–1 — single threshold; fires at that intersection ratio.
+   * - `number[]` — an array of thresholds; fires at each crossing. Use this
+   *   for continuous `intersectionRatio` updates (e.g., for scroll-linked
+   *   fades). With a single threshold the observer is silent between
+   *   crossings, so `entry.intersectionRatio` stays stale.
+   */
+  amount?: "some" | "all" | number | number[]
   /** Solid-style accessor returning the root element; defaults to viewport. */
   root?: () => Element | null
 }

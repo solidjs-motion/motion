@@ -348,6 +348,26 @@ describe("createInView", () => {
     expect(observers[0]?.options?.threshold).toBe(0)
     dispose()
   })
+
+  it("passes a number[] amount through to IntersectionObserver verbatim", async () => {
+    // With a single threshold the observer fires once per direction crossing
+    // and the reported intersectionRatio is whatever the actual ratio
+    // happens to be at that moment — but no further updates fire. For
+    // continuous ratio tracking (a scroll-linked fade, a progress readout),
+    // the user passes an array of thresholds; the observer then fires at
+    // each crossing. This test pins the array-pass-through behavior.
+    const div = document.createElement("div")
+    const thresholds = [0, 0.25, 0.5, 0.75, 1]
+    const { dispose } = createRoot((dispose) => {
+      const [el, setEl] = createSignal<Element | null>(null)
+      createInView(el, { amount: thresholds })
+      setEl(div)
+      return { dispose }
+    })
+    await flush()
+    expect(observers[0]?.options?.threshold).toEqual(thresholds)
+    dispose()
+  })
 })
 
 describe("createInView in real-component usage", () => {

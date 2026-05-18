@@ -113,6 +113,10 @@ export function createInView(
 }
 
 function resolveThreshold(amount: ViewportOptions["amount"]): number | number[] {
+  // Pass arrays through unchanged so callers can request continuous
+  // `intersectionRatio` updates (the underlying IntersectionObserver fires
+  // once per threshold crossing, so a fine array → near-live ratio).
+  if (Array.isArray(amount)) return amount
   if (typeof amount === "number") return amount
   if (amount === "all") return 1
   // "some" or undefined → minimal threshold (any pixel intersecting)
