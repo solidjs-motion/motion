@@ -10,7 +10,9 @@
     "clean": "rm -rf dist node_modules .vite"
   },
   "dependencies": {
+    "@solidjs/router": "^0.16.1",
     "motion": "^12.38.0",
+    "shiki": "^1.29.2",
     "solid-js": "^1.9.13",
     "solidjs-motion": "workspace:*"
   },

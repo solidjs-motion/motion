@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>solidjs-motion — basic example</title>
+    <style>
+      html, body { margin: 0; padding: 0; }
+      .demo-button {
+        padding: 0.5rem 1rem;
+        background: #111;
+        color: white;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+        font: inherit;
+      }
+      .demo-button:disabled { opacity: 0.4; cursor: not-allowed; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
