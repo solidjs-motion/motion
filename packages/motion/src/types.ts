@@ -181,8 +181,11 @@ export type MotionCallbacks = {
   // Gesture lifecycle (Phase 2)
   onHoverStart?: (e: PointerEvent) => void
   onHoverEnd?: (e: PointerEvent) => void
-  onPressStart?: (e: PointerEvent, info: PressInfo) => void
+  /** Press began. `info.success` isn't meaningful yet — see {@link onPress} / {@link onPressCancel}. */
+  onPressStart?: (e: PointerEvent) => void
+  /** Press completed with the pointer still over the element. */
   onPress?: (e: PointerEvent, info: PressInfo) => void
+  /** Press cancelled — pointer left the element before pointer-up. */
   onPressCancel?: (e: PointerEvent, info: PressInfo) => void
   onFocus?: (e: FocusEvent) => void
   onBlur?: (e: FocusEvent) => void

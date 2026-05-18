@@ -19,7 +19,14 @@ export default defineConfig({
       fileName: () => "index.js",
     },
     rollupOptions: {
-      external: ["solid-js", "solid-js/web", "solid-js/store", "motion", "@solid-primitives/refs"],
+      external: [
+        "solid-js",
+        "solid-js/web",
+        "solid-js/store",
+        "motion",
+        "motion-dom",
+        "@solid-primitives/refs",
+      ],
     },
     target: "es2022",
     sourcemap: true,

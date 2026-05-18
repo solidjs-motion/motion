@@ -13,6 +13,7 @@ import type {
   Variants,
 } from "../types"
 import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
+import { createGestures } from "./createGestures"
 import { createGestureStateMachine } from "./gesture-state"
 
 // ---------------------------------------------------------------------------
@@ -177,9 +178,7 @@ export function createMotion(
 
   // ---------- Gesture state machine (Q3b, ADR 0002) ----------
   // Owns target resolution, priority winners, and the diff-and-animate loop.
-  // Returns `setActive` which Phase 2 gesture wiring (Commit 2+) uses to
-  // toggle the active flags as gesture events fire.
-  // biome-ignore lint/correctness/noUnusedVariables: setActive used by gesture wiring in subsequent commits.
+  // Returns `setActive` which gesture wiring uses to toggle active flags.
   const { setActive } = createGestureStateMachine({
     el,
     getOpts,
@@ -189,9 +188,11 @@ export function createMotion(
     initialTarget: capturedInitialTarget,
   })
 
-  // Phase 2 hooks:
-  //   createGestures(el, getOpts, setActive)
-  //   createDrag(el, getOpts, setActive)
+  // ---------- Pointer-event gestures (hover, press) ----------
+  // Listeners attach unconditionally on mount; the state machine no-ops when
+  // an active state has no target. Focus + inView land in Commit 3, drag/pan
+  // in Commits 5-6.
+  createGestures(el, getOpts, setActive)
 }
 
 // Re-export for useMotion to consume the same helpers without circular deps.
