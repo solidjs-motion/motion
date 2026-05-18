@@ -263,3 +263,88 @@ describe("gesture state machine — reactive opts", () => {
     dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// No-`animate`-prop revert (regression — Phase 2's GestureComposition demo).
+//
+// When the user wires `initial` + gesture states without an `animate` prop,
+// the bail-early at the top of the diff effect MUST still let the
+// removed-key fallback run, otherwise gestures never visually revert.
+// Caught a real-world bug: a button with `initial: { scale: 1 }`,
+// `hover: { scale: 1.05 }`, no `animate` — once hovered, never returned.
+// ---------------------------------------------------------------------------
+
+describe("gesture state machine — revert without `animate` prop", () => {
+  it("reverts hover keys to initial when only `initial` + `hover` are set (no `animate`)", () => {
+    const { setActive, dispose } = makeStateMachine(
+      { hover: { scale: 1.05, opacity: 0.9 } },
+      // initialTarget — the construction-time-resolved initial. Provides the
+      // fallback values when hover deactivates.
+      { scale: 1, opacity: 1 },
+    )
+    animateSpy.mockClear()
+
+    setActive("whileHover", true)
+    const onCall = animateSpy.mock.calls.at(-1)
+    expect(onCall?.[1]).toMatchObject({ scale: 1.05, opacity: 0.9 })
+
+    // Hover off — both keys MUST animate back to their initial values.
+    // Without the fix, the bail-early ("no winners AND no animate target")
+    // returns before the removed-key loop, so the revert never fires.
+    setActive("whileHover", false)
+    const offCall = animateSpy.mock.calls.at(-1)
+    expect(offCall?.[1]).toMatchObject({ scale: 1, opacity: 1 })
+    dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MotionValue-in-target subscriptions must SURVIVE a winners re-run that
+// produces no diff (regression — Phase 2's SignalDrivenSize + ScrollLinked).
+//
+// Phase 2 wires createGestures unconditionally on every motion element. Its
+// inView wiring fires `setActive("whileInView", ...)` once the browser's
+// IntersectionObserver reports initial intersection — which invalidates the
+// winners memo. With no `inView` target the winner *values* are unchanged,
+// but the memo re-emits a new object reference and the diff-and-animate
+// effect re-runs. Its iteration-scoped `onCleanup` unsubscribes the
+// MV-on-change listeners BEFORE the new run, and if the new run early-
+// returns ("no diff"), the listeners are never reattached.
+// ---------------------------------------------------------------------------
+
+describe("gesture state machine — MV subscriptions survive no-diff re-runs", () => {
+  it("re-subscribes MV-on-change listeners when the effect re-runs with no value change", async () => {
+    const { motionValue } = await import("motion")
+    const size = motionValue(80)
+
+    // Function-form options reading a signal. Updating the signal invalidates
+    // the stateTargets memo (and therefore winners), forcing a fresh effect
+    // run — exactly the pattern createGestures's inView wiring produces.
+    const { createSignal } = await import("solid-js")
+    const [tick, setTick] = createSignal(0)
+    const { dispose } = makeStateMachine(() => {
+      void tick()
+      return { animate: { width: size, height: size } }
+    })
+
+    // Initial animate call uses MV snapshot.
+    expect(animateSpy).toHaveBeenCalledTimes(1)
+    expect(animateSpy.mock.calls[0]?.[1]).toMatchObject({ width: 80, height: 80 })
+    animateSpy.mockClear()
+
+    // Force a winners re-run that produces no diff (target values unchanged).
+    setTick(1)
+
+    // Now poke the MV. If the bug exists, the MV listener was unsubscribed
+    // by the iteration-scoped onCleanup and never reattached — animate
+    // won't fire. If the fix is in place, the listener survives.
+    size.set(120)
+
+    expect(animateSpy).toHaveBeenCalled()
+    const widthCall = animateSpy.mock.calls.find((c) =>
+      Object.keys(c[1] as object).includes("width"),
+    )
+    expect(widthCall?.[1]).toMatchObject({ width: 120 })
+    dispose()
+  })
+})

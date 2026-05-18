@@ -226,64 +226,57 @@ export function createGestureStateMachine(
     // Q6 sub-3: `initial: false` skips the very first animate. Subsequent
     // signal-driven runs animate normally. We seed lastApplied so the next
     // iteration's diff treats the current winners as already-applied.
+    // Note: even on this guard we still want to (re)subscribe to MVs in
+    // `next` so subsequent MV.set() drives animate. Fall through to the
+    // subscription loop below; just skip the actual animate dispatch.
+    let skipAnimate = false
     if (isFirstRun && untrack(() => opts.initial) === false) {
-      isFirstRun = false
       lastApplied = snapshotValues(next)
-      return
+      skipAnimate = true
     }
     isFirstRun = false
 
-    // Phase 1 invariant preserved: if no animate target AND no parent animate
-    // context AND no other active state contributes any key, do nothing. This
-    // matches the early-return guard from Phase 1's createMotion effect.
-    if (
+    // Bail out completely only when there is nothing to do AND nothing has
+    // been applied yet (no lastApplied to revert). The previous version of
+    // this guard also bailed when `next` was empty even if lastApplied still
+    // held values from a previous gesture — preventing the removed-key
+    // fallback from reverting. The looser condition keeps the same early-out
+    // for the initial idle case while letting deactivation reverts run.
+    const bailOnNoTarget =
+      !skipAnimate &&
       Object.keys(next).length === 0 &&
+      Object.keys(lastApplied).length === 0 &&
       opts.animate === undefined &&
       parentVariantCtx.animate?.() === undefined
-    ) {
-      return
-    }
+    if (bailOnNoTarget) return
 
     // Compute changes: (a) keys with new/changed values, (b) removed keys.
     const changes: Record<string, unknown> = {}
     let mergedPerTargetTransition: Transition | undefined
 
-    for (const key in next) {
-      const entry = next[key]
-      // `noUncheckedIndexedAccess` widens record reads to `T | undefined`,
-      // but `for (key in obj)` only yields present keys — entry is real.
-      if (!entry) continue
-      if (lastApplied[key] !== entry.value) {
-        changes[key] = entry.value
-        // First non-undefined per-target transition wins. (If multiple winners
-        // contribute conflicting transitions, the highest-priority one already
-        // took precedence in the priority walk.)
-        mergedPerTargetTransition ??= entry.transition
+    if (!skipAnimate) {
+      for (const key in next) {
+        const entry = next[key]
+        // `noUncheckedIndexedAccess` widens record reads to `T | undefined`,
+        // but `for (key in obj)` only yields present keys — entry is real.
+        if (!entry) continue
+        if (lastApplied[key] !== entry.value) {
+          changes[key] = entry.value
+          // First non-undefined per-target transition wins. (If multiple winners
+          // contribute conflicting transitions, the highest-priority one already
+          // took precedence in the priority walk.)
+          mergedPerTargetTransition ??= entry.transition
+        }
       }
-    }
-    for (const key in lastApplied) {
-      if (key in next) continue
-      // Removed-key fallback: own initial → motion default → null.
-      const initialValue =
-        initialTarget && key in (initialTarget as Record<string, unknown>)
-          ? (initialTarget as Record<string, unknown>)[key]
-          : undefined
-      changes[key] = initialValue !== undefined ? initialValue : getMotionDefault(key)
-    }
-
-    if (Object.keys(changes).length === 0) return
-
-    // Update lastApplied to the new winner snapshot (NOT including removed-key
-    // fallback values — those become "applied" only after the animation lands,
-    // but tracking that requires onUpdate plumbing. For diff purposes, we
-    // consider them applied immediately; if the user re-activates a state that
-    // brings the key back, the diff sees `lastApplied[key] = fallback` vs
-    // `next[key] = newValue` and animates correctly).
-    lastApplied = { ...lastApplied, ...changes }
-    // Then drop keys that don't appear in `next` from lastApplied so future
-    // re-removals don't compare against stale fallback values.
-    for (const key in lastApplied) {
-      if (!(key in next) && !(key in changes)) delete lastApplied[key]
+      for (const key in lastApplied) {
+        if (key in next) continue
+        // Removed-key fallback: own initial → motion default → null.
+        const initialValue =
+          initialTarget && key in (initialTarget as Record<string, unknown>)
+            ? (initialTarget as Record<string, unknown>)[key]
+            : undefined
+        changes[key] = initialValue !== undefined ? initialValue : getMotionDefault(key)
+      }
     }
 
     // Transition merge: MotionConfig default < user's transition < per-target
@@ -296,21 +289,15 @@ export function createGestureStateMachine(
       reduced,
     )
 
-    // ---------- splitTarget: separate MotionValue refs from plain values ----------
-    // Preserved from Phase 1: motion's vanilla animate(el, target) doesn't
-    // subscribe to MotionValue refs in target values. We split, seed the
-    // animate call with snapshots, then subscribe each MV separately.
-    const { plain, motionValues } = splitTarget(changes)
-
-    // Cancel any in-flight animation before kicking off the next one.
-    prevControls?.stop()
-
     // Track which animate value triggered this — used by onAnimationComplete.
     // If `next` has any key from `animate` state, the effective value is opts.animate.
     // If only gesture states are active, the highest-priority active state's value drives.
     const driverState = highestActiveDriverState(next)
     const effectiveAnimateValue = animateValueForState(driverState, opts, parentVariantCtx)
 
+    // Animate options builder — read at fire-time so reactive callback swaps
+    // apply between calls (per Phase 1 semantics). Closed over by the
+    // MV-on-change subscriptions below as well as the diff dispatch.
     const buildAnimateOptions = () => ({
       ...transition,
       onPlay: opts.onAnimationStart ? () => untrack(() => opts.onAnimationStart?.()) : undefined,
@@ -328,18 +315,58 @@ export function createGestureStateMachine(
         : undefined,
     })
 
-    // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
-    prevControls = animate(el, plain as any, buildAnimateOptions())
+    if (!skipAnimate && Object.keys(changes).length > 0) {
+      // Update lastApplied to the new winner snapshot (NOT including removed-
+      // key fallback values — those become "applied" only after the animation
+      // lands, but tracking that requires onUpdate plumbing. For diff purposes,
+      // we consider them applied immediately; if the user re-activates a state
+      // that brings the key back, the diff sees `lastApplied[key] = fallback`
+      // vs `next[key] = newValue` and animates correctly).
+      lastApplied = { ...lastApplied, ...changes }
+      // Then drop keys that don't appear in `next` from lastApplied so future
+      // re-removals don't compare against stale fallback values.
+      for (const key in lastApplied) {
+        if (!(key in next) && !(key in changes)) delete lastApplied[key]
+      }
 
-    // Per-MotionValue change subscription. iteration-scoped onCleanup fires
-    // on next effect run AND owner disposal (Phase 1 pattern).
-    for (const { key, mv } of motionValues) {
-      onCleanup(
-        mv.on("change", (v) => {
-          // biome-ignore lint/suspicious/noExplicitAny: same as above
-          animate(el, { [key]: v } as any, buildAnimateOptions())
-        }),
-      )
+      // ---------- splitTarget: separate MotionValue refs from plain values ----------
+      // Preserved from Phase 1: motion's vanilla animate(el, target) doesn't
+      // subscribe to MotionValue refs in target values. We split and seed the
+      // animate call with snapshots; per-MV subscription happens below.
+      const { plain } = splitTarget(changes)
+
+      // Cancel any in-flight animation before kicking off the next one.
+      prevControls?.stop()
+      // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
+      prevControls = animate(el, plain as any, buildAnimateOptions())
+    }
+
+    // ---------- MotionValue-in-target subscriptions ----------
+    // Walk `next` (the FULL winner set) rather than `changes` (the diff) and
+    // subscribe a per-key animate callback to each MV's `change` event. This
+    // loop runs on EVERY effect iteration that gets past the bailOnNoTarget
+    // guard above, including iterations that produced no diff.
+    //
+    // Bug fix: previously this loop lived inside the "has changes" branch.
+    // Sibling effects in createGestures (notably the inView wiring's
+    // setActive call after IntersectionObserver's first emission) can
+    // invalidate the winners memo without changing any actual value. On
+    // those re-runs, the iteration-scoped `onCleanup` from the prior run
+    // unsubscribed the MV listeners and we never reattached, dropping all
+    // future MV.set() → animate plumbing. Walking `next` here keeps the
+    // subscriptions in lockstep with the effect's lifetime.
+    for (const key in next) {
+      const entry = next[key]
+      if (!entry) continue
+      if (isMotionValue(entry.value)) {
+        const mv = entry.value as MotionValue<unknown>
+        onCleanup(
+          mv.on("change", (v) => {
+            // biome-ignore lint/suspicious/noExplicitAny: same as above
+            animate(el, { [key]: v } as any, buildAnimateOptions())
+          }),
+        )
+      }
     }
   })
 

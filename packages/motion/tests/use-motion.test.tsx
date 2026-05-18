@@ -222,6 +222,36 @@ describe("createMotion — reactive form", () => {
     expect(animateSpy.mock.calls[2]?.[1]).toMatchObject({ width: 160 })
     unmount()
   })
+
+  it("re-fires animate when a createMotionValue (Proxy hybrid) in target changes", async () => {
+    // Same coverage as the prior test, but using the callable-hybrid
+    // factory rather than raw motionValue(). Validates that isMotionValue's
+    // duck-typed `.getVelocity` check passes through the Proxy and that the
+    // change-subscription path remains wired when the MV reference is a
+    // Proxy (the basic example's SignalDrivenSize demo exercises this).
+    const { createMotionValue } = await import("../src/primitives/motion-value")
+    let size!: ReturnType<typeof createMotionValue<number>>
+    const { unmount } = render(() => {
+      size = createMotionValue(80)
+      const m = useMotion({ animate: { width: size, height: size } })
+      return <div {...m()} />
+    })
+    expect(animateSpy).toHaveBeenCalledTimes(1)
+    expect(animateSpy.mock.calls[0]?.[1]).toMatchObject({ width: 80, height: 80 })
+
+    size.set(120)
+    // Two re-fires: once for width's change-subscription, once for height's.
+    expect(animateSpy).toHaveBeenCalledTimes(3)
+    const widthCall = animateSpy.mock.calls
+      .slice(1)
+      .find((c) => Object.keys(c[1] as object).includes("width"))
+    const heightCall = animateSpy.mock.calls
+      .slice(1)
+      .find((c) => Object.keys(c[1] as object).includes("height"))
+    expect(widthCall?.[1]).toMatchObject({ width: 120 })
+    expect(heightCall?.[1]).toMatchObject({ height: 120 })
+    unmount()
+  })
 })
 
 // ---------------------------------------------------------------------------
