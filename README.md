@@ -4,6 +4,9 @@ Monorepo for [`solidjs-motion`](./packages/motion) — a SolidJS animation libra
 API surface of `motion/react` while taking advantage of Solid primitives. Wraps the
 framework-agnostic [`motion`](https://motion.dev) package.
 
+**Live demos:** [solidjs-motion.github.io/motion](https://solidjs-motion.github.io/motion/) —
+every primitive and pattern with its source.
+
 ## Workspace layout
 
 ```
@@ -11,11 +14,10 @@ framework-agnostic [`motion`](https://motion.dev) package.
 ├── packages/
 │   └── motion/          # the library — published to npm and JSR
 └── examples/
-    └── basic/           # Vite SPA — first visual sanity check
+    └── basic/           # routed Vite SPA demo gallery (deployed to Pages)
 ```
 
-Future phases will add `examples/showcase` (feature gallery) and `examples/ssr-test`
-(SolidStart-based SSR canary).
+Future phases will add `examples/ssr-test` (SolidStart-based SSR canary).
 
 ## Tooling
 
@@ -53,8 +55,21 @@ bun --filter basic dev
 
 ## Status
 
-Phase 0 (workspace scaffold). The library is a placeholder; Phase 1 lands the real
-`useMotion` primitive.
+Pre-alpha (0.0.x). Phases 1 and 2 of the
+[implementation plan](./solid-motion-port-plan.md) are landed:
+
+- **Shipped:** `useMotion`, the full MotionValue family (`createMotionValue`,
+  `createTransform`, `createSpring`, `createTime`, `createVelocity`, `createTemplate`),
+  scroll + viewport (`createScroll`, `createInView`), gestures (hover / press / focus /
+  whileInView), drag with constraints/elastic/momentum, `createPan`, `createDragControls`,
+  variants with parent-cascade + controlling-children rule, `<MotionConfig>`,
+  `createReducedMotion`, SSR-friendly first paint.
+- **Next up:** `<Presence>` for exit animations; `<motion.div>` proxy + `motion(Component)`
+  HOC for JSX-level wrappers with automatic variant-context propagation.
+- **Deferred to v0.2+:** layout animations, `layoutId` shared-element transitions,
+  `<Reorder>`, SVG path drawing, `useAnimate`, `LazyMotion`.
+
+See [`packages/motion/README.md`](./packages/motion/README.md#roadmap) for the per-API breakdown.
 
 ## License
 
