@@ -30,6 +30,14 @@ function setNow(ms: number) {
   timeMock.now.mockReturnValue(ms)
 }
 
+/** Snapshot a MotionValueAccessor pair (no tracking — uses `.get()`). */
+function snapshotPair(pair: { x: { get: () => number }; y: { get: () => number } }): {
+  x: number
+  y: number
+} {
+  return { x: pair.x.get(), y: pair.y.get() }
+}
+
 // ---------------------------------------------------------------------------
 // Threshold gating (Q11a — default 3px before onPanStart fires).
 // ---------------------------------------------------------------------------
@@ -302,26 +310,28 @@ describe("createPan — velocity tracking", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Store return — reactive state via path-tracking.
+// Returned reactive surface — MotionValueAccessors for numeric pairs +
+// Accessor<boolean> for isPanning (semantic split: MVs for animate-able
+// values, Accessor for booleans).
 // ---------------------------------------------------------------------------
 
-describe("createPan — reactive state store", () => {
-  it("initializes the store with zero values before any pointerdown", () => {
+describe("createPan — reactive return surface", () => {
+  it("initializes all numeric MVs to zero and isPanning to false before any pointerdown", () => {
     const { unmount } = render(() => {
       const [el, setEl] = createSignal<HTMLElement>()
       const pan = createPan(el)
-      // Read every field once so the test inspects what consumers would see.
-      expect(pan.isPanning).toBe(false)
-      expect(pan.point).toEqual({ x: 0, y: 0 })
-      expect(pan.delta).toEqual({ x: 0, y: 0 })
-      expect(pan.offset).toEqual({ x: 0, y: 0 })
-      expect(pan.velocity).toEqual({ x: 0, y: 0 })
+      // Untracked snapshot reads via the MotionValue surface (.get).
+      expect(pan.isPanning()).toBe(false)
+      expect(snapshotPair(pan.point)).toEqual({ x: 0, y: 0 })
+      expect(snapshotPair(pan.delta)).toEqual({ x: 0, y: 0 })
+      expect(snapshotPair(pan.offset)).toEqual({ x: 0, y: 0 })
+      expect(snapshotPair(pan.velocity)).toEqual({ x: 0, y: 0 })
       return <div ref={setEl} />
     })
     unmount()
   })
 
-  it("updates the store fields on every pointermove (Option X — pre-threshold included)", () => {
+  it("updates MVs on every pointermove (Option X — pre-threshold included)", () => {
     let pan!: ReturnType<typeof createPan>
     const { container, unmount } = render(() => {
       const [el, setEl] = createSignal<HTMLElement>()
@@ -333,23 +343,23 @@ describe("createPan — reactive state store", () => {
     // Pre-threshold move (1px < 3px default). isPanning still false, but
     // point/offset DO update under Option X.
     fireEvent.pointerDown(el, { pointerId: 1, clientX: 100, clientY: 50, isPrimary: true })
-    expect(pan.point).toEqual({ x: 100, y: 50 })
-    expect(pan.isPanning).toBe(false)
+    expect(snapshotPair(pan.point)).toEqual({ x: 100, y: 50 })
+    expect(pan.isPanning()).toBe(false)
 
     fireEvent.pointerMove(window, { pointerId: 1, clientX: 101, clientY: 50, isPrimary: true })
-    expect(pan.point).toEqual({ x: 101, y: 50 })
-    expect(pan.offset).toEqual({ x: 1, y: 0 })
-    expect(pan.isPanning).toBe(false)
+    expect(snapshotPair(pan.point)).toEqual({ x: 101, y: 50 })
+    expect(snapshotPair(pan.offset)).toEqual({ x: 1, y: 0 })
+    expect(pan.isPanning()).toBe(false)
 
     // Threshold crossing flips isPanning true; fields keep updating.
     fireEvent.pointerMove(window, { pointerId: 1, clientX: 110, clientY: 50, isPrimary: true })
-    expect(pan.point).toEqual({ x: 110, y: 50 })
-    expect(pan.offset).toEqual({ x: 10, y: 0 })
-    expect(pan.isPanning).toBe(true)
+    expect(snapshotPair(pan.point)).toEqual({ x: 110, y: 50 })
+    expect(snapshotPair(pan.offset)).toEqual({ x: 10, y: 0 })
+    expect(pan.isPanning()).toBe(true)
     unmount()
   })
 
-  it("retains last point/offset/velocity values after pointerup; only isPanning flips", () => {
+  it("retains last point/offset/velocity MV values after pointerup; only isPanning flips", () => {
     let pan!: ReturnType<typeof createPan>
     const { container, unmount } = render(() => {
       const [el, setEl] = createSignal<HTMLElement>()
@@ -361,19 +371,19 @@ describe("createPan — reactive state store", () => {
     fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
     fireEvent.pointerMove(window, { pointerId: 1, clientX: 50, clientY: 30, isPrimary: true })
     fireEvent.pointerMove(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
-    expect(pan.isPanning).toBe(true)
-    expect(pan.point).toEqual({ x: 80, y: 40 })
+    expect(pan.isPanning()).toBe(true)
+    expect(snapshotPair(pan.point)).toEqual({ x: 80, y: 40 })
 
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
 
-    expect(pan.isPanning).toBe(false)
-    // Point/offset RETAINED (Option Q5/3 — "retain last").
-    expect(pan.point).toEqual({ x: 80, y: 40 })
-    expect(pan.offset).toEqual({ x: 80, y: 40 })
+    expect(pan.isPanning()).toBe(false)
+    // Point/offset MVs RETAINED (Option Q5/3 — "retain last").
+    expect(snapshotPair(pan.point)).toEqual({ x: 80, y: 40 })
+    expect(snapshotPair(pan.offset)).toEqual({ x: 80, y: 40 })
     unmount()
   })
 
-  it("resets per-session fields on a new pointerdown (offset/delta back to 0)", () => {
+  it("resets per-session MVs on a new pointerdown (offset/delta back to 0)", () => {
     let pan!: ReturnType<typeof createPan>
     const { container, unmount } = render(() => {
       const [el, setEl] = createSignal<HTMLElement>()
@@ -386,19 +396,19 @@ describe("createPan — reactive state store", () => {
     fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
     fireEvent.pointerMove(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
-    expect(pan.offset).toEqual({ x: 80, y: 40 })
+    expect(snapshotPair(pan.offset)).toEqual({ x: 80, y: 40 })
 
     // Second session starting at (200, 100). Offset MUST reset to zero,
     // not accumulate from the previous session's end value.
     fireEvent.pointerDown(el, { pointerId: 1, clientX: 200, clientY: 100, isPrimary: true })
-    expect(pan.point).toEqual({ x: 200, y: 100 })
-    expect(pan.offset).toEqual({ x: 0, y: 0 })
-    expect(pan.delta).toEqual({ x: 0, y: 0 })
-    expect(pan.velocity).toEqual({ x: 0, y: 0 })
+    expect(snapshotPair(pan.point)).toEqual({ x: 200, y: 100 })
+    expect(snapshotPair(pan.offset)).toEqual({ x: 0, y: 0 })
+    expect(snapshotPair(pan.delta)).toEqual({ x: 0, y: 0 })
+    expect(snapshotPair(pan.velocity)).toEqual({ x: 0, y: 0 })
     unmount()
   })
 
-  it("path-tracking: reading only `point.x` does not invalidate on velocity changes", () => {
+  it("per-MV granularity: reading only `point.x()` does not invalidate on velocity changes", () => {
     let pan!: ReturnType<typeof createPan>
     const xReadCount = vi.fn()
     const velocityReadCount = vi.fn()
@@ -410,15 +420,18 @@ describe("createPan — reactive state store", () => {
       const [elRef, setElRef] = createSignal<HTMLElement>()
       pan = createPan(elRef)
 
-      // createComputed (not createEffect) so re-runs from setState happen
-      // synchronously — the test can read counts immediately after a
-      // fireEvent without awaiting microtasks.
+      // createComputed (not createEffect) so re-runs from MV change events
+      // happen synchronously — the test can read counts immediately after a
+      // fireEvent without awaiting microtasks. Invoke the callable
+      // hybrid (`pan.point.x()`) so the Solid bridge signal is tracked;
+      // accessing `pan.point.x` alone returns the proxy object and would
+      // NOT subscribe.
       createComputed(() => {
-        void pan.point.x
+        void pan.point.x()
         xReadCount()
       })
       createComputed(() => {
-        void pan.velocity.x
+        void pan.velocity.x()
         velocityReadCount()
       })
 
@@ -441,12 +454,32 @@ describe("createPan — reactive state store", () => {
 
     // x effect re-ran (point.x changed).
     expect(finalX).toBeGreaterThan(initialX)
-    // velocity effect did NOT re-run (velocity stayed {0, 0} due to
-    // time-mock returning 0 for both samples). This validates
-    // path-tracking — change in point.x doesn't invalidate consumers
-    // reading only velocity.
+    // velocity effect did NOT re-run (velocity stayed 0 due to the
+    // time-mock returning 0 for both samples). The MV change-event
+    // bridge ensures consumers reading one MV aren't invalidated by
+    // another MV's writes — the same per-field granularity Store
+    // path-tracking gave, expressed via MotionValue subscriptions.
     expect(finalVel).toBe(initialVel)
 
+    unmount()
+  })
+
+  it("point.x exposes the full MotionValue surface (.get / .set / .on / .getVelocity)", () => {
+    // Lock down the callable-hybrid contract: numeric pairs are MotionValues,
+    // not just signals. Consumers can pipe them into `animate()`,
+    // `createTransform`, `useMotion` targets — the proxy forwards every
+    // upstream MotionValue method through to the wrapped value.
+    const { unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      const pan = createPan(el)
+      const x = pan.point.x
+      expect(typeof x).toBe("function") // callable as an Accessor
+      expect(typeof x.get).toBe("function")
+      expect(typeof x.set).toBe("function")
+      expect(typeof x.on).toBe("function")
+      expect(typeof x.getVelocity).toBe("function")
+      return <div ref={setEl} />
+    })
     unmount()
   })
 })

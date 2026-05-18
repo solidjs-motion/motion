@@ -1,5 +1,5 @@
 import { scroll as motionScroll } from "motion"
-import { createComputed, onCleanup } from "solid-js"
+import { createEffect, onCleanup } from "solid-js"
 import type { MotionValueAccessor } from "../types"
 import { createMotionValue } from "./motion-value"
 
@@ -76,15 +76,16 @@ export function createScroll(options?: CreateScrollOptions): CreateScrollResult 
     scrollYProgress.set(info.y.progress)
   }
 
-  // Reactive setup: accessors inside the computation are tracked, so re-init
-  // happens when container/target refs change. createComputed runs both first
-  // iteration and updates synchronously, so the motion subscription registers
-  // before createRoot/render returns.
+  // createEffect — Solid-idiomatic for side-effect setup (attaching the
+  // motion scroll subscription). First iteration runs in the next
+  // microtask, which is harmless: scroll events can't fire before the
+  // microtask flushes after mount. Accessors inside the body (container,
+  // target) are tracked — re-init happens when refs change.
   //
-  // Each iteration's onCleanup is scoped to that iteration — Solid fires it
-  // when the computation re-runs (tearing down the previous subscription) and
-  // again when the outer owner disposes (tearing down the final one).
-  createComputed(() => {
+  // Each iteration's onCleanup is scoped to that iteration — Solid fires
+  // it when the effect re-runs (tearing down the previous subscription)
+  // and again when the outer owner disposes (tearing down the final one).
+  createEffect(() => {
     const container = options?.container?.() ?? undefined
     const target = options?.target?.() ?? undefined
     const cleanup = motionScroll(handler, {

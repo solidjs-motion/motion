@@ -1,31 +1,41 @@
 import { isPrimaryPointer, time } from "motion-dom"
-import { createEffect, onCleanup } from "solid-js"
-import { createStore, type Store } from "solid-js/store"
-import type { PanInfo } from "../types"
+import { type Accessor, createEffect, createSignal, onCleanup } from "solid-js"
+import type { MotionValueAccessor, PanInfo } from "../types"
+import { createMotionValue } from "./motion-value"
 
 // ---------------------------------------------------------------------------
 // createPan — standalone pan-session primitive (Q11/c).
 //
-// Phase 2 Commit 5 (Q11/D3): this is the pointer-session machinery that
-// Commit 6's createDrag will use as its underlying event source. Drag IS a
-// pan that owns the element's transform; pan on its own is callback-only
-// (no `whilePan` state).
+// Phase 2 Commit 5 (Q11/D3): pointer-session machinery that createDrag uses
+// as its underlying event source. Drag IS a pan that owns the element's
+// transform; pan on its own is callback-only (no `whilePan` state).
 //
-// Return shape — a single path-tracked {@link Store} of `{ isPanning } &
-// PanInfo`. Users read via path (`pan.isPanning`, `pan.point.x`) — Solid's
-// store path-tracking means each field has its own reactive subscription
-// created lazily on first read. Don't destructure (breaks the proxy);
-// always go through the returned reference.
+// Return shape — a SEMANTIC split between animate-able numeric values
+// (MotionValueAccessors) and non-animate-able state (a plain Accessor):
+//
+//   - `point.x/y`, `delta.x/y`, `offset.x/y`, `velocity.x/y` → each is a
+//     {@link MotionValueAccessor}<number>. Calling them (`pan.point.x()`) is
+//     Solid-tracked; the full MotionValue surface (`.get`, `.set`, `.on`,
+//     `.getVelocity`) is available; they compose directly with `animate()`,
+//     `createTransform`, `useMotion` targets, and JSX reactivity.
+//   - `isPanning` → a plain `Accessor<boolean>`. Booleans aren't animate-able,
+//     so wrapping in an MV would only add weight.
+//
+// Why MotionValues for the numeric fields? Composability. Users can pipe
+// `pan.point.x` straight into `createTransform`, `animate()`, or use it as
+// a target in `useMotion({ animate: { x: pan.point.x } })` — same surface
+// Phase 1 established for every animate-able value in the library.
 //
 // The session:
-//   pointerdown    → reset per-session fields, attach window listeners
-//   pointermove(s) → update info every move (Option X — includes pre-
-//                    threshold so consumers can render threshold-progress
-//                    or early-detect fast pans); once cumulative offset
+//   pointerdown    → reset per-session MVs to start point / zeros, attach
+//                    window listeners
+//   pointermove(s) → update MVs every move (Option X — pre-threshold too,
+//                    so consumers can render threshold-progress or
+//                    early-detect fast pans); once cumulative offset
 //                    crosses `threshold`, isPanning flips true and
 //                    onPanStart fires; subsequent moves fire onPan
 //   pointerup      → flip isPanning false; if pan happened, fire onPanEnd;
-//                    point/delta/offset/velocity RETAINED (useful for
+//                    point/delta/offset/velocity MVs RETAINED (useful for
 //                    snap-to-end animations)
 //   pointercancel  → same as pointerup, but the user's gesture was aborted
 //
@@ -60,40 +70,46 @@ export type CreatePanOptions = {
   threshold?: number
 }
 
-/** The store-shaped state {@link createPan} returns. */
-export type PanState = { isPanning: boolean } & PanInfo
+/** Per-axis pair of {@link MotionValueAccessor}s — `pan.point`, `pan.delta`, etc. */
+export type PanAxisPair = {
+  x: MotionValueAccessor<number>
+  y: MotionValueAccessor<number>
+}
 
-/** Zero state — used as the initial value AND on each pointerdown reset. */
-function zeroState(): PanState {
-  return {
-    isPanning: false,
-    point: { x: 0, y: 0 },
-    delta: { x: 0, y: 0 },
-    offset: { x: 0, y: 0 },
-    velocity: { x: 0, y: 0 },
-  }
+/**
+ * Returned by {@link createPan}. `isPanning` is a plain Accessor (booleans
+ * aren't animate-able). The four numeric pairs are MotionValueAccessors,
+ * each composable with `animate()`, `createTransform`, and `useMotion`.
+ */
+export type CreatePanResult = {
+  isPanning: Accessor<boolean>
+  point: PanAxisPair
+  delta: PanAxisPair
+  offset: PanAxisPair
+  velocity: PanAxisPair
 }
 
 /**
  * Observe pointer-driven pan gestures on an element.
  *
- * Returns a {@link Store} `{ isPanning, point, delta, offset, velocity }`.
- * Reading any path is reactive via Solid's path-tracking — `pan.point.x`
- * subscribes only to point-x changes, not velocity or isPanning.
+ * Returns `{ isPanning, point, delta, offset, velocity }`:
  *
- * - `pan.isPanning` — `true` between onPanStart and onPanEnd.
- * - `pan.point` — current pointer position in client coordinates.
- * - `pan.delta` — delta since last pointermove.
- * - `pan.offset` — cumulative offset since the current pointerdown.
- * - `pan.velocity` — sliding-window velocity in px/sec.
+ * - `pan.isPanning()` — Solid Accessor; `true` between onPanStart and onPanEnd.
+ * - `pan.point.x`, `pan.point.y` — current pointer position in client coords.
+ *   Each is a {@link MotionValueAccessor}: call `pan.point.x()` for a tracked
+ *   read, `pan.point.x.get()` for an untracked snapshot, and pass it directly
+ *   to `animate()`, `createTransform`, or `useMotion` targets.
+ * - `pan.delta.x/y` — delta since last pointermove.
+ * - `pan.offset.x/y` — cumulative offset since the current pointerdown.
+ * - `pan.velocity.x/y` — sliding-window velocity in px/sec.
  *
  * Fields update from `pointerdown` forward (including pre-threshold moves)
- * — gate reads on `pan.isPanning` if you only care about real pans.
+ * — gate reads on `pan.isPanning()` if you only care about real pans.
  *
  * The `options` argument accepts either a static object or a function form
  * (matching `useMotion`'s convention). The function form is read INSIDE
  * each pointer-event handler, so reactive option changes apply on the next
- * relevant event without re-attaching listeners:
+ * relevant event without re-attaching listeners.
  *
  * @example Static options
  * const pan = createPan(el, {
@@ -108,34 +124,47 @@ function zeroState(): PanState {
  *   onPanStart: (e, info) => console.log(info),
  * }))
  *
- * @example Element-ref pattern
- * const [el, setEl] = createSignal<HTMLElement>()
+ * @example Composing pan.point.x with createTransform
  * const pan = createPan(el)
+ * const rotation = createTransform(pan.point.x, [0, 300], [0, 90])
+ * <div ref={setEl} style={{ transform: `rotate(${rotation()}deg)` }} />
  *
- * <div ref={setEl}>
- *   <Show when={pan.isPanning}>
- *     Position: {pan.point.x}, {pan.point.y}
- *   </Show>
- * </div>
+ * @example Reading reactively in JSX
+ * const pan = createPan(el)
+ * <Show when={pan.isPanning()}>
+ *   Position: {pan.point.x()}, {pan.point.y()}
+ * </Show>
  */
 export function createPan(
   ref: () => HTMLElement | null | undefined,
   options: CreatePanOptions | (() => CreatePanOptions) = {},
-): Store<PanState> {
+): CreatePanResult {
   // Normalize to a function form. All option reads inside event handlers
   // call this so the latest reactive values are seen on each event.
   const getOpts: () => CreatePanOptions = typeof options === "function" ? options : () => options
-  const [state, setState] = createStore<PanState>(zeroState())
+
+  // ---- State surface ----
+  // isPanning is a plain signal — booleans aren't animate-able, so a full
+  // MotionValue would be dead weight.
+  const [isPanning, setIsPanning] = createSignal(false)
+  // Eight MVs for the four numeric pairs. Each becomes a callable hybrid via
+  // createMotionValue: invokable as a tracked Accessor AND has the full
+  // MotionValue surface so consumers can pipe them into `animate()`,
+  // `createTransform`, or `useMotion` targets.
+  const pointX = createMotionValue(0)
+  const pointY = createMotionValue(0)
+  const deltaX = createMotionValue(0)
+  const deltaY = createMotionValue(0)
+  const offsetX = createMotionValue(0)
+  const offsetY = createMotionValue(0)
+  const velocityX = createMotionValue(0)
+  const velocityY = createMotionValue(0)
 
   // createEffect — Solid-idiomatic for side-effect setup (DOM listeners).
   // First iteration runs in the next microtask, which is harmless here: a
   // freshly-mounted element can't receive pointer events between the ref
   // callback firing and the next microtask. Re-runs (ref changes) carry the
   // same harmless delay.
-  //
-  // Note: Phase 1's createInView / createScroll use createComputed for the
-  // same kind of setup work. A follow-up commit (see TODO) will migrate
-  // those to createEffect too for consistency with this primitive.
   createEffect(() => {
     const el = ref()
     if (!el) return
@@ -145,12 +174,12 @@ export function createPan(
     // the next relevant event without re-attaching listeners (which would
     // require this effect to depend on getOpts and re-run on opt changes).
 
-    // Session state — reset on each pointerdown. Scoped per createComputed
-    // iteration; cleanup below reaches all listeners regardless of phase.
+    // Session state — reset on each pointerdown. Scoped per effect iteration;
+    // cleanup below reaches all listeners regardless of phase.
     let startPoint: Point | null = null
     let lastPoint: Point | null = null
     let pointerId: number | null = null
-    let isPanning = false
+    let panning = false
     let samples: Array<{ t: number; point: Point }> = []
 
     function pointOf(event: PointerEvent): Point {
@@ -183,15 +212,20 @@ export function createPan(
       return { point, delta, offset, velocity }
     }
 
-    /** Push a freshly-computed info snapshot into the reactive store. */
+    /** Push a freshly-computed info snapshot into the MVs. Each `.set` fires
+     * the MV's change subscription, which the callable-hybrid bridge
+     * forwards to Solid; consumers reading e.g. only `pan.velocity.x()` only
+     * re-run when velocity.x actually changes — pre-existing MotionValue
+     * granularity, not Store path-tracking. */
     function writeInfo(info: PanInfo): void {
-      // Granular setStore calls — each path is its own subscription, so
-      // consumers reading e.g. only `pan.velocity.x` are only invalidated
-      // when velocity.x changes (path-tracking).
-      setState("point", info.point)
-      setState("delta", info.delta)
-      setState("offset", info.offset)
-      setState("velocity", info.velocity)
+      pointX.set(info.point.x)
+      pointY.set(info.point.y)
+      deltaX.set(info.delta.x)
+      deltaY.set(info.delta.y)
+      offsetX.set(info.offset.x)
+      offsetY.set(info.offset.y)
+      velocityX.set(info.velocity.x)
+      velocityY.set(info.velocity.y)
     }
 
     function onPointerDown(event: PointerEvent): void {
@@ -202,23 +236,20 @@ export function createPan(
       startPoint = pointOf(event)
       lastPoint = startPoint
       pointerId = event.pointerId
-      isPanning = false
+      panning = false
       samples = [{ t: time.now(), point: startPoint }]
 
       // Reset per-session fields. Point goes to start; delta/offset/velocity
       // zero. isPanning false (threshold not crossed yet).
-      //
-      // IMPORTANT: pass a COPY of startPoint, not startPoint itself. Solid's
-      // setState mutates the wrapped object in place on subsequent writes,
-      // so sharing a reference between the closure (startPoint) and the
-      // store would corrupt the closure variable as pointermoves arrive.
-      setState({
-        isPanning: false,
-        point: { x: startPoint.x, y: startPoint.y },
-        delta: { x: 0, y: 0 },
-        offset: { x: 0, y: 0 },
-        velocity: { x: 0, y: 0 },
-      })
+      setIsPanning(false)
+      pointX.set(startPoint.x)
+      pointY.set(startPoint.y)
+      deltaX.set(0)
+      deltaY.set(0)
+      offsetX.set(0)
+      offsetY.set(0)
+      velocityX.set(0)
+      velocityY.set(0)
 
       // Listen on window so events keep firing even when the pointer leaves
       // the element (e.g., during a fast drag). Mirrors motion-dom's press.
@@ -243,18 +274,18 @@ export function createPan(
 
       const info = buildInfo(event)
       // Option X — info updates on EVERY move, including pre-threshold.
-      // Consumers gate on `state.isPanning` for "real pan" semantics.
+      // Consumers gate on `isPanning()` for "real pan" semantics.
       writeInfo(info)
 
-      if (!isPanning) {
+      if (!panning) {
         // Threshold gate: pan hasn't started yet. Read threshold fresh from
         // getOpts() so reactive changes apply (a session in progress sticks
         // with the threshold it saw when this branch first crossed).
         const threshold = getOpts().threshold ?? DEFAULT_THRESHOLD
         const distance = Math.hypot(info.offset.x, info.offset.y)
         if (distance >= threshold) {
-          isPanning = true
-          setState("isPanning", true)
+          panning = true
+          setIsPanning(true)
           getOpts().onPanStart?.(event, info)
         }
       } else {
@@ -267,14 +298,14 @@ export function createPan(
       if (event.pointerId !== pointerId) return
       // onPanEnd only fires if onPanStart fired — pan-cancelled-before-start
       // (mere clicks) shouldn't emit lifecycle callbacks.
-      if (isPanning) {
+      if (panning) {
         getOpts().onPanEnd?.(event, buildInfo(event))
       }
-      isPanning = false
-      // Flip isPanning. Point/delta/offset/velocity are RETAINED (option Q5/3)
-      // so consumers can read the final state for snap-to-end animations.
-      // Next pointerdown will reset them.
-      setState("isPanning", false)
+      panning = false
+      // Flip isPanning. Point/delta/offset/velocity MVs are RETAINED
+      // (option Q5/3) so consumers can read the final state for
+      // snap-to-end animations. Next pointerdown will reset them.
+      setIsPanning(false)
       startPoint = null
       lastPoint = null
       pointerId = null
@@ -286,9 +317,9 @@ export function createPan(
 
     el.addEventListener("pointerdown", onPointerDown)
 
-    // Iteration-scoped cleanup: fires when the ref changes (createComputed
-    // re-runs) AND when the owner disposes. Removes all listeners regardless
-    // of whether a session was in progress.
+    // Iteration-scoped cleanup: fires when the ref changes (effect re-runs)
+    // AND when the owner disposes. Removes all listeners regardless of
+    // whether a session was in progress.
     onCleanup(() => {
       el.removeEventListener("pointerdown", onPointerDown)
       window.removeEventListener("pointermove", onPointerMove)
@@ -297,5 +328,11 @@ export function createPan(
     })
   })
 
-  return state
+  return {
+    isPanning,
+    point: { x: pointX, y: pointY },
+    delta: { x: deltaX, y: deltaY },
+    offset: { x: offsetX, y: offsetY },
+    velocity: { x: velocityX, y: velocityY },
+  }
 }

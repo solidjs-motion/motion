@@ -112,52 +112,34 @@ export function createGestures(
   onCleanup(stopBlur)
 
   // ---------- inView (Q10/A1) ----------
-  // The gesture reuses Phase 1's `createInView` primitive — same observer
-  // setup, same options shape. The extension (added in this commit): an
-  // optional onChange callback receives the raw IntersectionObserverEntry,
-  // letting the gesture fire onViewportEnter/Leave with the entry the user
-  // expects in their MotionCallbacks signature.
+  // The gesture reuses `createInView` — same observer setup. The `onChange`
+  // merges into the options object so the gesture's onViewportEnter/Leave
+  // hooks receive the raw entry.
   //
   // The element is wrapped in `() => el` because createInView takes a ref
-  // accessor (allows reactive ref changes); we pass a constant accessor
-  // since our `el` is fixed for the gesture's lifetime.
+  // accessor; we pass a constant accessor since `el` is fixed for the
+  // gesture's lifetime. The options are function-form so reactive
+  // inViewOptions changes (e.g., a reactive `root` accessor) re-attach
+  // the observer naturally.
   //
-  // A createEffect bridges createInView's Accessor<boolean> output to the
-  // state machine's setActive. When `once: true`, createInView disconnects
-  // the observer after the first intersection and `visible()` stays true
-  // forever — naturally matching motion/react's "fire once and stay" semantic
-  // for whileInView (the gesture never deactivates).
-  const inView = createInView(
+  // A createEffect bridges createInView's `isInView` Accessor to the state
+  // machine's setActive. When `once: true`, createInView keeps isInView=true
+  // after first intersection (observer disconnected); the gesture's
+  // whileInView stays active forever — motion/react parity.
+  const view = createInView(
     () => el,
-    // Pass options at construction time (untracked). inViewOptions changes
-    // mid-life would require re-observing, which is rare enough we don't
-    // wire it reactively for v0.1.
-    untrackedInViewOptions(getOpts),
-    (entry) => {
-      if (entry.isIntersecting) {
-        getOpts().onViewportEnter?.(entry)
-      } else {
-        getOpts().onViewportLeave?.(entry)
-      }
-    },
+    () => ({
+      ...getOpts().inViewOptions,
+      onChange: (entry: IntersectionObserverEntry) => {
+        if (entry.isIntersecting) {
+          getOpts().onViewportEnter?.(entry)
+        } else {
+          getOpts().onViewportLeave?.(entry)
+        }
+      },
+    }),
   )
   createEffect(() => {
-    setActive("whileInView", inView())
+    setActive("whileInView", view.isInView())
   })
-}
-
-/**
- * Snapshot `inViewOptions` once at gesture-setup time. Captures the user's
- * options without subscribing the surrounding owner to opts changes.
- *
- * The `root` accessor inside ViewportOptions stays reactive via the inner
- * createComputed in createInView — that's how a reactive root element
- * propagates to the IntersectionObserver. We only snapshot the surrounding
- * options object itself.
- */
-function untrackedInViewOptions(getOpts: () => MotionOptions) {
-  // We can read getOpts() lazily; the call site is already inside an effect
-  // scope only when called from createGestures' body (which runs once at
-  // mount). The snapshot is sufficient.
-  return getOpts().inViewOptions
 }
