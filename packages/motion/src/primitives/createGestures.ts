@@ -1,6 +1,7 @@
-import { hover, press } from "motion-dom"
-import { onCleanup } from "solid-js"
+import { addDomEvent, hover, press } from "motion-dom"
+import { createEffect, onCleanup } from "solid-js"
 import type { MotionOptions } from "../types"
+import { createInView } from "./createInView"
 import type { SetActive } from "./gesture-state"
 
 // ---------------------------------------------------------------------------
@@ -72,4 +73,91 @@ export function createGestures(
     }
   })
   onCleanup(stopPress)
+
+  // ---------- Focus (Q12) ----------
+  // Activation (`whileFocus` state) is gated by `:focus-visible` — mouse
+  // clicks that incidentally focus an element should NOT trigger the visual
+  // state, only keyboard navigation does. The native `onFocus`/`onBlur`
+  // callbacks fire for every focus event regardless (Q12b — programmatic
+  // listeners shouldn't be filtered).
+  //
+  // The `:focus-visible` selector throws in older browsers — we fall back
+  // to always-active, matching motion/react's behavior in that scenario.
+  //
+  // We use motion-dom's `addDomEvent` (rather than el.addEventListener
+  // directly) for consistency with the rest of Phase 2's motion-dom usage,
+  // and because it returns a tidy cleanup function we can hand to onCleanup.
+  let focusActiveByVisible = false
+  const stopFocus = addDomEvent(el, "focus", (event) => {
+    let isFocusVisible = false
+    try {
+      isFocusVisible = el.matches(":focus-visible")
+    } catch {
+      isFocusVisible = true
+    }
+    if (isFocusVisible) {
+      setActive("whileFocus", true)
+      focusActiveByVisible = true
+    }
+    getOpts().onFocus?.(event as FocusEvent)
+  })
+  const stopBlur = addDomEvent(el, "blur", (event) => {
+    if (focusActiveByVisible) {
+      setActive("whileFocus", false)
+      focusActiveByVisible = false
+    }
+    getOpts().onBlur?.(event as FocusEvent)
+  })
+  onCleanup(stopFocus)
+  onCleanup(stopBlur)
+
+  // ---------- inView (Q10/A1) ----------
+  // The gesture reuses Phase 1's `createInView` primitive — same observer
+  // setup, same options shape. The extension (added in this commit): an
+  // optional onChange callback receives the raw IntersectionObserverEntry,
+  // letting the gesture fire onViewportEnter/Leave with the entry the user
+  // expects in their MotionCallbacks signature.
+  //
+  // The element is wrapped in `() => el` because createInView takes a ref
+  // accessor (allows reactive ref changes); we pass a constant accessor
+  // since our `el` is fixed for the gesture's lifetime.
+  //
+  // A createEffect bridges createInView's Accessor<boolean> output to the
+  // state machine's setActive. When `once: true`, createInView disconnects
+  // the observer after the first intersection and `visible()` stays true
+  // forever — naturally matching motion/react's "fire once and stay" semantic
+  // for whileInView (the gesture never deactivates).
+  const inView = createInView(
+    () => el,
+    // Pass options at construction time (untracked). inViewOptions changes
+    // mid-life would require re-observing, which is rare enough we don't
+    // wire it reactively for v0.1.
+    untrackedInViewOptions(getOpts),
+    (entry) => {
+      if (entry.isIntersecting) {
+        getOpts().onViewportEnter?.(entry)
+      } else {
+        getOpts().onViewportLeave?.(entry)
+      }
+    },
+  )
+  createEffect(() => {
+    setActive("whileInView", inView())
+  })
+}
+
+/**
+ * Snapshot `inViewOptions` once at gesture-setup time. Captures the user's
+ * options without subscribing the surrounding owner to opts changes.
+ *
+ * The `root` accessor inside ViewportOptions stays reactive via the inner
+ * createComputed in createInView — that's how a reactive root element
+ * propagates to the IntersectionObserver. We only snapshot the surrounding
+ * options object itself.
+ */
+function untrackedInViewOptions(getOpts: () => MotionOptions) {
+  // We can read getOpts() lazily; the call site is already inside an effect
+  // scope only when called from createGestures' body (which runs once at
+  // mount). The snapshot is sufficient.
+  return getOpts().inViewOptions
 }

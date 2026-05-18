@@ -259,28 +259,14 @@ describe("createMotion — initial:false first-run guard", () => {
 
 describe("createMotion — SSR hydration handoff", () => {
   it("skips initial style application when initialAppliedBySSR is true", () => {
-    const setProperty = vi.fn()
-    const el = {
-      style: new Proxy(
-        {},
-        {
-          set(target: Record<string, string | number>, key: string, value: string | number) {
-            target[key] = value
-            return true
-          },
-          get(target: Record<string, string | number>, key: string) {
-            if (key === "setProperty") return setProperty
-            return target[key]
-          },
-        },
-      ),
-    } as unknown as HTMLElement
+    // Real DOM element required: Phase 2's createGestures attaches motion-dom
+    // hover/press/focus listeners on the element via addEventListener. The
+    // assertion is unchanged — when initialAppliedBySSR is true, the inline
+    // style is NOT written by createMotion (SSR already emitted it).
+    const el = document.createElement("div")
     createRoot((dispose) => {
       createMotion(el, () => ({ initial: { opacity: 0 } }), { initialAppliedBySSR: true })
-      // No setProperty / style assignment because SSR already emitted it.
-      expect(setProperty).not.toHaveBeenCalled()
-      const style = (el as unknown as { style: Record<string, unknown> }).style
-      expect(style.opacity).toBeUndefined()
+      expect(el.style.opacity).toBe("")
       dispose()
     })
   })

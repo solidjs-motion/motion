@@ -24,10 +24,17 @@ import type { ViewportOptions } from "../types"
  * })
  *
  * <div ref={setEl}>watch me</div>
+ *
+ * The optional `onChange` callback fires with the raw
+ * {@link IntersectionObserverEntry} on every visibility transition — useful
+ * for callers that need access to the bounding-rect / intersection-ratio
+ * data, or for the Phase 2 inView gesture's onViewportEnter/Leave hooks
+ * (which need the entry, not just the boolean).
  */
 export function createInView(
   ref: () => Element | null,
   options?: ViewportOptions,
+  onChange?: (entry: IntersectionObserverEntry) => void,
 ): Accessor<boolean> {
   const [visible, setVisible] = createSignal<boolean>(false)
 
@@ -43,6 +50,10 @@ export function createInView(
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
+          // Fire onChange for every entry transition (enter AND leave). Done
+          // before the boolean setter so callers can synchronously inspect
+          // the entry before any downstream effects re-run.
+          onChange?.(entry)
           if (entry.isIntersecting) {
             setVisible(true)
             if (options?.once) observer.disconnect()
