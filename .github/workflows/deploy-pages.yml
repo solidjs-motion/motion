@@ -1,0 +1,70 @@
+name: Deploy examples to GitHub Pages
+
+on:
+  # Auto-deploy on push to main, but only when something that affects the
+  # built example changes. Trivial pushes (README tweaks, unrelated package
+  # changes) don't burn CI minutes.
+  push:
+    branches: [main]
+    paths:
+      - "examples/basic/**"
+      - "packages/motion/src/**"
+      - "packages/motion/package.json"
+      - "bun.lock"
+      - ".github/workflows/deploy-pages.yml"
+  # Manual trigger from the Actions tab — useful when paths-filter misses
+  # a change you still want redeployed (e.g. a config drift, a re-deploy
+  # after fixing Pages settings).
+  workflow_dispatch:
+
+# GitHub Pages OIDC + artifact permissions. Concurrency cancels stale
+# deploys so a fast follow-up push doesn't queue behind an outdated build.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        # Frozen lockfile in CI — fails fast if bun.lock drifts from package.json.
+        run: bun install --frozen-lockfile
+
+      # The library's `solid` export condition points at TS source, so the
+      # example consumes solidjs-motion directly. No separate library build
+      # step is needed for the example to compile.
+      - name: Build example
+        env:
+          # Pages serves at https://<org>.github.io/<repo>/ — repo is
+          # solidjs-motion/motion. Vite's `base` and Solid Router's `base`
+          # both pick this up via import.meta.env.BASE_URL.
+          DEPLOY_BASE: /motion/
+        run: bun --filter basic build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: examples/basic/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

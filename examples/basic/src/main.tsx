@@ -19,9 +19,14 @@ function NotFound() {
 const root = document.getElementById("root")
 if (!root) throw new Error("missing #root")
 
+// Vite injects BASE_URL from the `base` config (default "/"). GitHub Pages
+// builds set it to "/motion/" via DEPLOY_BASE in vite.config.ts. Solid
+// Router wants the base without a trailing slash, so trim it.
+const ROUTER_BASE = import.meta.env.BASE_URL.replace(/\/$/, "")
+
 render(
   () => (
-    <Router root={AppShell}>
+    <Router base={ROUTER_BASE} root={AppShell}>
       <Route path="/" component={Landing} />
       <For each={demos}>{(demo) => <Route path={demo.path} component={demo.component} />}</For>
       <Route path="*" component={NotFound} />
