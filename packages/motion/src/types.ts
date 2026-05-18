@@ -228,6 +228,12 @@ export type MotionOptions = MotionCallbacks &
     /** Viewport observer config for the inView gesture. */
     inViewOptions?: ViewportOptions
 
+    /**
+     * Minimum cumulative pointer movement (in px) before pan/drag start fires.
+     * Distinguishes a pan from a click. Q11a default: 3px (matches motion).
+     */
+    panThreshold?: number
+
     /** Default transition applied to every property in animate/gesture targets. */
     transition?: Transition
 

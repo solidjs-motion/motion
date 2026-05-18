@@ -1,0 +1,477 @@
+import { fireEvent, render } from "@solidjs/testing-library"
+import { createComputed, createRoot, createSignal } from "solid-js"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { PanInfo } from "../../src/types"
+
+// motion-dom's `time` is the timestamp source — mocking it lets tests
+// control velocity calculations deterministically.
+const { timeMock } = vi.hoisted(() => ({
+  timeMock: { now: vi.fn(() => 0) },
+}))
+
+vi.mock("motion-dom", async () => {
+  const actual = await vi.importActual<typeof import("motion-dom")>("motion-dom")
+  return { ...actual, time: timeMock }
+})
+
+const { createPan } = await import("../../src/primitives/createPan")
+
+beforeEach(() => {
+  timeMock.now.mockReturnValue(0)
+})
+
+afterEach(() => {
+  timeMock.now.mockReset()
+  timeMock.now.mockReturnValue(0)
+})
+
+/** Helper: drive the time source forward. */
+function setNow(ms: number) {
+  timeMock.now.mockReturnValue(ms)
+}
+
+// ---------------------------------------------------------------------------
+// Threshold gating (Q11a — default 3px before onPanStart fires).
+// ---------------------------------------------------------------------------
+
+describe("createPan — threshold gating", () => {
+  it("does NOT fire onPanStart if movement is below threshold", () => {
+    const onPanStart = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPanStart })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 2, clientY: 0, isPrimary: true })
+    expect(onPanStart).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it("fires onPanStart once movement crosses the default 3px threshold", () => {
+    const onPanStart = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPanStart })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+
+    expect(onPanStart).toHaveBeenCalledOnce()
+    const info = onPanStart.mock.calls[0]?.[1] as PanInfo
+    expect(info.point).toEqual({ x: 5, y: 0 })
+    expect(info.offset).toEqual({ x: 5, y: 0 })
+    unmount()
+  })
+
+  it("respects a custom threshold value", () => {
+    const onPanStart = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPanStart, threshold: 10 })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    expect(onPanStart).not.toHaveBeenCalled()
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 12, clientY: 0, isPrimary: true })
+    expect(onPanStart).toHaveBeenCalledOnce()
+    unmount()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Lifecycle: onPanStart → onPan(s) → onPanEnd. PanInfo shape.
+// ---------------------------------------------------------------------------
+
+describe("createPan — lifecycle and PanInfo", () => {
+  it("fires onPan on every move after onPanStart, with correct delta and offset", () => {
+    const onPan = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPan })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    // First move starts pan; onPan NOT called for that one (only onPanStart).
+    expect(onPan).not.toHaveBeenCalled()
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 5, isPrimary: true })
+    expect(onPan).toHaveBeenCalledTimes(1)
+    const info = onPan.mock.calls[0]?.[1] as PanInfo
+    expect(info.point).toEqual({ x: 10, y: 5 })
+    expect(info.delta).toEqual({ x: 5, y: 5 })
+    expect(info.offset).toEqual({ x: 10, y: 5 })
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 8, clientY: 5, isPrimary: true })
+    expect(onPan).toHaveBeenCalledTimes(2)
+    const info2 = onPan.mock.calls[1]?.[1] as PanInfo
+    expect(info2.delta).toEqual({ x: -2, y: 0 })
+    expect(info2.offset).toEqual({ x: 8, y: 5 })
+    unmount()
+  })
+
+  it("fires onPanEnd on pointerup AFTER pan has started", () => {
+    const onPanEnd = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPanEnd })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+
+    expect(onPanEnd).toHaveBeenCalledOnce()
+    unmount()
+  })
+
+  it("does NOT fire onPanEnd when pointerup occurs without crossing threshold", () => {
+    const onPanStart = vi.fn()
+    const onPanEnd = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPanStart, onPanEnd })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 1, clientY: 0, isPrimary: true })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 1, clientY: 0, isPrimary: true })
+
+    expect(onPanStart).not.toHaveBeenCalled()
+    expect(onPanEnd).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it("fires onPanEnd on pointercancel (gesture aborted by browser/system)", () => {
+    const onPanEnd = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPanEnd })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    fireEvent.pointerCancel(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+
+    expect(onPanEnd).toHaveBeenCalledOnce()
+    unmount()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Velocity computation (Q15a — 200ms sliding window).
+// ---------------------------------------------------------------------------
+
+describe("createPan — velocity tracking", () => {
+  it("computes velocity from the 200ms sliding window of pointer samples", () => {
+    const onPan = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPan })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    setNow(0)
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+
+    setNow(50)
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+
+    setNow(100)
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 0, isPrimary: true })
+
+    expect(onPan).toHaveBeenCalledOnce()
+    const info = onPan.mock.calls[0]?.[1] as PanInfo
+    // Velocity = (latest − first) / dt × 1000.
+    // Samples at this point: t=0,x=0 ; t=50,x=10 ; t=100,x=20.
+    // (20 − 0) / 100 × 1000 = 200 px/sec.
+    expect(info.velocity.x).toBeCloseTo(200)
+    expect(info.velocity.y).toBe(0)
+    unmount()
+  })
+
+  it("drops samples older than the 200ms window from the velocity calc", () => {
+    const onPan = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPan })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    setNow(0)
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+
+    setNow(50)
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+
+    setNow(400)
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 50, clientY: 0, isPrimary: true })
+
+    const info = onPan.mock.calls[0]?.[1] as PanInfo
+    expect(info.velocity.x).toBe(0)
+    expect(info.velocity.y).toBe(0)
+    unmount()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Store return — reactive state via path-tracking.
+// ---------------------------------------------------------------------------
+
+describe("createPan — reactive state store", () => {
+  it("initializes the store with zero values before any pointerdown", () => {
+    const { unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      const pan = createPan(el)
+      // Read every field once so the test inspects what consumers would see.
+      expect(pan.isPanning).toBe(false)
+      expect(pan.point).toEqual({ x: 0, y: 0 })
+      expect(pan.delta).toEqual({ x: 0, y: 0 })
+      expect(pan.offset).toEqual({ x: 0, y: 0 })
+      expect(pan.velocity).toEqual({ x: 0, y: 0 })
+      return <div ref={setEl} />
+    })
+    unmount()
+  })
+
+  it("updates the store fields on every pointermove (Option X — pre-threshold included)", () => {
+    let pan!: ReturnType<typeof createPan>
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      pan = createPan(el)
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Pre-threshold move (1px < 3px default). isPanning still false, but
+    // point/offset DO update under Option X.
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 100, clientY: 50, isPrimary: true })
+    expect(pan.point).toEqual({ x: 100, y: 50 })
+    expect(pan.isPanning).toBe(false)
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 101, clientY: 50, isPrimary: true })
+    expect(pan.point).toEqual({ x: 101, y: 50 })
+    expect(pan.offset).toEqual({ x: 1, y: 0 })
+    expect(pan.isPanning).toBe(false)
+
+    // Threshold crossing flips isPanning true; fields keep updating.
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 110, clientY: 50, isPrimary: true })
+    expect(pan.point).toEqual({ x: 110, y: 50 })
+    expect(pan.offset).toEqual({ x: 10, y: 0 })
+    expect(pan.isPanning).toBe(true)
+    unmount()
+  })
+
+  it("retains last point/offset/velocity values after pointerup; only isPanning flips", () => {
+    let pan!: ReturnType<typeof createPan>
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      pan = createPan(el)
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 50, clientY: 30, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
+    expect(pan.isPanning).toBe(true)
+    expect(pan.point).toEqual({ x: 80, y: 40 })
+
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
+
+    expect(pan.isPanning).toBe(false)
+    // Point/offset RETAINED (Option Q5/3 — "retain last").
+    expect(pan.point).toEqual({ x: 80, y: 40 })
+    expect(pan.offset).toEqual({ x: 80, y: 40 })
+    unmount()
+  })
+
+  it("resets per-session fields on a new pointerdown (offset/delta back to 0)", () => {
+    let pan!: ReturnType<typeof createPan>
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      pan = createPan(el)
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // First session: end with offset {80, 40}.
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 80, clientY: 40, isPrimary: true })
+    expect(pan.offset).toEqual({ x: 80, y: 40 })
+
+    // Second session starting at (200, 100). Offset MUST reset to zero,
+    // not accumulate from the previous session's end value.
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 200, clientY: 100, isPrimary: true })
+    expect(pan.point).toEqual({ x: 200, y: 100 })
+    expect(pan.offset).toEqual({ x: 0, y: 0 })
+    expect(pan.delta).toEqual({ x: 0, y: 0 })
+    expect(pan.velocity).toEqual({ x: 0, y: 0 })
+    unmount()
+  })
+
+  it("path-tracking: reading only `point.x` does not invalidate on velocity changes", () => {
+    let pan!: ReturnType<typeof createPan>
+    const xReadCount = vi.fn()
+    const velocityReadCount = vi.fn()
+
+    // Use render() — its internal scheduling flushes createEffect's first
+    // iteration before fireEvent fires, so createPan's listener is attached.
+    // Plain createRoot wouldn't flush, leaving the test racing the microtask.
+    const { container, unmount } = render(() => {
+      const [elRef, setElRef] = createSignal<HTMLElement>()
+      pan = createPan(elRef)
+
+      // createComputed (not createEffect) so re-runs from setState happen
+      // synchronously — the test can read counts immediately after a
+      // fireEvent without awaiting microtasks.
+      createComputed(() => {
+        void pan.point.x
+        xReadCount()
+      })
+      createComputed(() => {
+        void pan.velocity.x
+        velocityReadCount()
+      })
+
+      return <div ref={setElRef} />
+    })
+
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+
+    const initialX = xReadCount.mock.calls.length
+    const initialVel = velocityReadCount.mock.calls.length
+
+    // Move that doesn't change velocity (jsdom: time stays 0 with our mock,
+    // so velocity is 0 throughout). x DOES change.
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+
+    const finalX = xReadCount.mock.calls.length
+    const finalVel = velocityReadCount.mock.calls.length
+
+    // x effect re-ran (point.x changed).
+    expect(finalX).toBeGreaterThan(initialX)
+    // velocity effect did NOT re-run (velocity stayed {0, 0} due to
+    // time-mock returning 0 for both samples). This validates
+    // path-tracking — change in point.x doesn't invalidate consumers
+    // reading only velocity.
+    expect(finalVel).toBe(initialVel)
+
+    unmount()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Pointer validity (motion-dom's isPrimaryPointer filter).
+// ---------------------------------------------------------------------------
+
+describe("createPan — pointer validity", () => {
+  it("ignores non-primary mouse buttons (right-click etc.)", () => {
+    const onPanStart = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPanStart })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, {
+      pointerId: 1,
+      button: 2,
+      pointerType: "mouse",
+      isPrimary: true,
+    })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+
+    expect(onPanStart).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it("ignores pointermoves from a different pointerId (multi-touch)", () => {
+    const onPan = vi.fn()
+    const { container, unmount } = render(() => {
+      const [el, setEl] = createSignal<HTMLElement>()
+      createPan(el, { onPan })
+      return <div ref={setEl} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 50, clientY: 50, isPrimary: false })
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 0, isPrimary: true })
+    expect(onPan).toHaveBeenCalledOnce()
+    const info = onPan.mock.calls[0]?.[1] as PanInfo
+    expect(info.offset).toEqual({ x: 20, y: 0 })
+    unmount()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Cleanup
+// ---------------------------------------------------------------------------
+
+describe("createPan — cleanup", () => {
+  it("removes the pointerdown listener and any window listeners on owner disposal", () => {
+    const onPanStart = vi.fn()
+    let el!: HTMLElement
+    const dispose = createRoot((d) => {
+      el = document.createElement("div")
+      createPan(() => el, { onPanStart })
+      return d
+    })
+    dispose()
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    expect(onPanStart).not.toHaveBeenCalled()
+  })
+
+  it("cleans up mid-session window listeners on owner disposal", () => {
+    const onPan = vi.fn()
+    let el!: HTMLElement
+    const dispose = createRoot((d) => {
+      el = document.createElement("div")
+      document.body.appendChild(el)
+      createPan(() => el, { onPan })
+      return d
+    })
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 15, clientY: 0, isPrimary: true })
+    expect(onPan).toHaveBeenCalledOnce()
+
+    dispose()
+    onPan.mockClear()
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 25, clientY: 0, isPrimary: true })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 25, clientY: 0, isPrimary: true })
+    expect(onPan).not.toHaveBeenCalled()
+    document.body.removeChild(el)
+  })
+})

@@ -8,6 +8,7 @@ export { PresenceContext, usePresenceContext } from "./presence-context"
 // Imperative motion primitive (advanced — most users want useMotion instead).
 export { createInView } from "./primitives/createInView"
 export { createMotion } from "./primitives/createMotion"
+export { type CreatePanOptions, createPan, type PanState } from "./primitives/createPan"
 export { createScroll } from "./primitives/createScroll"
 // MotionValue family — callable-hybrid primitives. Every value returned here
 // is both a Solid Accessor (call it: `mv()`) AND a motion.MotionValue
