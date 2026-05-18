@@ -9,13 +9,31 @@ import { demos } from "../demos/registry"
 // main.tsx; this component only renders chrome + the matched route's output.
 // ---------------------------------------------------------------------------
 
+// Solid Router's <Router base="..."> only affects routing/link resolution
+// — `useLocation().pathname` still exposes the FULL path including the base
+// (`/motion/fade-in` rather than `/fade-in`). Registry entries are declared
+// base-less (e.g. path: "/fade-in") so anything matching pathname against
+// `d.path` has to strip the configured base first. Vite gives us the base
+// via `import.meta.env.BASE_URL` (e.g. "/motion/" in production, "/" in dev).
+const ROUTER_BASE = import.meta.env.BASE_URL.replace(/\/$/, "")
+
+function stripBase(pathname: string): string {
+  if (ROUTER_BASE && pathname.startsWith(ROUTER_BASE)) {
+    return pathname.slice(ROUTER_BASE.length) || "/"
+  }
+  return pathname
+}
+
 export function AppShell(props: ParentProps) {
   const location = useLocation()
   const grouped = createMemo(() => ({
     phase1: demos.filter((d) => d.phase === 1),
     phase2: demos.filter((d) => d.phase === 2),
   }))
-  const activeDemo = createMemo(() => demos.find((d) => d.path === location.pathname))
+  const activeDemo = createMemo(() => {
+    const path = stripBase(location.pathname)
+    return demos.find((d) => d.path === path)
+  })
 
   return (
     <div
@@ -92,7 +110,7 @@ function NavGroup(props: { title: string; entries: typeof demos }) {
       <ul style={{ "list-style": "none", padding: 0, margin: 0 }}>
         <For each={props.entries}>
           {(entry) => {
-            const isActive = createMemo(() => location.pathname === entry.path)
+            const isActive = createMemo(() => stripBase(location.pathname) === entry.path)
             return (
               <li style={{ "margin-bottom": "0.25rem" }}>
                 <A
