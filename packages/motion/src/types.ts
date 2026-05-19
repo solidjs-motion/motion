@@ -363,11 +363,31 @@ export type VariantContextValue = {
   transition?: Accessor<Transition | undefined>
 }
 
-/** Wired in Phase 1 with no-op default; <Presence> swaps it in Phase 3. */
+/**
+ * Wired with a no-op default; the real implementation is provided by
+ * `<Presence>` and `useAnimatePresence()` in Phase 3.
+ *
+ * Inverted shape vs. motion-react's `AnimatePresenceProps`: the child
+ * registers a `runExit` callable that knows how to animate ITSELF out (closes
+ * over its own state machine). Presence just coordinates timing — it doesn't
+ * resolve targets or merge transitions. See ADR 0003.
+ *
+ * - `register(el, runExit)` — called from `createMotion` when `opts.exit` is
+ *   set. `runExit` flips the state machine's `exit` flag and awaits the
+ *   resulting animate's completion.
+ * - `unregister(el)` — Solid `onCleanup` after `register`.
+ * - `beforeUnmount(el)` — Presence (or the hook's `exit()`) dispatches to the
+ *   registered `runExit`. Returns a resolved promise if no `runExit` is
+ *   registered, so non-exit children pass through cleanly.
+ * - `initial` — when an enclosing `<Presence initial={false}>` (or the hook
+ *   with `initial: false`) is active, descendants suppress their first-mount
+ *   animation. Accessor-shaped so the implementation can flip post-mount.
+ */
 export type PresenceContextValue = {
-  register: (el: MotionElement, exit: AnimateValue, transition?: Transition) => void
+  register: (el: MotionElement, runExit: () => Promise<void>) => void
   unregister: (el: MotionElement) => void
   beforeUnmount: (el: MotionElement) => Promise<void>
+  initial?: Accessor<boolean>
 }
 
 /** <MotionConfig> provides defaults that flow to every descendant motion element. */

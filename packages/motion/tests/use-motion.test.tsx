@@ -463,7 +463,11 @@ describe("createMotion — reduced motion", () => {
 // ---------------------------------------------------------------------------
 
 describe("createMotion — presence wiring", () => {
-  it("calls register on mount when exit is defined", () => {
+  it("calls register on mount when exit is defined (Phase 3 — inverted shape)", () => {
+    // Phase 3 inverted PresenceContext.register's signature: the child now
+    // supplies a `runExit: () => Promise<void>` callable (closing over its
+    // state machine), instead of the static exit target + transition. The
+    // motion child knows how to animate itself out; Presence just dispatches.
     const register = vi.fn()
     const unregister = vi.fn()
     const beforeUnmount = vi.fn(() => Promise.resolve())
@@ -476,11 +480,21 @@ describe("createMotion — presence wiring", () => {
       </PresenceContext.Provider>
     ))
     expect(register).toHaveBeenCalledOnce()
-    const [el, exitTarget] = register.mock.calls[0]!
+    const [el, runExit] = register.mock.calls[0]!
     expect(el).toBeInstanceOf(HTMLElement)
-    expect(exitTarget).toEqual({ x: 100 })
+    // `runExit` is the new contract: a `() => Promise<void>` that the
+    // surrounding Presence (or `useAnimatePresence().exit()`) calls when
+    // it's ready to unmount the element.
+    expect(typeof runExit).toBe("function")
+    expect(runExit()).toBeInstanceOf(Promise)
+    // Unregister is Presence's responsibility — it fires after the exit
+    // animation settles (in Presence's onExit / done callback). createMotion
+    // intentionally does NOT unregister in its own onCleanup: Solid disposes
+    // the child owner synchronously when the conditional flips, well before
+    // transition-group's onExit hook runs, so a self-unregister would empty
+    // Presence's map before exit could dispatch.
     unmount()
-    expect(unregister).toHaveBeenCalledOnce()
+    expect(unregister).not.toHaveBeenCalled()
   })
 
   it("does not call register when exit is undefined", () => {

@@ -26,6 +26,7 @@ export default defineConfig({
         "motion",
         "motion-dom",
         "@solid-primitives/refs",
+        "@solid-primitives/transition-group",
       ],
     },
     target: "es2022",

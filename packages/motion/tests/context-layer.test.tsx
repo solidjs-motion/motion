@@ -188,8 +188,10 @@ describe("usePresenceContext", () => {
       expect(typeof ctx.register).toBe("function")
       expect(typeof ctx.unregister).toBe("function")
       expect(typeof ctx.beforeUnmount).toBe("function")
-      // Defaults must not throw.
-      expect(() => ctx.register(document.createElement("div"), { x: 0 })).not.toThrow()
+      // Phase 3 — register's signature now takes (el, runExit) where runExit
+      // is `() => Promise<void>`. The motion child closes over its state
+      // machine and supplies the callable; the no-op silently drops it.
+      expect(() => ctx.register(document.createElement("div"), async () => {})).not.toThrow()
       expect(() => ctx.unregister(document.createElement("div"))).not.toThrow()
       expect(ctx.beforeUnmount(document.createElement("div"))).resolves.toBeUndefined()
       dispose()

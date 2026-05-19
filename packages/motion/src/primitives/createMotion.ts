@@ -1,7 +1,8 @@
-import { onCleanup, untrack } from "solid-js"
+import { animate } from "motion"
+import { untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
-import { createReducedMotion } from "../reduced-motion"
+import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
 import { targetToStyle } from "../style"
 import type {
   AnimateValue,
@@ -184,22 +185,23 @@ export function createMotion(
   }
 
   // ---------- Apply the initial style pre-paint, unless SSR already did it ----------
-  if (!config?.initialAppliedBySSR && capturedInitialTarget) {
+  // An enclosing `<Presence initial={false}>` ALSO suppresses the static
+  // style application — the descendant should mount at the animate target,
+  // not the initial. Done via the same path as the state machine's
+  // `suppressFirstMount` flag below; consistent semantic across both.
+  const suppressFirstMount = untrack(() => presence.initial?.()) === false
+  if (!config?.initialAppliedBySSR && !suppressFirstMount && capturedInitialTarget) {
     applyStaticStyle(el, capturedInitialTarget)
   }
 
-  // ---------- Presence registration ----------
-  if (initialOpts.exit !== undefined) {
-    presence.register(el, initialOpts.exit, initialOpts.transition)
-    onCleanup(() => presence.unregister(el))
-  }
-
   // ---------- Gesture state machine (Q3b, ADR 0002) ----------
-  // Owns target resolution, priority winners, and the diff-and-animate loop.
-  // Returns `setActive` which gesture wiring uses to toggle active flags.
-  // When useMotion supplies an external active store (Q4), the state machine
-  // reads/writes that one — letting myVariantCtx propagate the same flags.
-  const { setActive } = createGestureStateMachine({
+  // Constructed BEFORE presence registration so the registered `runExit`
+  // callable can close over `setActive` + `onceExitComplete`. Owns target
+  // resolution, priority winners, and the diff-and-animate loop. Returns
+  // `setActive` which gesture wiring uses to toggle active flags, and
+  // `onceExitComplete` which Presence awaits during unmount.
+  // (For drag's typing constraint, see the createDrag call below.)
+  const stateMachine = createGestureStateMachine({
     el,
     getOpts,
     parentVariantCtx,
@@ -207,7 +209,86 @@ export function createMotion(
     systemReducedMotion,
     initialTarget: capturedInitialTarget,
     externalActiveStore: config?.activeStore,
+    suppressFirstMount,
   })
+  const { setActive, onceExitComplete } = stateMachine
+
+  // ---------- Presence registration (Phase 3 — inverted shape) ----------
+  // Child registers a `runExit` callable that dispatches the exit animate
+  // DIRECTLY (bypassing the state-machine effect). Direct dispatch is
+  // necessary because by the time Presence's `onExit` callback fires,
+  // Solid has already disposed the surrounding owner — the state machine's
+  // diff effect is gone. `runExit` therefore captures the exit-relevant
+  // options at construction time and uses motion's `animate()` itself.
+  //
+  // We do NOT call `presence.unregister(el)` on owner cleanup — that would
+  // race ahead of Presence's onExit. Instead, Presence/hook unregisters
+  // after the exit settles. See ADR 0003 for the timing rationale.
+  if (initialOpts.exit !== undefined) {
+    // Snapshot exit-relevant config at construction. Reactive changes to
+    // these mid-life are NOT picked up at exit time — acceptable trade-off
+    // for v0.1 (the alternative is keeping the state machine alive across
+    // owner disposal, which Solid doesn't support cleanly).
+    const exitSnapshot = {
+      exit: initialOpts.exit,
+      variants: initialOpts.variants,
+      custom: initialOpts.custom ?? parentVariantCtx.custom?.(),
+      transition: initialOpts.transition,
+    }
+
+    const runExit = async (): Promise<void> => {
+      const exitTarget = resolveTarget(
+        exitSnapshot.exit,
+        exitSnapshot.variants,
+        asVariantLabels(parentVariantCtx.exit?.()),
+        exitSnapshot.custom,
+      )
+      if (!exitTarget) {
+        // Even with no exit-specific keys (resolveTarget returned null —
+        // e.g., the user passed a label that doesn't exist in variants),
+        // we cooperate with the state machine for cases where the user
+        // expects an "exit" gesture without specific keys. Fall through.
+        setActive("exit", true)
+        await onceExitComplete()
+        return
+      }
+
+      // Merge transition: MotionConfig default < user.transition <
+      // exit-target.transition < reduced-motion override.
+      const reduced = shouldReduceMotion(
+        motionConfig.reducedMotion(),
+        systemReducedMotion(),
+      )
+      const transition = mergeTransition(
+        motionConfig.transition(),
+        exitSnapshot.transition,
+        exitTarget.transition,
+        reduced,
+      )
+
+      // Strip `transition` from the target before passing to animate.
+      const animTarget: Record<string, unknown> = {}
+      for (const k in exitTarget) {
+        if (k !== "transition") {
+          animTarget[k] = (exitTarget as Record<string, unknown>)[k]
+        }
+      }
+
+      // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
+      const controls = animate(el, animTarget as any, transition as any)
+      // AnimationPlaybackControls is thenable at runtime (motion 12.x).
+      // The public type doesn't expose `.then` — narrow via PromiseLike.
+      await (controls as unknown as PromiseLike<unknown>)
+    }
+
+    presence.register(el, runExit)
+    // No `onCleanup(() => presence.unregister(el))` — that would fire
+    // synchronously when Solid disposes the child's owner, BEFORE
+    // transition-group's `onExit` callback runs. Presence/hook calls
+    // `unregister` itself after the exit settles. For the no-op default
+    // context (no enclosing Presence), `register` is a silent drop —
+    // nothing to clean up.
+  }
 
   // ---------- Pointer-event gestures (hover, press, focus, inView) ----------
   // Listeners attach unconditionally on mount; the state machine no-ops when
@@ -216,14 +297,10 @@ export function createMotion(
 
   // ---------- Drag + pan (Q5/C-lean + Q11/D3) ----------
   // createDrag layers on createPan for the pointer session and writes to the
-  // element's VisualElement x/y MotionValues during drag. Always attached;
-  // the `isDragEnabled()` check inside createDrag means listeners do nothing
-  // when `opts.drag` is falsy — toggling drag on/off doesn't churn listeners.
-  //
-  // Drag is HTML-only for v0.1 — motion-dom's HTMLVisualElement is HTML-
-  // specific. The `instanceof HTMLElement` narrowing means a user who wires
-  // `drag` onto an SVG element gets a no-op at construction. We could surface
-  // a dev warning here later if needed.
+  // element's VisualElement x/y MotionValues during drag. Drag is HTML-only
+  // for v0.1 — motion-dom's HTMLVisualElement is HTML-specific. Users who
+  // wire `drag` onto an SVG element get a no-op at construction; we could
+  // surface a dev warning here later if needed.
   if (el instanceof HTMLElement) {
     createDrag(el, getOpts, setActive)
   }

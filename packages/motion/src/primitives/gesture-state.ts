@@ -75,11 +75,32 @@ export type CreateGestureStateMachineDeps = {
    * backward-compatible for `createMotion` direct users.
    */
   externalActiveStore?: ActiveStoreTuple
+  /**
+   * Phase 3 — when an enclosing `<Presence initial={false}>` is active, this
+   * is passed through to suppress the first-mount animate (mirrors the
+   * existing `initial: false` user-opt-out, but driven from above by
+   * Presence instead of by the user's own options).
+   */
+  suppressFirstMount?: boolean
 }
 
 export type GestureStateMachine = {
   /** Imperatively toggle a gesture state. Triggers re-resolution + animate(). */
   setActive: SetActive
+  /**
+   * Resolves when the next animate dispatched while `exit` is the highest-
+   * priority active driver state completes. If no exit animation is in
+   * flight AND no exit target is defined, resolves immediately.
+   *
+   * Used by `createMotion`'s presence registration: the registered
+   * `runExit` callable does `setActive("exit", true)` then awaits this.
+   * When the exit animation settles, `<Presence>` (or the hook) gets a
+   * resolved Promise and proceeds with DOM removal.
+   *
+   * Multiple concurrent waiters are supported — they all resolve from the
+   * same animation's completion.
+   */
+  onceExitComplete: () => Promise<void>
 }
 
 /**
@@ -109,6 +130,7 @@ export function createGestureStateMachine(
     systemReducedMotion,
     initialTarget,
     externalActiveStore,
+    suppressFirstMount,
   } = deps
 
   // ---------- Active flags ----------
@@ -187,6 +209,13 @@ export function createGestureStateMachine(
   // (called from this effect) doesn't fight drag's writes. Other transform
   // keys (scale, rotate, etc.) still flow normally — they compose with
   // drag's translation through the shared VisualElement.
+  //
+  // EXCEPTION: when `exit` is active, exit's x/y MUST override drag's claim.
+  // Otherwise an element being dragged at the moment of unmount would
+  // exit-animate without translation (drag would silently win every frame),
+  // which contradicts the priority chain's stated semantic (exit is highest).
+  // Drag's pointer listeners will release anyway when the element unmounts;
+  // exit's translation reaches DOM until that happens.
   const winners = createMemo<Record<string, WinnerEntry>>(() => {
     const targets = stateTargets()
     const dragEnabled = Boolean(getOpts().drag)
@@ -200,8 +229,9 @@ export function createGestureStateMachine(
         if (key === "transition") continue
         // Higher-priority state already won this key.
         if (key in out) continue
-        // x/y are drag-owned when drag is enabled (Q5/C-lean).
-        if (dragEnabled && (key === "x" || key === "y")) continue
+        // x/y are drag-owned when drag is enabled (Q5/C-lean) — unless exit
+        // is currently active, in which case exit's translation wins.
+        if (!active.exit && dragEnabled && (key === "x" || key === "y")) continue
         out[key] = {
           value: (target as Record<string, unknown>)[key],
           transition: target.transition,
@@ -220,18 +250,28 @@ export function createGestureStateMachine(
   let lastApplied: Record<string, unknown> = {}
   let isFirstRun = true
 
+  // ---------- onceExitComplete plumbing (Phase 3 — Presence integration) ----------
+  // Resolvers queued by `onceExitComplete()` waiters. Drain happens when an
+  // exit-driven animate dispatched from this effect resolves. Multiple waiters
+  // for the same exit batch all resolve from one drain.
+  let pendingExitResolvers: Array<() => void> = []
+  function drainPendingExitResolvers(): void {
+    const resolvers = pendingExitResolvers
+    pendingExitResolvers = []
+    for (const r of resolvers) r()
+  }
+
   createEffect(() => {
     const next = winners()
     const opts = getOpts()
 
-    // Q6 sub-3: `initial: false` skips the very first animate. Subsequent
-    // signal-driven runs animate normally. We seed lastApplied so the next
-    // iteration's diff treats the current winners as already-applied.
-    // Note: even on this guard we still want to (re)subscribe to MVs in
-    // `next` so subsequent MV.set() drives animate. Fall through to the
-    // subscription loop below; just skip the actual animate dispatch.
+    // First-mount guard: either the user opted out via `initial: false` OR
+    // an enclosing `<Presence initial={false}>` propagated suppression via
+    // `suppressFirstMount`. Either path seeds lastApplied so the next
+    // iteration treats current winners as already-applied. We fall through
+    // to the MV subscription loop so subsequent MV.set() drives animate.
     let skipAnimate = false
-    if (isFirstRun && untrack(() => opts.initial) === false) {
+    if (isFirstRun && (untrack(() => opts.initial) === false || suppressFirstMount)) {
       lastApplied = snapshotValues(next)
       skipAnimate = true
     }
@@ -340,6 +380,27 @@ export function createGestureStateMachine(
       prevControls?.stop()
       // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
       prevControls = animate(el, plain as any, buildAnimateOptions())
+
+      // Drain `onceExitComplete()` waiters when this dispatch is driven by
+      // the exit state — i.e., Presence is awaiting the unmount animation.
+      // motion's AnimationPlaybackControls is thenable at runtime (motion
+      // returns a thenable handle) but the public type doesn't surface
+      // `.then` — narrow via PromiseLike. The promise settles on natural
+      // completion OR cancellation (`.stop()` from a subsequent effect
+      // run). Both should drain — from the caller's perspective the exit
+      // animation is "done" either way. The freshness check ensures a stale
+      // dispatch doesn't drain a newer animation's waiters.
+      if (driverState === "exit") {
+        const dispatched = prevControls
+        const thenable = dispatched as unknown as PromiseLike<unknown>
+        thenable.then(() => {
+          if (prevControls === dispatched) drainPendingExitResolvers()
+        })
+      }
+    } else if (driverState === "exit") {
+      // Exit is the driver but no animate ran (target absent or no key diff).
+      // Drain immediately so any awaiting `runExit` callers don't hang.
+      drainPendingExitResolvers()
     }
 
     // ---------- MotionValue-in-target subscriptions ----------
@@ -378,7 +439,33 @@ export function createGestureStateMachine(
     setActiveStore(state, isActive)
   }
 
-  return { setActive }
+  /**
+   * Phase 3 — Presence integration. Returns a Promise that resolves when the
+   * NEXT exit-driven animate dispatched by the diff effect completes, OR
+   * immediately if no exit target is configured (nothing to wait for).
+   *
+   * The typical caller is `createMotion`'s presence-registered `runExit`:
+   * it flips `setActive("exit", true)` then awaits this. The diff effect
+   * runs in the next microtask, dispatches the exit animation, and on its
+   * completion drains the pending resolvers.
+   *
+   * Multiple concurrent waiters are supported — they all resolve from the
+   * same animation's completion.
+   *
+   * Edge case: if the user reactively removes `opts.exit` AFTER this call
+   * but before the effect runs, the resolver will still be drained the
+   * next time exit drives a dispatch (or by the "no-animate but exit-
+   * driven" branch in the effect).
+   */
+  function onceExitComplete(): Promise<void> {
+    const exitTarget = untrack(() => stateTargets().exit)
+    if (exitTarget === null) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      pendingExitResolvers.push(resolve)
+    })
+  }
+
+  return { setActive, onceExitComplete }
 }
 
 // ---------------------------------------------------------------------------
