@@ -1,9 +1,17 @@
-// Phase 1 — public API surface.
+// Public API surface.
 
 // Re-exports from the upstream motion engine.
 export { animate, inView, isMotionValue, motionValue, scroll, spring } from "motion"
 // Context layer.
 export { MotionConfig, MotionConfigContext, useMotionConfig } from "./motion-config"
+// Presence — exit-animation coordinator + imperative hook (Phase 3).
+export {
+  Presence,
+  type PresenceProps,
+  type UseAnimatePresenceOptions,
+  type UseAnimatePresenceResult,
+  useAnimatePresence,
+} from "./presence"
 export { PresenceContext, usePresenceContext } from "./presence-context"
 // Imperative motion primitive (advanced — most users want useMotion instead).
 export { createDragControls } from "./primitives/createDragControls"

@@ -255,10 +255,7 @@ export function createMotion(
 
       // Merge transition: MotionConfig default < user.transition <
       // exit-target.transition < reduced-motion override.
-      const reduced = shouldReduceMotion(
-        motionConfig.reducedMotion(),
-        systemReducedMotion(),
-      )
+      const reduced = shouldReduceMotion(motionConfig.reducedMotion(), systemReducedMotion())
       const transition = mergeTransition(
         motionConfig.transition(),
         exitSnapshot.transition,
