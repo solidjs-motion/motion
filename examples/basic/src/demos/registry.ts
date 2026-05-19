@@ -17,7 +17,7 @@ export type DemoEntry = {
   /** One-line description shown under the title in the demo header. */
   blurb: string
   /** Phase tag — drives sidebar grouping. */
-  phase: 1 | 2
+  phase: 1 | 2 | 3
   /** Lazy-loaded page component. */
   component: ReturnType<typeof lazy>
   /**
@@ -199,5 +199,116 @@ export const demos: DemoEntry[] = [
     component: lazy(() => import("./CreateVelocityTime")),
     source: rawSource(() => import("./CreateVelocityTime.tsx?raw")),
     filename: "CreateVelocityTime.tsx",
+  },
+  // ---- Phase 3 ----
+  {
+    path: "/presence-fade",
+    title: "Presence (fade)",
+    blurb: "Single-element exit — <Show> + <Presence> running an exit target before unmount.",
+    phase: 3,
+    component: lazy(() => import("./PresenceFade")),
+    source: rawSource(() => import("./PresenceFade.tsx?raw")),
+    filename: "PresenceFade.tsx",
+  },
+  {
+    path: "/presence-list",
+    title: "Presence (list)",
+    blurb:
+      "<For> + add/remove with per-item enter/exit. Removed items animate; survivors stay put.",
+    phase: 3,
+    component: lazy(() => import("./PresenceList")),
+    source: rawSource(() => import("./PresenceList.tsx?raw")),
+    filename: "PresenceList.tsx",
+  },
+  {
+    path: "/presence-stagger",
+    title: "Presence (staggered list)",
+    blurb: "Per-item enter/exit with custom-driven delays — dynamic variants over the list.",
+    phase: 3,
+    component: lazy(() => import("./PresenceListStagger")),
+    source: rawSource(() => import("./PresenceListStagger.tsx?raw")),
+    filename: "PresenceListStagger.tsx",
+  },
+  {
+    path: "/presence-orchestrated",
+    title: "Presence (orchestrated)",
+    blurb:
+      "Parent shell's variant label cascades through m.Provider; Presence's descendant-walk exit makes the cascade work at unmount too.",
+    phase: 3,
+    component: lazy(() => import("./PresenceOrchestratedList")),
+    source: rawSource(() => import("./PresenceOrchestratedList.tsx?raw")),
+    filename: "PresenceOrchestratedList.tsx",
+  },
+  {
+    path: "/presence-wait",
+    title: 'Presence mode="wait"',
+    blurb: "Sequential panel swap — old exits fully before new enters.",
+    phase: 3,
+    component: lazy(() => import("./PresenceWaitMode")),
+    source: rawSource(() => import("./PresenceWaitMode.tsx?raw")),
+    filename: "PresenceWaitMode.tsx",
+  },
+  {
+    path: "/presence-initial-false",
+    title: "Presence initial={false}",
+    blurb: "First-mount suppression. Initial paint is static; subsequent mounts animate.",
+    phase: 3,
+    component: lazy(() => import("./PresenceInitialFalse")),
+    source: rawSource(() => import("./PresenceInitialFalse.tsx?raw")),
+    filename: "PresenceInitialFalse.tsx",
+  },
+  {
+    path: "/use-animate-presence",
+    title: "useAnimatePresence (hook)",
+    blurb: "Imperative escape hatch — exit() returns a Promise, await it before flipping mount.",
+    phase: 3,
+    component: lazy(() => import("./UseAnimatePresenceHook")),
+    source: rawSource(() => import("./UseAnimatePresenceHook.tsx?raw")),
+    filename: "UseAnimatePresenceHook.tsx",
+  },
+  {
+    path: "/presence-gestures",
+    title: "Presence + gestures",
+    blurb: "Hover/press combined with exit on the same card — gesture priority unchanged.",
+    phase: 3,
+    component: lazy(() => import("./PresenceWithGestures")),
+    source: rawSource(() => import("./PresenceWithGestures.tsx?raw")),
+    filename: "PresenceWithGestures.tsx",
+  },
+  {
+    path: "/presence-drag",
+    title: "Presence + drag",
+    blurb: "Drag the card, then remove it — exit's x overrides drag's claim mid-unmount.",
+    phase: 3,
+    component: lazy(() => import("./PresenceWithDrag")),
+    source: rawSource(() => import("./PresenceWithDrag.tsx?raw")),
+    filename: "PresenceWithDrag.tsx",
+  },
+  {
+    path: "/presence-toasts",
+    title: "Presence (toast queue)",
+    blurb: "Stacked notifications — fire/auto-dismiss/clear all with parallel-exit coordination.",
+    phase: 3,
+    component: lazy(() => import("./PresenceToastQueue")),
+    source: rawSource(() => import("./PresenceToastQueue.tsx?raw")),
+    filename: "PresenceToastQueue.tsx",
+  },
+  {
+    path: "/presence-modal",
+    title: "Presence (modal + backdrop)",
+    blurb: "Two children in one Presence — backdrop + dialog exit in parallel.",
+    phase: 3,
+    component: lazy(() => import("./PresenceModalDialog")),
+    source: rawSource(() => import("./PresenceModalDialog.tsx?raw")),
+    filename: "PresenceModalDialog.tsx",
+  },
+  {
+    path: "/presence-stack",
+    title: "Presence (swipe stack)",
+    blurb: "Tinder-style draggable cards — exit direction follows the swipe, next card promotes.",
+    phase: 3,
+    component: lazy(() => import("./PresenceImageStack")),
+    source: rawSource(() => import("./PresenceImageStack.tsx?raw")),
+    filename: "PresenceImageStack.tsx",
   },
 ]

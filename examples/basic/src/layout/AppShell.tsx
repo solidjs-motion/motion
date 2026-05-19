@@ -29,6 +29,7 @@ export function AppShell(props: ParentProps) {
   const grouped = createMemo(() => ({
     phase1: demos.filter((d) => d.phase === 1),
     phase2: demos.filter((d) => d.phase === 2),
+    phase3: demos.filter((d) => d.phase === 3),
   }))
   const activeDemo = createMemo(() => {
     const path = stripBase(location.pathname)
@@ -68,6 +69,7 @@ export function AppShell(props: ParentProps) {
         </A>
         <NavGroup title="Phase 1" entries={grouped().phase1} />
         <NavGroup title="Phase 2" entries={grouped().phase2} />
+        <NavGroup title="Phase 3" entries={grouped().phase3} />
       </aside>
       <main style={{ padding: "2.5rem 3rem", "max-width": "880px" }}>
         <Show when={activeDemo()}>
