@@ -375,10 +375,24 @@ export type VariantContextValue = {
  * - `register(el, runExit)` — called from `createMotion` when `opts.exit` is
  *   set. `runExit` flips the state machine's `exit` flag and awaits the
  *   resulting animate's completion.
- * - `unregister(el)` — Solid `onCleanup` after `register`.
+ * - `unregister(el)` — Presence (or the hook's `exit()`) prunes after exit.
+ *   createMotion deliberately omits self-unregister; Solid disposes the
+ *   child owner well before transition-group's onExit runs.
  * - `beforeUnmount(el)` — Presence (or the hook's `exit()`) dispatches to the
  *   registered `runExit`. Returns a resolved promise if no `runExit` is
  *   registered, so non-exit children pass through cleanly.
+ * - `registerEnter` / `beforeMount` — symmetric to the exit pair. createMotion
+ *   defers its first-mount animate when it's inside a real Presence (the
+ *   no-op default has no `registerEnter`) because the element may be off-DOM
+ *   at the moment the gesture-state-machine first iterates (e.g., the new
+ *   child during a `mode: "wait"` swap is created BEFORE the old child's
+ *   exit completes). Running motion's `animate()` on a disconnected element
+ *   completes off-DOM and the final `commitStyles` silently no-ops, leaving
+ *   the element painted at its `initial` target when it finally enters the
+ *   DOM. Presence's `onEnter` (switch) / `onChange.added` (list) calls
+ *   `beforeMount(el)` once the element is actually connected; the child's
+ *   registered `runEnter` flips its readiness signal and the state machine
+ *   dispatches the first animate against a live element.
  * - `initial` — when an enclosing `<Presence initial={false}>` (or the hook
  *   with `initial: false`) is active, descendants suppress their first-mount
  *   animation. Accessor-shaped so the implementation can flip post-mount.
@@ -387,6 +401,8 @@ export type PresenceContextValue = {
   register: (el: MotionElement, runExit: () => Promise<void>) => void
   unregister: (el: MotionElement) => void
   beforeUnmount: (el: MotionElement) => Promise<void>
+  registerEnter?: (el: MotionElement, runEnter: () => void) => void
+  beforeMount?: (el: MotionElement) => void
   initial?: Accessor<boolean>
 }
 

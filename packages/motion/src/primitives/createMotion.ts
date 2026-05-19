@@ -1,5 +1,5 @@
 import { animate } from "motion"
-import { untrack } from "solid-js"
+import { createSignal, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
@@ -194,6 +194,42 @@ export function createMotion(
     applyStaticStyle(el, capturedInitialTarget)
   }
 
+  // ---------- Presence-aware enter-readiness gate ----------
+  // We detect "inside a real <Presence>" by the absence of `registerEnter` on
+  // the no-op default context. When we ARE inside one, the element may be
+  // off-DOM at the moment the state machine first iterates (the new child
+  // during a mode="wait" swap is created before the old child's exit
+  // settles, and even the initial child is briefly created off-DOM during
+  // appear). Dispatching motion's `animate()` then would run the animation
+  // on a disconnected element and silently fail commitStyles — the element
+  // would paint at its `initial` target when it finally enters the DOM.
+  //
+  // Solution: start `enterReady = false` while in a Presence, register a
+  // `runEnter` callable that flips it true, and let Presence call it from
+  // its `onEnter` / `onChange.added` hook (when transition-group has
+  // synchronously inserted the element via `setReturned`). Outside a
+  // Presence we leave `enterReady` undefined; the state machine treats
+  // absence as ready=true and the existing eager-first-iteration behavior
+  // is unchanged.
+  const inPresence = presence.registerEnter !== undefined
+  const [enterReady, setEnterReady] = createSignal(!inPresence)
+  if (inPresence && presence.registerEnter) {
+    presence.registerEnter(el, () => setEnterReady(true))
+    // Fallback: transition-group's onEnter / onChange.added only fires for
+    // elements that are NEW to the source list. The initial children of a
+    // `<Presence initial={false}>` (appear=false case) are already in the
+    // signal at construction and never trigger an enter callback. We flip
+    // readiness from a microtask if the element is connected by then —
+    // Solid's synchronous render of `returned()` has run, and any element
+    // that was meant to be on screen is in the DOM. For wait-mode swaps
+    // where the new child is still off-DOM (the old one's exit is in
+    // flight), the `isConnected` check fails and we leave readiness false;
+    // Presence will fire beforeMount through onEnter when the exit settles.
+    queueMicrotask(() => {
+      if (el.isConnected) setEnterReady(true)
+    })
+  }
+
   // ---------- Gesture state machine (Q3b, ADR 0002) ----------
   // Constructed BEFORE presence registration so the registered `runExit`
   // callable can close over `setActive` + `onceExitComplete`. Owns target
@@ -210,6 +246,7 @@ export function createMotion(
     initialTarget: capturedInitialTarget,
     externalActiveStore: config?.activeStore,
     suppressFirstMount,
+    enterReady,
   })
   const { setActive, onceExitComplete } = stateMachine
 
@@ -224,30 +261,56 @@ export function createMotion(
   // We do NOT call `presence.unregister(el)` on owner cleanup — that would
   // race ahead of Presence's onExit. Instead, Presence/hook unregisters
   // after the exit settles. See ADR 0003 for the timing rationale.
-  if (initialOpts.exit !== undefined) {
-    // Snapshot exit-relevant config at construction. Reactive changes to
-    // these mid-life are NOT picked up at exit time — acceptable trade-off
-    // for v0.1 (the alternative is keeping the state machine alive across
-    // owner disposal, which Solid doesn't support cleanly).
-    const exitSnapshot = {
-      exit: initialOpts.exit,
-      variants: initialOpts.variants,
-      custom: initialOpts.custom ?? parentVariantCtx.custom?.(),
-      transition: initialOpts.transition,
-    }
+  // Register a runExit for this element if EITHER:
+  //   (a) it has its own `exit` prop, OR
+  //   (b) an ancestor's exit label cascades down via VariantContext AND this
+  //       element has a `variants` map that could resolve against it.
+  //
+  // (b) is the motion-react canonical orchestration pattern: a parent shell
+  // declares `exit: "closed"` (a label), wraps children in `m.Provider`, and
+  // children are passive consumers — they have ONLY a `variants` map keyed
+  // by `"closed"` (and other labels). Without (b), the children would never
+  // register a runExit and Presence's subtree-walk wouldn't find them; the
+  // cascade would work on enter but vanish on exit.
+  //
+  // The check uses parentVariantCtx.exit?.() which (per use-motion.tsx's
+  // `myVariantCtx.exit`) returns the parent's exit prop unconditionally —
+  // not gated on the parent's active.exit flag — so this snapshot at
+  // construction sees the static cascaded label, not a transient runtime
+  // value.
+  const inheritedExitLabel = untrack(() => parentVariantCtx.exit?.())
+  const hasOwnExit = initialOpts.exit !== undefined
+  const hasCascadedExit =
+    inheritedExitLabel !== undefined && initialOpts.variants !== undefined
 
+  if (hasOwnExit || hasCascadedExit) {
     const runExit = async (): Promise<void> => {
+      // Re-read opts at exit time. The previous design snapshotted them at
+      // construction, which broke any pattern where `exit` is reactive — a
+      // swipe-card whose exit direction depends on which way the user just
+      // flicked, for example, would always exit using the PREVIOUS card's
+      // direction (the value that was live when THIS card mounted). We
+      // untrack the read because we don't want to subscribe anything that
+      // would still be alive after the surrounding owner has been disposed
+      // by Solid's `<Show>` / `<For>` swap. The props proxy itself survives
+      // disposal — it's just a JS object that the runExit closure keeps
+      // referenced — so reading `props.X` here returns the latest value
+      // the parent passed in.
+      const opts = untrack(getOpts)
+      // `resolveTarget` walks own.exit, then the inherited cascade. When
+      // neither produces a target there's nothing to animate — return
+      // without setActive so we don't hang on the (potentially dead)
+      // state machine's onceExitComplete.
       const exitTarget = resolveTarget(
-        exitSnapshot.exit,
-        exitSnapshot.variants,
-        asVariantLabels(parentVariantCtx.exit?.()),
-        exitSnapshot.custom,
+        opts.exit,
+        opts.variants,
+        asVariantLabels(untrack(() => parentVariantCtx.exit?.())),
+        opts.custom ?? parentVariantCtx.custom?.(),
       )
       if (!exitTarget) {
-        // Even with no exit-specific keys (resolveTarget returned null —
-        // e.g., the user passed a label that doesn't exist in variants),
-        // we cooperate with the state machine for cases where the user
-        // expects an "exit" gesture without specific keys. Fall through.
+        // Resolved to null (e.g., the user passed a label that doesn't
+        // exist in variants). Cooperate with the state machine for cases
+        // where the user expects an "exit" gesture without specific keys.
         setActive("exit", true)
         await onceExitComplete()
         return
@@ -258,7 +321,7 @@ export function createMotion(
       const reduced = shouldReduceMotion(motionConfig.reducedMotion(), systemReducedMotion())
       const transition = mergeTransition(
         motionConfig.transition(),
-        exitSnapshot.transition,
+        opts.transition,
         exitTarget.transition,
         reduced,
       )

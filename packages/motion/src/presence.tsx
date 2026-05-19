@@ -1,6 +1,15 @@
 import { resolveElements } from "@solid-primitives/refs"
 import { createListTransition, createSwitchTransition } from "@solid-primitives/transition-group"
-import { type Component, createSignal, type JSX, onCleanup } from "solid-js"
+import {
+  type Component,
+  createEffect,
+  createMemo,
+  createSignal,
+  type JSX,
+  Match,
+  onCleanup,
+  Switch,
+} from "solid-js"
 import { isServer } from "solid-js/web"
 import { PresenceContext } from "./presence-context"
 import type { MotionElement, PresenceContextValue } from "./types"
@@ -47,6 +56,24 @@ function switchMode(mode: PresenceProps["mode"]): "out-in" | "parallel" {
   return mode === "wait" ? "out-in" : "parallel"
 }
 
+/**
+ * Find every motion child registered under `root` (or root itself) and
+ * return their [element, runExit] pairs. Walks the `runExits` map and
+ * tests containment via `Node.contains`, which is O(depth) per check —
+ * cheap because n is bounded by the number of motion children Presence
+ * is tracking. Order isn't load-bearing; callers Promise.all the runExits.
+ */
+function collectSubtreeExits(
+  root: MotionElement,
+  runExits: Map<MotionElement, () => Promise<void>>,
+): Array<[MotionElement, () => Promise<void>]> {
+  const out: Array<[MotionElement, () => Promise<void>]> = []
+  for (const [el, fn] of runExits) {
+    if (el === root || root.contains(el)) out.push([el, fn])
+  }
+  return out
+}
+
 export type PresenceProps = {
   /**
    * Exit/enter coordination.
@@ -63,6 +90,25 @@ export type PresenceProps = {
    * child(ren); subsequent mounts mid-life still animate.
    */
   initial?: boolean
+  /**
+   * List-path only — controls what transition-group does with an exiting
+   * element while its `exit` animation is playing. Forwarded directly to
+   * `@solid-primitives/transition-group`'s `createListTransition`.
+   *
+   * - `"move-to-end"` (default) — the exiting element is appended to the
+   *   end of the rendered array so its DOM position changes during exit.
+   *   Fine for grids/cascades; surprising for vertically-stacked toasts
+   *   because surviving siblings JUMP up while the dismissed item is
+   *   still fading out below them.
+   * - `"keep-index"` — the exiting element stays at its original index
+   *   until exit completes. Surviving siblings don't reflow until the
+   *   slot is released. Best default for notification stacks.
+   * - `"remove"` — no exit transition; the element is gone from the
+   *   rendered array immediately. Useful when the exit is purely visual
+   *   on the child (e.g., it self-animates via opacity transitions
+   *   instead of `exit`).
+   */
+  exitMethod?: "move-to-end" | "keep-index" | "remove"
   children: JSX.Element
 }
 
@@ -71,6 +117,16 @@ export type PresenceProps = {
  * `exit` targets before they unmount. Matches motion-react's
  * `<AnimatePresence>` shape but with Solid's `<Show>` / `<For>` /
  * `<Index>` patterns instead of conditional children.
+ *
+ * Nested motion children are first-class: when an ancestor unmounts,
+ * Presence walks the subtree from each resolved child and fires every
+ * registered `runExit` it finds in parallel — including motion children
+ * nested inside plain wrappers, or descendants whose `exit` label was
+ * cascaded down via `m.Provider`. Each motion descendant animates with
+ * its own variant/target; transition-group only releases the DOM once
+ * the combined `Promise.all` settles. Mirrors motion-react's behavior
+ * where a `<motion.div exit={...}>` inside an `<AnimatePresence>` boundary
+ * animates correctly regardless of depth.
  *
  * @example Single (conditional unmount)
  * <Presence>
@@ -97,6 +153,12 @@ export const Presence: Component<PresenceProps> = (props) => {
 
   // ---------- PresenceContext value supplied to descendants ----------
   const runExits = new Map<MotionElement, () => Promise<void>>()
+  // Enter callbacks — symmetric to runExits. createMotion registers a
+  // `runEnter` when it's inside this Presence; we fire it the moment the
+  // element is actually inserted into the DOM (from transition-group's
+  // onEnter / onChange.added). One-shot — deleted after firing so we don't
+  // re-trigger the enter animate on subsequent renders.
+  const runEnters = new Map<MotionElement, () => void>()
   // `initial` is read at construction. We flip it to `true` after the first
   // microtask so mid-life inserts DO animate even if the user set
   // `initial={false}`. Matches motion-react's behavior.
@@ -111,8 +173,33 @@ export const Presence: Component<PresenceProps> = (props) => {
       runExits.delete(el)
     },
     beforeUnmount: (el) => {
-      const fn = runExits.get(el)
-      return fn ? fn() : Promise.resolve()
+      // Walk the subtree rooted at `el` and fire every registered runExit
+      // we find — the root's own (if registered) plus every descendant
+      // that's a motion child. They all run concurrently; we await the
+      // combined Promise.all so transition-group only releases the DOM
+      // once every motion descendant has finished its exit, then prune
+      // the entries from the registry.
+      //
+      // This is the mechanism that makes motion-react's parent-cascade
+      // exit pattern work for us: when an ancestor unmounts, each nested
+      // motion child still runs its OWN exit (its runExit closure already
+      // captures the element, `getOpts`, and the state-machine handles,
+      // so it doesn't matter that Solid has disposed the surrounding
+      // owner). Callers don't need to unregister individually — this
+      // method finishes the bookkeeping for the whole subtree.
+      const exiting = collectSubtreeExits(el, runExits)
+      if (exiting.length === 0) return Promise.resolve()
+      return Promise.all(exiting.map((pair) => pair[1]())).then(() => {
+        for (const [exitedEl] of exiting) runExits.delete(exitedEl)
+      })
+    },
+    registerEnter: (el, runEnter) => {
+      runEnters.set(el, runEnter)
+    },
+    beforeMount: (el) => {
+      const fn = runEnters.get(el)
+      runEnters.delete(el)
+      fn?.()
     },
     initial: presenceInitial,
   }
@@ -131,6 +218,7 @@ export const Presence: Component<PresenceProps> = (props) => {
       <PresenceCore
         source={() => props.children}
         mode={props.mode}
+        exitMethod={props.exitMethod}
         appear={presenceInitial}
         ctx={ctx}
       />
@@ -150,6 +238,7 @@ export const Presence: Component<PresenceProps> = (props) => {
 type PresenceCoreProps = {
   source: () => JSX.Element
   mode: PresenceProps["mode"]
+  exitMethod: PresenceProps["exitMethod"]
   appear: () => boolean
   ctx: PresenceContextValue
 }
@@ -160,72 +249,127 @@ const PresenceCore: Component<PresenceCoreProps> = (p) => {
   // resolution memos and mount the motion descendants twice.
   const resolved = resolveElements(p.source)
 
-  // Sticky single-vs-list decision at first read. Switching mid-life would
-  // require tearing down whichever transition helper we chose, which
-  // neither helper supports. Re-key the surrounding `<Show>` to flip
-  // between single and list, if that's ever needed.
-  const isList = Array.isArray(resolved())
+  // Sticky single-vs-list decision — DEFERRED until the source resolves
+  // to actual data. The earlier "decide at construction" approach silently
+  // broke any `<For>` that started empty: `Array.isArray(null)` is false,
+  // so we'd lock into switch mode and drop every list item past the first.
+  // Using a memo with a self-prev short-circuit makes the decision sticky
+  // once a non-null value arrives, while still reacting to the first
+  // populated read whenever that happens.
+  const path = createMemo<"switch" | "list" | null>((prev) => {
+    if (prev) return prev
+    const v = resolved()
+    if (v == null) return null
+    return Array.isArray(v) ? "list" : "switch"
+  })
 
-  if (process.env.NODE_ENV !== "production" && isList && p.mode === "wait") {
-    console.warn(
-      '[solidjs-motion] <Presence mode="wait"> has no meaningful effect with a list of children — "wait" sequences a single exiting element before a single entering one. Use it with `<Show>`-style conditional rendering.',
-    )
+  if (process.env.NODE_ENV !== "production") {
+    createEffect(() => {
+      if (path() === "list" && p.mode === "wait") {
+        console.warn(
+          '[solidjs-motion] <Presence mode="wait"> has no meaningful effect with a list of children — "wait" sequences a single exiting element before a single entering one. Use it with `<Show>`-style conditional rendering.',
+        )
+      }
+    })
   }
 
   // transition-group's helpers return Accessor<Element[]>. Solid renders
   // accessor functions inline (calls them in a tracking scope), but TS
   // sees Accessor, not JSX.Element. The cast is a no-op at runtime.
-
-  if (!isList) {
-    // ---------- Switch path ----------
-    return createSwitchTransition(
-      () => {
-        const v = resolved()
-        return Array.isArray(v) ? (v[0] ?? null) : v
-      },
-      {
-        appear: p.appear(),
-        mode: switchMode(p.mode),
-        onExit(el, done) {
-          // Run the registered exit, then unregister + signal done.
-          // Unregister AFTER exit (rather than at child cleanup) is the
-          // central timing trick — see ADR 0003. createMotion deliberately
-          // does NOT unregister on its own owner cleanup, so this is the
-          // sole site that prunes the runExits map for the switch path.
-          const motionEl = el as MotionElement
-          p.ctx.beforeUnmount(motionEl).then(() => {
-            p.ctx.unregister(motionEl)
-            done()
-          })
-        },
-
-        onEnter(_el, done) {
-          // Entry animations are driven by `useMotion`'s effect on mount,
-          // not by us — fire `done` immediately so transition-group
-          // doesn't block.
-          done()
-        },
-      },
-    ) as unknown as JSX.Element
-  }
-
-  // ---------- List path ----------
-  // createListTransition exposes `onChange` with `removed` / `added` /
-  // `unchanged` / `finishRemoved`. Parallel exits — Promise.all all the
-  // registered `runExit`s, unregister each as it settles, then call
-  // `finishRemoved(removed)` so transition-group lets Solid dispose those
-  // owners.
-  return createListTransition(() => resolved.toArray(), {
-    appear: p.appear(),
-    onChange({ removed, finishRemoved }) {
-      if (removed.length === 0) return
-      Promise.all(
-        (removed as MotionElement[]).map((el) =>
-          p.ctx.beforeUnmount(el).then(() => p.ctx.unregister(el)),
-        ),
-      ).then(() => finishRemoved(removed))
-    },
-  }) as unknown as JSX.Element
+  //
+  // <Switch> + keyed <Match> renders nothing until the path is decided
+  // (the children render as null when both Match `when`s are false). The
+  // child function form on Match guarantees the create*Transition call
+  // happens AT MOST ONCE, on the branch that wins — both paths can't be
+  // set up against the same resolveElements memo.
+  return (
+    <Switch>
+      <Match when={path() === "switch"} keyed>
+        {(_v) =>
+          createSwitchTransition(
+            () => {
+              const v = resolved()
+              return Array.isArray(v) ? (v[0] ?? null) : v
+            },
+            {
+              appear: p.appear(),
+              mode: switchMode(p.mode),
+              onExit(el, done) {
+                // Disable pointer events on the exiting element. In sync
+                // mode transition-group keeps the old node in the DOM as
+                // a sibling of the new one (with the old one LATER in
+                // source order, putting it on top in z-stacking). Without
+                // this, the exiting node — even at opacity:0 mid-exit —
+                // intercepts pointer events intended for the incoming
+                // card, breaking drag and hover on the new element until
+                // the exit settles.
+                const motionEl = el as MotionElement
+                if (
+                  motionEl instanceof HTMLElement ||
+                  motionEl instanceof SVGElement
+                ) {
+                  ;(motionEl.style as CSSStyleDeclaration).pointerEvents = "none"
+                }
+                // beforeUnmount walks the subtree, fires every descendant
+                // motion child's runExit in parallel, awaits the combined
+                // Promise.all, AND prunes the registry. We just chain
+                // done() onto it.
+                p.ctx.beforeUnmount(motionEl).then(done)
+              },
+              onEnter(el, done) {
+                // The element was just inserted into the DOM via
+                // setReturned (transition-group's createSwitchTransition
+                // does this synchronously before invoking onEnter). Fire
+                // the child's registered runEnter callback so its state
+                // machine can dispatch the first animate against a
+                // connected element — without this step, motion's
+                // `animate()` would have already completed off-DOM during
+                // the surrounding exit (or before the appear-driven
+                // insertion). Then unblock transition-group.
+                p.ctx.beforeMount?.(el as MotionElement)
+                done()
+              },
+            },
+          ) as unknown as JSX.Element
+        }
+      </Match>
+      <Match when={path() === "list"} keyed>
+        {(_v) =>
+          createListTransition(() => resolved.toArray(), {
+            appear: p.appear(),
+            exitMethod: p.exitMethod,
+            onChange({ added, removed, finishRemoved }) {
+              // Fire enter callbacks for added elements first —
+              // createListTransition has already updated the source array
+              // (and Solid's render diff has inserted the new nodes)
+              // before `onChange` runs, so this is the analogue of the
+              // switch path's onEnter timing. Without it the new motion
+              // children's first animate would have dispatched off-DOM at
+              // template instantiation and lost their commitStyles.
+              for (const el of added) {
+                p.ctx.beforeMount?.(el as MotionElement)
+              }
+              if (removed.length === 0) return
+              // Disable pointer events on every exiting node (see
+              // switch-path onExit for the rationale — same z-stacking
+              // trap applies when a removed list item lingers as a
+              // sibling of new/unchanged ones).
+              for (const el of removed as MotionElement[]) {
+                if (el instanceof HTMLElement || el instanceof SVGElement) {
+                  ;(el.style as CSSStyleDeclaration).pointerEvents = "none"
+                }
+              }
+              // beforeUnmount handles the subtree walk + unregister
+              // bookkeeping per root.
+              Promise.all(
+                (removed as MotionElement[]).map((el) => p.ctx.beforeUnmount(el)),
+              ).then(() => finishRemoved(removed))
+            },
+          }) as unknown as JSX.Element
+        }
+      </Match>
+    </Switch>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -283,8 +427,16 @@ export function useAnimatePresence(options?: UseAnimatePresenceOptions): UseAnim
       runExits.delete(el)
     },
     beforeUnmount: (el) => {
-      const fn = runExits.get(el)
-      return fn ? fn() : Promise.resolve()
+      // Mirrors `<Presence>`'s subtree-walk semantics (see its
+      // beforeUnmount JSDoc). The hook's own `exit()` API instead
+      // iterates the full registry directly — but anyone who hands
+      // this ctx to a transition-coordinator that calls `beforeUnmount`
+      // gets the same descendant-cascade behavior.
+      const exiting = collectSubtreeExits(el, runExits)
+      if (exiting.length === 0) return Promise.resolve()
+      return Promise.all(exiting.map((pair) => pair[1]())).then(() => {
+        for (const [exitedEl] of exiting) runExits.delete(exitedEl)
+      })
     },
     initial: presenceInitial,
   }

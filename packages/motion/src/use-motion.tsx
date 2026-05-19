@@ -1,6 +1,7 @@
 import { mergeRefs } from "@solid-primitives/refs"
-import { type Component, type JSX, untrack } from "solid-js"
+import { type Accessor, type Component, type JSX, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
+import { usePresenceContext } from "./presence-context"
 import { asVariantLabels, createMotion, resolveTarget } from "./primitives/createMotion"
 import type { GestureStateName } from "./primitives/gesture-state"
 import { targetToStyle } from "./style"
@@ -85,8 +86,17 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // ---------- Compute the SSR-emittable initial style ----------
   // untrack so reading getOpts() during render doesn't subscribe a Solid
   // computation; the createMotion effect inside motionRef owns reactivity.
+  //
+  // We also peek at the surrounding `<Presence>` (if any). When `initial`
+  // is propagated as `false`, the descendant should mount painted at the
+  // animate target — not the initial — because we WANT the visual end state
+  // to match a normal post-animation appearance, just without the animation.
+  // computeInitialStyle reads `presence.initial` once at construction; the
+  // signal flips to true on a microtask, but by then the SSR style has
+  // been computed and merged into the JSX props.
+  const presenceCtx = usePresenceContext()
   const initialOpts = untrack(getOpts)
-  const initialStyle = computeInitialStyle(initialOpts, parentVariantCtx)
+  const initialStyle = computeInitialStyle(initialOpts, parentVariantCtx, presenceCtx.initial)
 
   // ---------- Active gesture flags (Q4) ----------
   // Lifted from inside the state machine so myVariantCtx below can gate its
@@ -169,7 +179,28 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
 function computeInitialStyle(
   opts: MotionOptions,
   parentVariantCtx: VariantContextValue,
+  presenceInitial?: Accessor<boolean>,
 ): JSX.CSSProperties | null {
+  // `<Presence initial={false}>` propagates "skip the enter animation" down
+  // to every motion descendant. The intent is "render at the animate target"
+  // — NOT "render at the initial target with no animation" (the latter would
+  // leave the element looking like it failed to mount). So when the surrounding
+  // Presence says "suppress", we compute the style from the animate target
+  // instead of the initial chain. The state machine separately skips the
+  // first-mount animate dispatch via the same `suppressFirstMount` path.
+  if (presenceInitial?.() === false) {
+    const animateValue =
+      opts.animate !== undefined ? opts.animate : parentVariantCtx.animate?.()
+    if (animateValue === undefined) return null
+    const animateTarget = resolveTarget(
+      animateValue,
+      opts.variants as Variants | undefined,
+      undefined,
+      opts.custom ?? parentVariantCtx.custom?.(),
+    )
+    return animateTarget ? targetToStyle(animateTarget as Target) : null
+  }
+
   if (opts.initial === false) return null
 
   // Priority chain for the initial-state target:

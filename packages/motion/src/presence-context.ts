@@ -17,8 +17,11 @@ const noopPresenceContext: PresenceContextValue = {
   register: () => {},
   unregister: () => {},
   beforeUnmount: () => Promise.resolve(),
-  // `initial` left undefined — consumers read it as "default to true" when
-  // no Presence is providing a value.
+  // `registerEnter` / `beforeMount` / `initial` intentionally LEFT UNDEFINED.
+  // createMotion detects "in a real Presence" by `presence.initial !== undefined`
+  // (the no-op leaves it undefined). Without that signal it animates first-
+  // mount immediately — outside a Presence the element is always already in
+  // the DOM by the time createMotion runs, so no defer is needed.
 }
 
 export const PresenceContext = createContext<PresenceContextValue>(noopPresenceContext)

@@ -82,6 +82,30 @@ export type CreateGestureStateMachineDeps = {
    * Presence instead of by the user's own options).
    */
   suppressFirstMount?: boolean
+  /**
+   * Phase 3 — readiness gate for the first-mount animate when this motion
+   * element is wrapped in a real `<Presence>`. The state machine reads this
+   * on each iteration; when it's `false` AND we haven't run yet, the diff
+   * effect short-circuits (no animate dispatch, no MV subscriptions sealed).
+   * Presence flips it to `true` from its `onEnter` / `onChange.added`
+   * callback, at which point the effect re-runs and treats THAT iteration
+   * as the first.
+   *
+   * Outside a Presence (no-op default context), createMotion leaves this
+   * `undefined` — the state machine treats absence as `ready=true` and the
+   * existing eager-first-iteration behavior is unchanged.
+   *
+   * Rationale: real `motion.animate()` is a Web Animations API call that
+   * runs even on a disconnected element, but its terminal `commitStyles`
+   * silently no-ops when the element is off-DOM. For a `mode: "wait"` swap
+   * the new child is created BEFORE the old child's exit completes, so
+   * dispatching the first animate eagerly would let it complete in the
+   * detached state and the element would paint at its `initial` target
+   * when it finally enters the DOM. Deferring until `onEnter` (when
+   * transition-group has synchronously inserted the element via
+   * `setReturned`) closes that gap.
+   */
+  enterReady?: Accessor<boolean>
 }
 
 export type GestureStateMachine = {
@@ -131,6 +155,7 @@ export function createGestureStateMachine(
     initialTarget,
     externalActiveStore,
     suppressFirstMount,
+    enterReady,
   } = deps
 
   // ---------- Active flags ----------
@@ -264,6 +289,19 @@ export function createGestureStateMachine(
   createEffect(() => {
     const next = winners()
     const opts = getOpts()
+
+    // Presence-aware readiness gate: when the surrounding `<Presence>` is
+    // still holding this element off-DOM (the new child during a mode="wait"
+    // swap, or the initial child before appear's enterTransition runs),
+    // we MUST NOT dispatch the first animate. Web Animations API will run
+    // it to completion off-DOM, then silently drop the final commitStyles —
+    // the element would paint at its `initial` target when it eventually
+    // enters the DOM. Skip the entire iteration (winners() above subscribed
+    // us to future changes); when Presence flips enterReady this effect
+    // re-runs and the iteration below treats THAT pass as the first.
+    if (isFirstRun && enterReady && !enterReady()) {
+      return
+    }
 
     // First-mount guard: either the user opted out via `initial: false` OR
     // an enclosing `<Presence initial={false}>` propagated suppression via

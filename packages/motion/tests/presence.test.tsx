@@ -64,6 +64,55 @@ const flush = async () => {
 // Switch path (`<Show>`-style conditional)
 // ---------------------------------------------------------------------------
 
+describe("<Presence> — switch path: enter timing", () => {
+  it("dispatches the new child's animate IMMEDIATELY in sync mode (parallel with exit)", async () => {
+    // Regression: createMotion defers the first-mount animate until presence
+    // signals readiness via beforeMount. In sync mode, transition-group's
+    // parallel branch fires enterTransition synchronously after exitTransition
+    // — so beforeMount fires for the new child in the same tick the swap
+    // happens. The new child's animate target should appear in animateSpy
+    // calls right away, NOT only after the old child's exit settles.
+    const [page, setPage] = createSignal<"a" | "b">("a")
+    const { unmount } = render(() => (
+      <Presence mode="sync">
+        <Show when={page()} keyed>
+          {(p) => {
+            const m = useMotion({
+              initial: { opacity: 0, x: 100 },
+              animate: { opacity: 1, x: 0 },
+              exit: { opacity: 0, x: -100 },
+            })
+            return <div {...m()} data-panel={p} />
+          }}
+        </Show>
+      </Presence>
+    ))
+    await flush()
+    animateSpy.mockClear()
+
+    setPage("b")
+    // Single microtask flush — the parallel branch shouldn't need the long
+    // exit-completion wait that wait mode does.
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Both the exit dispatch (target.opacity === 0) and the enter dispatch
+    // (target.opacity === 1) should be in animateSpy by now.
+    const exitDispatched = animateSpy.mock.calls.some((c) => {
+      const t = c[1] as Record<string, unknown>
+      return t?.opacity === 0
+    })
+    const enterDispatched = animateSpy.mock.calls.some((c) => {
+      const t = c[1] as Record<string, unknown>
+      return t?.opacity === 1
+    })
+    expect(exitDispatched).toBe(true)
+    expect(enterDispatched).toBe(true)
+
+    unmount()
+  })
+})
+
 describe("<Presence> — switch path", () => {
   it("runs the child's exit animate before the element is removed from the DOM", async () => {
     const [open, setOpen] = createSignal(true)
@@ -123,6 +172,122 @@ describe("<Presence> — switch path", () => {
     unmount()
   })
 
+  it("runs exit on PASSIVE motion children via a parent's variant cascade", async () => {
+    // Regression: previously `createMotion` only registered a runExit when
+    // the child had its OWN `exit` prop. That broke the motion-react
+    // canonical orchestration pattern — a parent declares `exit="closed"`,
+    // children are passive (only a variants map, no own labels), and the
+    // cascade through `m.Provider` is supposed to make children inherit
+    // the exit label. Without registration, Presence's subtree-walk found
+    // nothing and passive children just vanished on unmount.
+    //
+    // Fix: registration ALSO triggers when an ancestor's exit label cascades
+    // down AND the child has a variants map keyed by that label. The child's
+    // runExit then resolves the label against its own variants at exit time.
+    const [open, setOpen] = createSignal(true)
+    const { container, unmount } = render(() => (
+      <Presence>
+        <Show when={open()}>
+          {(_v) => <Shell />}
+        </Show>
+      </Presence>
+    ))
+
+    function Shell() {
+      const m = useMotion({
+        initial: "closed",
+        animate: "open",
+        exit: "closed",
+        variants: { open: {}, closed: {} },
+      })
+      return (
+        <ul {...m()} data-testid="shell">
+          <m.Provider>
+            <PassiveItem />
+          </m.Provider>
+        </ul>
+      )
+    }
+    function PassiveItem() {
+      const m = useMotion({
+        variants: {
+          open: { opacity: 1 },
+          closed: { opacity: 0, x: -77 },
+        },
+      })
+      return <li {...m()} data-testid="passive" />
+    }
+
+    expect(container.querySelector("[data-testid='passive']")).not.toBeNull()
+    animateSpy.mockClear()
+
+    setOpen(false)
+    await flush()
+
+    // PassiveItem has no own exit prop. It inherits "closed" from Shell via
+    // m.Provider and resolves its own variants["closed"] = { opacity: 0,
+    // x: -77 }. The x: -77 is the smoking gun — it can only come from the
+    // passive item's variant, not from Shell (whose variants are empty).
+    const passiveExitCall = animateSpy.mock.calls.find((c) => {
+      const target = c[1] as Record<string, unknown>
+      return target?.x === -77
+    })
+    expect(passiveExitCall).toBeDefined()
+
+    unmount()
+  })
+
+  it("runs exit on NESTED motion descendants when the wrapper unmounts", async () => {
+    // Regression: previously Presence only fired runExit on the top-level
+    // resolved root. A motion child nested inside a non-motion wrapper
+    // (e.g., a dialog inside a positioning div, or any parent-cascade
+    // orchestration pattern) would be removed instantly with no exit.
+    // The fix has Presence walk the subtree and fire every registered
+    // runExit it finds — matching motion-react's behavior where the whole
+    // subtree animates out together.
+    const [open, setOpen] = createSignal(true)
+    const { container, unmount } = render(() => (
+      <Presence>
+        <Show when={open()}>
+          {(_v) => (
+            <div data-testid="wrapper">
+              {(() => {
+                // Nested motion child INSIDE the non-motion wrapper.
+                const m = useMotion({
+                  initial: { opacity: 0 },
+                  animate: { opacity: 1 },
+                  exit: { opacity: 0, x: 100 },
+                })
+                return <span {...m()} data-testid="nested" />
+              })()}
+            </div>
+          )}
+        </Show>
+      </Presence>
+    ))
+
+    expect(container.querySelector("[data-testid='wrapper']")).not.toBeNull()
+    expect(container.querySelector("[data-testid='nested']")).not.toBeNull()
+    animateSpy.mockClear()
+
+    setOpen(false)
+    await flush()
+
+    // The nested motion child's exit MUST have dispatched — its `x: 100`
+    // is the smoking gun (the wrapper has no motion of its own).
+    const exitCall = animateSpy.mock.calls.find((c) => {
+      const target = c[1] as Record<string, unknown>
+      return target?.x === 100
+    })
+    expect(exitCall).toBeDefined()
+
+    // After the exit settles, the whole subtree should be removed.
+    expect(container.querySelector("[data-testid='wrapper']")).toBeNull()
+    expect(container.querySelector("[data-testid='nested']")).toBeNull()
+
+    unmount()
+  })
+
   it("immediately unmounts a motion child that has no `exit` defined", async () => {
     const [open, setOpen] = createSignal(true)
     const { container, unmount } = render(() => (
@@ -148,6 +313,44 @@ describe("<Presence> — switch path", () => {
 // ---------------------------------------------------------------------------
 
 describe("<Presence> — list path", () => {
+  it("renders every item when the list starts empty (path decision must defer)", async () => {
+    // Regression: when the For starts empty, `resolved()` is null. The
+    // path-decision used to lock into switch mode on construction —
+    // `Array.isArray(null)` is false — and every subsequent For item past
+    // the first would silently never enter the DOM. The toast queue demo
+    // hit this exactly: fire four toasts, only the first rendered. The
+    // fix defers the decision until the first non-null source emit.
+    type Item = { id: number }
+    const [items, setItems] = createSignal<Item[]>([])
+    const { container, unmount } = render(() => (
+      <Presence>
+        <For each={items()}>
+          {(item) => {
+            const m = useMotion({
+              initial: { opacity: 0 },
+              animate: { opacity: 1 },
+              exit: { opacity: 0 },
+            })
+            return <div {...m()} data-id={String(item.id)} />
+          }}
+        </For>
+      </Presence>
+    ))
+    // Empty start: no items rendered.
+    expect(container.querySelectorAll("[data-id]")).toHaveLength(0)
+
+    // Add four items in a single tick.
+    setItems([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }])
+    await flush()
+
+    // All four must render — not just the first.
+    expect(container.querySelectorAll("[data-id]")).toHaveLength(4)
+    expect(container.querySelector("[data-id='1']")).not.toBeNull()
+    expect(container.querySelector("[data-id='4']")).not.toBeNull()
+
+    unmount()
+  })
+
   it("runs exit on a removed item without affecting unchanged items", async () => {
     type Item = { id: number }
     const [items, setItems] = createSignal<Item[]>([{ id: 1 }, { id: 2 }, { id: 3 }])
@@ -254,6 +457,38 @@ describe("<Presence initial={false}>", () => {
       return target?.opacity === 1
     })
     expect(enterCalls.length).toBe(0)
+    unmount()
+  })
+
+  it("renders the child painted at its animate target (NOT initial) when suppressing", async () => {
+    // Bug regression: suppressFirstMount used to skip animate but leave the
+    // JSX-rendered style at the initial target — the element would mount
+    // invisible (opacity: 0) and never animate to opacity:1. The fix is to
+    // make useMotion's computeInitialStyle pick the animate target when
+    // presence.initial?.() is false; the state machine still skips the
+    // first dispatch. End-to-end: the element should paint at opacity:1
+    // immediately, without an animate call.
+    const { container, unmount } = render(() => (
+      <Presence initial={false}>
+        <Show when={true}>
+          {(_v) => {
+            const m = useMotion({
+              initial: { opacity: 0, x: 24 },
+              animate: { opacity: 1, x: 0 },
+              exit: { opacity: 0 },
+            })
+            return <div {...m()} data-testid="suppressed" />
+          }}
+        </Show>
+      </Presence>
+    ))
+    await flush()
+
+    const el = container.querySelector("[data-testid='suppressed']") as HTMLElement | null
+    // The JSX-merged style should reflect the animate target, not initial.
+    expect(el?.style.opacity).toBe("1")
+    // x: 0 → transform: none / translate3d(0, ...). Just assert opacity here;
+    // transform string format is jsdom-version-dependent.
     unmount()
   })
 
