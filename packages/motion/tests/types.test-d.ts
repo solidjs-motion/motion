@@ -278,11 +278,17 @@ describe("createMotionValue — MotionValueAccessor shape", () => {
 
 describe("ElementProps / MotionMergedProps", () => {
   it("MotionMergedProps strips user's ref/style and injects motion's", () => {
-    type UserProps = { class: string; ref?: (el: HTMLElement) => void; style?: { color: string } }
+    // Phase 4: ref type widened to MotionElement (HTMLElement | SVGElement)
+    // so `motion.path` and friends can attach refs without a cast.
+    type UserProps = {
+      class: string
+      ref?: (el: HTMLElement | SVGElement) => void
+      style?: { color: string }
+    }
     type Merged = MotionMergedProps<UserProps>
     expectTypeOf<Merged>().toExtend<{
       class: string
-      ref: (el: HTMLElement) => void
+      ref: (el: HTMLElement | SVGElement) => void
       style: JSX.CSSProperties
     }>()
     // user's `ref` and `style` types are replaced, not the wider element-props ones

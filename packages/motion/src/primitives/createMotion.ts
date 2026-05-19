@@ -5,6 +5,7 @@ import { createReducedMotion } from "../reduced-motion"
 import { targetToStyle } from "../style"
 import type {
   AnimateValue,
+  MotionElement,
   MotionOptions,
   Target,
   Transition,
@@ -84,7 +85,7 @@ export function mergeTransition(
  * mount when no SSR style was emitted. The ref callback fires before the
  * browser yields, so this avoids a frame of flicker.
  */
-function applyStaticStyle(el: HTMLElement, target: Target): void {
+function applyStaticStyle(el: MotionElement, target: Target): void {
   const style = targetToStyle(target)
   for (const key in style) {
     const value = (style as Record<string, string | number | undefined>)[key]
@@ -92,7 +93,8 @@ function applyStaticStyle(el: HTMLElement, target: Target): void {
     if (key.startsWith("--")) {
       el.style.setProperty(key, String(value))
     } else {
-      // HTMLElement.style is indexable for camelCase property names.
+      // ElementCSSInlineStyle.style is indexable for camelCase property names.
+      // Available on both HTMLElement and SVGElement (Phase 4 SVG support).
       ;(el.style as unknown as Record<string, string | number>)[key] = value
     }
   }
@@ -135,7 +137,7 @@ export type CreateMotionConfig = {
  * states (hover/press/focus/inView) and drag on top.
  */
 export function createMotion(
-  el: HTMLElement,
+  el: MotionElement,
   getOpts: () => MotionOptions,
   config?: CreateMotionConfig,
 ): void {
@@ -217,7 +219,14 @@ export function createMotion(
   // element's VisualElement x/y MotionValues during drag. Always attached;
   // the `isDragEnabled()` check inside createDrag means listeners do nothing
   // when `opts.drag` is falsy — toggling drag on/off doesn't churn listeners.
-  createDrag(el, getOpts, setActive)
+  //
+  // Drag is HTML-only for v0.1 — motion-dom's HTMLVisualElement is HTML-
+  // specific. The `instanceof HTMLElement` narrowing means a user who wires
+  // `drag` onto an SVG element gets a no-op at construction. We could surface
+  // a dev warning here later if needed.
+  if (el instanceof HTMLElement) {
+    createDrag(el, getOpts, setActive)
+  }
 }
 
 // Re-export for useMotion to consume the same helpers without circular deps.

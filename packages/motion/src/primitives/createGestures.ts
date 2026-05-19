@@ -1,6 +1,6 @@
 import { addDomEvent, hover, press } from "motion-dom"
 import { createEffect, onCleanup } from "solid-js"
-import type { MotionOptions } from "../types"
+import type { MotionElement, MotionOptions } from "../types"
 import { createInView } from "./createInView"
 import type { SetActive } from "./gesture-state"
 
@@ -25,7 +25,7 @@ import type { SetActive } from "./gesture-state"
  * events to the user's `MotionCallbacks`.
  */
 export function createGestures(
-  el: HTMLElement,
+  el: MotionElement,
   getOpts: () => MotionOptions,
   setActive: SetActive,
 ): void {

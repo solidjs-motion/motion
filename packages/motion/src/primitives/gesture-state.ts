@@ -6,6 +6,7 @@ import { shouldReduceMotion } from "../reduced-motion"
 import type {
   AnimateValue,
   MotionConfigContextValue,
+  MotionElement,
   MotionOptions,
   ResolvedValues,
   Target,
@@ -60,7 +61,7 @@ export type SetActiveStore = SetStoreFunction<Record<GestureStateName, boolean>>
 export type ActiveStoreTuple = [ActiveStore, SetActiveStore]
 
 export type CreateGestureStateMachineDeps = {
-  el: HTMLElement
+  el: MotionElement
   getOpts: () => MotionOptions
   parentVariantCtx: VariantContextValue
   motionConfig: MotionConfigContextValue

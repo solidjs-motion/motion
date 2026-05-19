@@ -133,7 +133,10 @@ describe("useMotion — ref composition (Q2 sub-2)", () => {
   })
 
   it("passes the same element to user ref and motion's createMotion", () => {
-    let userRefArg: HTMLElement | undefined
+    // Phase 4 widened the ref type to HTMLElement | SVGElement (so motion.svg
+    // works). The runtime element in this test is still a div, but the
+    // captured type has to match the wider callback signature.
+    let userRefArg: HTMLElement | SVGElement | undefined
     const { container, unmount } = render(() => {
       const m = useMotion({ animate: { x: 100 } })
       return <div {...m({ ref: (el) => (userRefArg = el) })}>x</div>

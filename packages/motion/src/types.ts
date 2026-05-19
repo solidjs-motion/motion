@@ -315,14 +315,25 @@ export type MotionOptions = MotionCallbacks &
 // for opt-in variant context propagation to descendants.
 // ---------------------------------------------------------------------------
 
-export type ElementProps = JSX.HTMLAttributes<HTMLElement> & {
-  ref?: ((el: HTMLElement) => void) | HTMLElement | undefined
+/**
+ * The element types `useMotion` can attach to. HTMLElement covers the bulk;
+ * SVGElement is included so `motion.path`, `motion.circle`, etc. (Phase 4)
+ * thread through without a `ref` type-cast. `createMotion` only uses methods
+ * available on both (style, addEventListener, getBoundingClientRect) so the
+ * union is honored at runtime. Drag stays HTMLElement-only via an
+ * `instanceof` check in createMotion's body — motion-dom's VisualElement
+ * layer is HTML-specific.
+ */
+export type MotionElement = HTMLElement | SVGElement
+
+export type ElementProps = JSX.HTMLAttributes<MotionElement> & {
+  ref?: ((el: MotionElement) => void) | MotionElement | undefined
   style?: JSX.CSSProperties
 }
 
 export type MotionMergedProps<P extends ElementProps> = Omit<P, "ref" | "style"> & {
   style: JSX.CSSProperties
-  ref: (el: HTMLElement) => void
+  ref: (el: MotionElement) => void
   "data-motion-hydrated"?: ""
 }
 
@@ -354,9 +365,9 @@ export type VariantContextValue = {
 
 /** Wired in Phase 1 with no-op default; <Presence> swaps it in Phase 3. */
 export type PresenceContextValue = {
-  register: (el: HTMLElement, exit: AnimateValue, transition?: Transition) => void
-  unregister: (el: HTMLElement) => void
-  beforeUnmount: (el: HTMLElement) => Promise<void>
+  register: (el: MotionElement, exit: AnimateValue, transition?: Transition) => void
+  unregister: (el: MotionElement) => void
+  beforeUnmount: (el: MotionElement) => Promise<void>
 }
 
 /** <MotionConfig> provides defaults that flow to every descendant motion element. */

@@ -6,6 +6,7 @@ import type { GestureStateName } from "./primitives/gesture-state"
 import { targetToStyle } from "./style"
 import type {
   ElementProps,
+  MotionElement,
   MotionMergedProps,
   MotionOptions,
   Target,
@@ -105,7 +106,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // ---------- Build the motion ref ----------
   // Pass the shadowed parent context to createMotion so its state machine
   // and initial-target resolver consume the same controlling-aware view.
-  const motionRef = (el: HTMLElement) => {
+  const motionRef = (el: MotionElement) => {
     createMotion(el, getOpts, {
       initialAppliedBySSR: !!initialStyle,
       activeStore,
