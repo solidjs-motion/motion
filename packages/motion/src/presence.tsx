@@ -147,9 +147,27 @@ export type PresenceProps = {
  * </Presence>
  */
 export const Presence: Component<PresenceProps> = (props) => {
-  // SSR: nothing to coordinate. Children render through their existing
-  // useMotion SSR contract.
-  if (isServer) return <>{props.children}</>
+  // SSR: there's nothing for transition-group to coordinate (no DOM
+  // changes happen during renderToString), so we render children as-is.
+  // BUT — `initial={false}` is meaningful at SSR time: useMotion's
+  // computeInitialStyle reads PresenceContext.initial and, when it's
+  // false, emits the ANIMATE target style instead of the initial.
+  // If we don't provide a server context, children see the no-op
+  // default (initial=undefined) and emit the wrong first-paint HTML.
+  // For `initial={false}` we provide a minimal server-side context;
+  // for `initial` undefined/true (the default), pass-through is correct.
+  if (isServer) {
+    if (props.initial === false) {
+      const serverCtx: PresenceContextValue = {
+        register: () => {},
+        unregister: () => {},
+        beforeUnmount: () => Promise.resolve(),
+        initial: () => false,
+      }
+      return <PresenceContext.Provider value={serverCtx}>{props.children}</PresenceContext.Provider>
+    }
+    return <>{props.children}</>
+  }
 
   // ---------- PresenceContext value supplied to descendants ----------
   const runExits = new Map<MotionElement, () => Promise<void>>()
@@ -304,10 +322,7 @@ const PresenceCore: Component<PresenceCoreProps> = (p) => {
                 // card, breaking drag and hover on the new element until
                 // the exit settles.
                 const motionEl = el as MotionElement
-                if (
-                  motionEl instanceof HTMLElement ||
-                  motionEl instanceof SVGElement
-                ) {
+                if (motionEl instanceof HTMLElement || motionEl instanceof SVGElement) {
                   ;(motionEl.style as CSSStyleDeclaration).pointerEvents = "none"
                 }
                 // beforeUnmount walks the subtree, fires every descendant
@@ -361,9 +376,9 @@ const PresenceCore: Component<PresenceCoreProps> = (p) => {
               }
               // beforeUnmount handles the subtree walk + unregister
               // bookkeeping per root.
-              Promise.all(
-                (removed as MotionElement[]).map((el) => p.ctx.beforeUnmount(el)),
-              ).then(() => finishRemoved(removed))
+              Promise.all((removed as MotionElement[]).map((el) => p.ctx.beforeUnmount(el))).then(
+                () => finishRemoved(removed),
+              )
             },
           }) as unknown as JSX.Element
         }

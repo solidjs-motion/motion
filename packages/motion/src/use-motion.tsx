@@ -1,5 +1,5 @@
 import { mergeRefs } from "@solid-primitives/refs"
-import { type Accessor, type Component, type JSX, mergeProps, untrack } from "solid-js"
+import { type Accessor, type Component, type JSX, mergeProps, onMount, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { usePresenceContext } from "./presence-context"
 import { asVariantLabels, createMotion, resolveTarget } from "./primitives/createMotion"
@@ -133,14 +133,30 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // implementation snapshotted userProps at call time, which broke this
   // path for the Phase 4 motion proxy.
   //
-  // The `style` field is a getter so reactive user.style is re-evaluated
-  // on each read while motion's initialStyle still layers on top via
-  // shallow merge. `ref` is computed once and snapshotted — refs are
-  // conventionally callbacks set once per mount; re-running mergeRefs
-  // on each read is wasted work.
+  // `initialStyle` is included in the `style` getter ONLY before the
+  // first render completes. After onMount fires, motion's WAA owns the
+  // animated properties on the element — if we kept layering initialStyle
+  // into m()'s reactive output, Solid's style fn (which re-applies every
+  // tracked key via setProperty on each render — its first-loop deletes
+  // every prev entry, so the second loop's `v !== prev[s]` is always true)
+  // would re-write the static initial values back into the inline style on
+  // every reactive prop change, clobbering whatever WAA committed. Server-
+  // side, onMount never fires, so renderedOnce stays false and initialStyle
+  // always reaches the SSR HTML for first-paint correctness. Client first
+  // render runs BEFORE the onMount microtask, so initialStyle is also in
+  // the JSX for hydration consistency with the SSR HTML.
+  //
+  // `ref` is computed once and snapshotted — refs are conventionally
+  // callbacks set once per mount; re-running mergeRefs on each read is
+  // wasted work.
+  let renderedOnce = false
+  onMount(() => {
+    renderedOnce = true
+  })
   function getProps<P extends ElementProps>(userProps?: P): MotionMergedProps<P> {
     return mergeProps(userProps ?? {}, {
       get style() {
+        if (renderedOnce) return (userProps?.style ?? {}) as JSX.CSSProperties
         return { ...(userProps?.style ?? {}), ...(initialStyle ?? {}) }
       },
       ref: mergeRefs(userProps?.ref, motionRef),
@@ -201,8 +217,7 @@ function computeInitialStyle(
   // instead of the initial chain. The state machine separately skips the
   // first-mount animate dispatch via the same `suppressFirstMount` path.
   if (presenceInitial?.() === false) {
-    const animateValue =
-      opts.animate !== undefined ? opts.animate : parentVariantCtx.animate?.()
+    const animateValue = opts.animate !== undefined ? opts.animate : parentVariantCtx.animate?.()
     if (animateValue === undefined) return null
     const animateTarget = resolveTarget(
       animateValue,

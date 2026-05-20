@@ -1,5 +1,5 @@
 import { render } from "@solidjs/testing-library"
-import { createRoot, createSignal } from "solid-js"
+import { createEffect, createRoot, createSignal, type JSX } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 // Spy on motion's animate before importing anything that uses it. The variadic
@@ -91,6 +91,70 @@ describe("useMotion — m() preserves reactivity on user props", () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(el?.style.color).toBe("blue")
+    unmount()
+  })
+})
+
+describe("useMotion — m() drops initialStyle after first render", () => {
+  // Regression: motion's `initialStyle` is computed once at construction
+  // and was previously layered into m()'s reactive style getter on every
+  // read. After mount, motion's WAA owns the animated properties; if
+  // initialStyle stays in m()'s output, Solid's `style` fn (which
+  // re-applies every tracked key on each render — its first-loop deletes
+  // every prev entry, so the second-loop diff `v !== prev[s]` is always
+  // true) re-writes opacity:0 / transform back into the inline style on
+  // every reactive prop change, clobbering whatever WAA committed.
+  //
+  // Fix: a `renderedOnce` flag flipped via onMount. Before first mount —
+  // including during SSR, where onMount never fires — initialStyle is
+  // in m()'s style for first-paint correctness. After mount, m()'s
+  // style returns just user.style; Solid's style fn removes the
+  // initialStyle keys via removeProperty on the next reactive render,
+  // and motion's WAA-driven values stay intact.
+  it("after onMount, m()'s style no longer contains opacity from the initial target", async () => {
+    let firstRenderStyle: JSX.CSSProperties | undefined
+    let afterMountStyle: JSX.CSSProperties | undefined
+    const [tick, setTick] = createSignal(0)
+
+    const { unmount } = render(() => {
+      const m = useMotion({
+        initial: { opacity: 0, y: 20 },
+        animate: { opacity: 1, y: 0 },
+      })
+      // First-call snapshot — synchronous component render, BEFORE
+      // onMount fires. renderedOnce is still false; style getter
+      // returns the merged user + initialStyle.
+      if (firstRenderStyle === undefined) {
+        const props = m() as { style: JSX.CSSProperties }
+        firstRenderStyle = props.style
+      }
+      // createEffect re-runs after onMount has fired (its first
+      // iteration is scheduled in the same microtask queue, and we
+      // also force a re-run via `setTick`). When it re-runs,
+      // renderedOnce is true and m()'s style is just user.style.
+      createEffect(() => {
+        tick()
+        const props = m() as { style: JSX.CSSProperties }
+        afterMountStyle = props.style
+      })
+      return <div {...m()} />
+    })
+
+    // First render captured initial style — opacity:0, transform present.
+    expect((firstRenderStyle as Record<string, unknown>).opacity).toBe(0)
+
+    // Flush onMount's microtask + the createEffect's first iteration,
+    // then trigger another re-run after we're sure renderedOnce is true.
+    await Promise.resolve()
+    await Promise.resolve()
+    setTick(1)
+    await Promise.resolve()
+
+    // After mount: m()'s style is just userProps.style (undefined here,
+    // so empty {}). No opacity or transform from initialStyle.
+    expect(afterMountStyle).toBeDefined()
+    expect((afterMountStyle as Record<string, unknown>).opacity).toBeUndefined()
+    expect((afterMountStyle as Record<string, unknown>).transform).toBeUndefined()
     unmount()
   })
 })
