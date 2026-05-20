@@ -3,7 +3,7 @@ import { createSignal, onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
-import { TRANSFORM_KEYS, targetToStyle } from "../style"
+import { snapshotValue, TRANSFORM_KEYS, targetToStyle } from "../style"
 import type {
   AnimateValue,
   MotionElement,
@@ -132,13 +132,21 @@ export type CreateMotionConfig = {
    * the user's `style` prop and passes them here. createMotion registers
    * each as an external (user-owned) entry in the value registry and
    * subscribes a writer that re-composes `el.style` from the registry
-   * snapshot on every change. The MV's `.get()` is also written immediately
-   * so the post-mount paint reflects the current value (overriding any
-   * `initial`-driven transform on collision — Stage 2 documented hazard;
-   * Stage 4 fixes this by routing initial-style writes through the
-   * registry too).
+   * snapshot on every change.
    */
   styleMotionValues?: Map<string, MotionValue<unknown>>
+  /**
+   * MV-in-style Stage 4 — static transform-shortcut entries in the user's
+   * `style` (e.g., `style={{ x: 10, scale: mv }}`'s `x: 10`). useMotion scrapes
+   * these alongside MVs so createMotion can seed transient registry entries
+   * for them. Without this, the writer would drop the static keys on every
+   * recompose since they wouldn't appear in the registry.
+   *
+   * Map values are the resolved leaf (number or string) — no MVs, no
+   * keyframe arrays, no accessor functions. useMotion runs the
+   * `snapshotValue` reduction before passing them in.
+   */
+  styleStaticTransforms?: Map<string, number | string>
 }
 
 /**
@@ -246,6 +254,12 @@ export function createMotion(
     if (!hasAny) return
     applyStaticStyle(el, target as Target)
   }
+  // Bridge activates whenever the user supplied ANY registry-owned style
+  // entry — an MV in style OR a static transform shortcut. The transform
+  // string then becomes the registry-writer's exclusive responsibility,
+  // composing from the union of (initial transforms, style MVs, static
+  // style transforms, animate-target transients). With NO registry-owned
+  // entries, transforms stay on the pre-existing WAA dispatch path.
   let bridgeActive = false
   if (config?.styleMotionValues && config.styleMotionValues.size > 0) {
     for (const [key, mv] of config.styleMotionValues) {
@@ -253,7 +267,71 @@ export function createMotion(
       onCleanup(mv.on("change", writeFromRegistry))
     }
     bridgeActive = true
-    // Initial write so the post-mount paint matches the MV's current value.
+  }
+  if (config?.styleStaticTransforms && config.styleStaticTransforms.size > 0) {
+    bridgeActive = true
+  }
+
+  // ---------- Stage 4: register initial + static-style transforms as transients ----------
+  // When bridging is active, ALL transform-shortcut keys need to flow through
+  // the registry so the writer composes the full transform string. Animate
+  // targets get routed via Stage 3's bridge (transients created on demand);
+  // style MVs get registered as external in the Stage 2 block above. This block
+  // closes the remaining two gaps:
+  //
+  //   (a) Initial transform values (from own.initial / parent.initial /
+  //       own.animate / parent.animate priority chain). Without these,
+  //       initial.y=20 + style.scale=mv would compose only `scale(<v>)` —
+  //       initial.y would be lost when the writer fires.
+  //
+  //   (b) Static transform shortcuts in the user's `style` prop (e.g.,
+  //       `style={{ x: 10, scale: mv }}`'s `x: 10`). These don't enter via
+  //       Stage 2's MV scrape; useMotion forwards them in
+  //       `styleStaticTransforms`. Same fate as (a) if not registered:
+  //       composeFirstPaintStyle gets them onto the SSR HTML, but the writer
+  //       wouldn't know about them on subsequent recomposes.
+  //
+  // Both (a) and (b) seed transients in the registry; the bridge function above
+  // returns them on subsequent animate dispatches, and the writer composes
+  // them with style MVs into one transform string. Non-transform initial
+  // values (opacity, etc.) stay on applyStaticStyle's one-shot path — the
+  // writer doesn't touch keys it doesn't own.
+  //
+  // We snapshot the raw value with `snapshotValue` because initial targets can
+  // carry keyframe arrays, MotionValues, or accessor functions; the transient
+  // needs a concrete leaf to start from. styleStaticTransforms is already
+  // pre-snapshotted by useMotion.
+  if (bridgeActive && capturedInitialTarget) {
+    for (const key in capturedInitialTarget) {
+      if (key === "transition") continue
+      if (!TRANSFORM_KEYS.has(key)) continue
+      if (valueRegistry.has(key)) continue
+      const raw = (capturedInitialTarget as Record<string, unknown>)[key]
+      const snapshot = snapshotValue(raw)
+      if (snapshot === undefined) continue
+      const mv = valueRegistry.getOrCreateTransient(key, snapshot)
+      onCleanup(mv.on("change", writeFromRegistry))
+    }
+  }
+  if (bridgeActive && config?.styleStaticTransforms) {
+    for (const [key, value] of config.styleStaticTransforms) {
+      // Static style entries WIN over initial on key collision — style is
+      // the runtime source of truth for any key it specifies. Replace any
+      // transient just seeded from initialTarget with this value's transient.
+      const existing = valueRegistry.get(key)
+      if (existing) {
+        existing.set(value)
+      } else {
+        const mv = valueRegistry.getOrCreateTransient(key, value)
+        onCleanup(mv.on("change", writeFromRegistry))
+      }
+    }
+  }
+
+  // Initial paint from the registry — composes initial transforms + style MVs
+  // + static-style transforms into a single transform string. Skipped when
+  // nothing is registered.
+  if (bridgeActive) {
     writeFromRegistry()
   }
 
@@ -268,10 +346,7 @@ export function createMotion(
   //     falls back to WAA.
   // Inactive when no external MV exists — preserves the existing dispatch
   // shape end-to-end for non-MV-in-style users.
-  const getValueForAnimate = (
-    key: string,
-    fallback: unknown,
-  ): MotionValue<unknown> | undefined => {
+  const getValueForAnimate = (key: string, fallback: unknown): MotionValue<unknown> | undefined => {
     if (!bridgeActive) return undefined
     const existing = valueRegistry.get(key)
     if (existing) return existing
@@ -368,8 +443,7 @@ export function createMotion(
   // value.
   const inheritedExitLabel = untrack(() => parentVariantCtx.exit?.())
   const hasOwnExit = initialOpts.exit !== undefined
-  const hasCascadedExit =
-    inheritedExitLabel !== undefined && initialOpts.variants !== undefined
+  const hasCascadedExit = inheritedExitLabel !== undefined && initialOpts.variants !== undefined
 
   if (hasOwnExit || hasCascadedExit) {
     const runExit = async (): Promise<void> => {

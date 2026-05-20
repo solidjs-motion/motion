@@ -127,3 +127,96 @@ describe("MV-in-style — Stage 2 smoke", () => {
     unmount()
   })
 })
+
+describe("MV-in-style — Stage 4 initial/style cooperation", () => {
+  it("composes initial transform values with style MVs into a single transform string", () => {
+    // initial.y=20 lands in the registry as a transient via Stage 4. The
+    // style MV (scale) lands as an external. The writer composes both into
+    // one transform string instead of letting the style-MV write clobber
+    // the initial transform.
+    const scale = createMotionValue(0.5)
+    let el!: HTMLDivElement
+    const { unmount } = render(() => {
+      const m = useMotion({ initial: { y: 20 } })
+      return (
+        <div
+          {...m({
+            ref: (r) => {
+              el = r as HTMLDivElement
+            },
+            style: { scale: scale as never },
+          })}
+        />
+      )
+    })
+
+    expect(el.style.transform).toBe("translateY(20px) scale(0.5)")
+
+    // Driving the style MV doesn't drop initial.y — the registry still has
+    // the transient seeded by Stage 4.
+    scale.set(1.2)
+    expect(el.style.transform).toBe("translateY(20px) scale(1.2)")
+
+    unmount()
+  })
+
+  it("composes when style has multiple transform shortcuts (MV + static + initial)", () => {
+    const scale = createMotionValue(0.8)
+    let el!: HTMLDivElement
+    const { unmount } = render(() => {
+      const m = useMotion({ initial: { rotate: 45 } })
+      return (
+        <div
+          {...m({
+            ref: (r) => {
+              el = r as HTMLDivElement
+            },
+            // x is a static transform shortcut (no MV) — also flows through
+            // the composition. scale is an MV. rotate comes from initial.
+            style: { scale: scale as never, x: 10 } as never,
+          })}
+        />
+      )
+    })
+
+    // Composed in motion's canonical order: x, scale, rotate
+    expect(el.style.transform).toBe("translateX(10px) scale(0.8) rotate(45deg)")
+
+    scale.set(1.1)
+    expect(el.style.transform).toBe("translateX(10px) scale(1.1) rotate(45deg)")
+
+    unmount()
+  })
+
+  it("leaves non-transform initial values intact when the writer fires", () => {
+    // The writer's applyStaticStyle only touches keys present in its target
+    // (registry contents). initial.opacity is non-transform and NOT registered
+    // by Stage 4 (only transform shortcuts go in), so it stays on the
+    // applyStaticStyle path that ran once at mount.
+    const scale = createMotionValue(0.5)
+    let el!: HTMLDivElement
+    const { unmount } = render(() => {
+      const m = useMotion({ initial: { y: 20, opacity: 0 } })
+      return (
+        <div
+          {...m({
+            ref: (r) => {
+              el = r as HTMLDivElement
+            },
+            style: { scale: scale as never },
+          })}
+        />
+      )
+    })
+
+    expect(el.style.transform).toBe("translateY(20px) scale(0.5)")
+    expect(el.style.opacity).toBe("0")
+
+    scale.set(1)
+    expect(el.style.transform).toBe("translateY(20px) scale(1)")
+    // opacity still 0 — writer didn't touch it.
+    expect(el.style.opacity).toBe("0")
+
+    unmount()
+  })
+})

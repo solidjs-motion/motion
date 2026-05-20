@@ -107,7 +107,24 @@ const PX_PROPERTIES = /* @__PURE__ */ new Set([
 
 type Leaf = string | number
 
-function snapshotValue(value: unknown): Leaf | undefined {
+/**
+ * Reduce a target-value (which may be raw, a MotionValue, an Accessor, or a
+ * keyframe array) to a concrete leaf value the writer can apply to the DOM
+ * or use to initialize a transient MotionValue. The cascade follows motion's
+ * own semantics:
+ *
+ * - `null` / `undefined` → `undefined` (caller drops the key)
+ * - keyframe array → first frame (consistent with motion-vanilla's
+ *   initial-style snapshot)
+ * - `MotionValue` → its current `.get()`
+ * - `Accessor` (a bare zero-arg function) → its invocation result
+ * - primitive (string / number) → returned as-is
+ *
+ * Exported for the MV-in-style Stage 4 work: createMotion uses it to
+ * snapshot initial-target entries when registering them into the value
+ * registry as transient MVs.
+ */
+export function snapshotValue(value: unknown): Leaf | undefined {
   if (value === null || value === undefined) return undefined
   if (Array.isArray(value)) return snapshotValue(value[0])
   if (isMotionValue(value)) return snapshotValue((value as MotionValue<Leaf>).get())

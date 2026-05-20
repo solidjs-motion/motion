@@ -5,7 +5,7 @@ import { createStore } from "solid-js/store"
 import { usePresenceContext } from "./presence-context"
 import { asVariantLabels, createMotion, resolveTarget } from "./primitives/createMotion"
 import type { GestureStateName } from "./primitives/gesture-state"
-import { targetToStyle } from "./style"
+import { snapshotValue, TRANSFORM_KEYS, targetToStyle } from "./style"
 import type {
   ElementProps,
   MotionElement,
@@ -84,7 +84,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
     transition: () => (isControlling() ? undefined : actualParentCtx.transition?.()),
   }
 
-  // ---------- Compute the SSR-emittable initial style ----------
+  // ---------- Compute the SSR-emittable initial target ----------
   // untrack so reading getOpts() during render doesn't subscribe a Solid
   // computation; the createMotion effect inside motionRef owns reactivity.
   //
@@ -92,12 +92,19 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // is propagated as `false`, the descendant should mount painted at the
   // animate target — not the initial — because we WANT the visual end state
   // to match a normal post-animation appearance, just without the animation.
-  // computeInitialStyle reads `presence.initial` once at construction; the
+  // computeInitialTarget reads `presence.initial` once at construction; the
   // signal flips to true on a microtask, but by then the SSR style has
   // been computed and merged into the JSX props.
+  //
+  // Stage 4 split: this returns the RAW resolved Target rather than the
+  // composed CSS. The style getter below composes initialTarget + style MV
+  // snapshots together so SSR HTML and client first paint both reflect the
+  // MVs the user supplied. Without this split, SSR HTML carries only the
+  // initial target and the MV value lands only after the client's ref fires
+  // — producing a brief paint discontinuity.
   const presenceCtx = usePresenceContext()
   const initialOpts = untrack(getOpts)
-  const initialStyle = computeInitialStyle(initialOpts, parentVariantCtx, presenceCtx.initial)
+  const initialTarget = computeInitialTarget(initialOpts, parentVariantCtx, presenceCtx.initial)
 
   // ---------- Active gesture flags (Q4) ----------
   // Lifted from inside the state machine so myVariantCtx below can gate its
@@ -127,17 +134,31 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // motionRef fires later (after JSX evaluates), at which time we no
   // longer have a handle on userProps.
   const styleMotionValues = new Map<string, MotionValue<unknown>>()
+  // Stage 4: static transform-shortcut entries get their own map so
+  // createMotion can register them as transients in the registry alongside
+  // initial transforms and style MVs. snapshotValue resolves arrays /
+  // MVs / accessors to a concrete leaf at scrape time.
+  const styleStaticTransforms = new Map<string, number | string>()
   let styleCaptured = false
 
   // ---------- Build the motion ref ----------
   // Pass the shadowed parent context to createMotion so its state machine
   // and initial-target resolver consume the same controlling-aware view.
+  //
+  // Stage 4: `initialAppliedBySSR` is now true when EITHER we emitted an
+  // initial target into the SSR style OR at least one style MV's snapshot
+  // landed in the SSR HTML via the style getter below. createMotion uses
+  // this flag to skip its own applyStaticStyle pass — without the
+  // styleMotionValues branch it would re-apply only the initialTarget half
+  // and clobber the MV-snapshot half that's already in the inline style.
   const motionRef = (el: MotionElement) => {
     createMotion(el, getOpts, {
-      initialAppliedBySSR: !!initialStyle,
+      initialAppliedBySSR:
+        initialTarget !== null || styleMotionValues.size > 0 || styleStaticTransforms.size > 0,
       activeStore,
       parentContext: parentVariantCtx,
       styleMotionValues: styleMotionValues.size > 0 ? styleMotionValues : undefined,
+      styleStaticTransforms: styleStaticTransforms.size > 0 ? styleStaticTransforms : undefined,
     })
   }
 
@@ -184,7 +205,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
    * references and re-fire this useMotion's owner-level effects on every
    * change.
    */
-  const captureStyleMVs = (style: unknown): void => {
+  const captureStyleEntries = (style: unknown): void => {
     if (styleCaptured) return
     styleCaptured = true
     if (!style || typeof style !== "object") return
@@ -192,39 +213,100 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
       const value = (style as Record<string, unknown>)[key]
       if (isMotionValue(value)) {
         styleMotionValues.set(key, value as MotionValue<unknown>)
+      } else if (TRANSFORM_KEYS.has(key)) {
+        // Static transform shortcut. Stage 4 lands these in the registry as
+        // transients so the writer composes them with style MVs and initial
+        // transforms into one transform string. Reduce MV/accessor/array
+        // wrappers to a leaf — though by this branch we already know it's
+        // not an MV. The reduction also rejects boolean/object junk values.
+        const snap = snapshotValue(value)
+        if (snap !== undefined) styleStaticTransforms.set(key, snap)
       }
     }
   }
 
   /**
-   * Produce a style object with MV-valued keys removed. Solid's style
-   * binding would try to write the `MotionValue` instance as a literal
-   * (coercing it via String()), producing garbage like `"[object Object]"`
-   * on the inline style. createMotion subscribes those keys separately
-   * and writes the resolved values straight to `el.style`, so we strip
-   * them here.
+   * Produce a style object with MV-valued keys (and transform-shortcut keys —
+   * see below) removed. Solid's style binding would otherwise either write the
+   * MotionValue instance as a literal (coercing it via String() to
+   * "[object Object]") for MV-valued entries, or apply transform shortcuts
+   * directly as bogus CSS properties for static-shortcut entries. createMotion
+   * handles both via the registry-write path; we strip them here so the
+   * Solid-bound `cleaned` style only contains regular CSS keys.
    */
-  const stripMVKeys = (style: JSX.CSSProperties | undefined): JSX.CSSProperties => {
+  const stripStyleEntriesOwnedByRegistry = (
+    style: JSX.CSSProperties | undefined,
+  ): JSX.CSSProperties => {
     if (!style) return {}
-    if (styleMotionValues.size === 0) return style
     const out: Record<string, unknown> = {}
     for (const key in style) {
       if (styleMotionValues.has(key)) continue
+      if (TRANSFORM_KEYS.has(key)) continue
       out[key] = (style as Record<string, unknown>)[key]
     }
     return out as JSX.CSSProperties
   }
 
+  /**
+   * Stage 4 — compose the first-paint inline style from:
+   *   1. `initialTarget` (resolved via the priority chain at construction)
+   *   2. MotionValue snapshots from `style: { key: mv }`
+   *   3. Static transform shortcuts in `style: { x: 10, scale: 0.5 }`
+   *
+   * Style entries (2, 3) override `initialTarget` (1) on the same key because
+   * `style` is the runtime source-of-truth for those keys. Returns the composed
+   * `JSX.CSSProperties` or null when nothing applies (no initial + no style
+   * registry contributions).
+   *
+   * Called only before `onMount` flips `renderedOnce`. After mount, the
+   * registry's writer (in createMotion) owns el.style directly and this
+   * function isn't consulted.
+   */
+  const composeFirstPaintStyle = (
+    userStyle: JSX.CSSProperties | undefined,
+  ): JSX.CSSProperties | null => {
+    const merged: Record<string, unknown> = {}
+    let hasAny = false
+    if (initialTarget) {
+      Object.assign(merged, initialTarget)
+      hasAny = true
+    }
+    // MV snapshots from style override initialTarget for the same key.
+    for (const [key, mv] of styleMotionValues) {
+      merged[key] = mv.get()
+      hasAny = true
+    }
+    // Static transform shortcuts in style (NOT captured as MVs) override too.
+    if (userStyle) {
+      for (const key in userStyle) {
+        if (styleMotionValues.has(key)) continue
+        if (!TRANSFORM_KEYS.has(key)) continue
+        const v = (userStyle as Record<string, unknown>)[key]
+        if (typeof v === "number" || typeof v === "string") {
+          merged[key] = v
+          hasAny = true
+        }
+      }
+    }
+    return hasAny ? targetToStyle(merged as Target) : null
+  }
+
   function getProps<P extends ElementProps>(userProps?: P): MotionMergedProps<P> {
-    untrack(() => captureStyleMVs(userProps?.style))
+    untrack(() => captureStyleEntries(userProps?.style))
+    // Decide marker presence at call time. Determining this from
+    // `getProps` (rather than recomputing per style-getter read) keeps it
+    // a stable attribute key on the mergeProps source object.
+    const wroteFirstPaintStyle =
+      initialTarget !== null || styleMotionValues.size > 0 || styleStaticTransforms.size > 0
     return mergeProps(userProps ?? {}, {
       get style() {
-        const cleaned = stripMVKeys(userProps?.style)
+        const cleaned = stripStyleEntriesOwnedByRegistry(userProps?.style)
         if (renderedOnce) return cleaned
-        return { ...cleaned, ...(initialStyle ?? {}) }
+        const composed = composeFirstPaintStyle(userProps?.style)
+        return composed ? { ...cleaned, ...composed } : cleaned
       },
       ref: mergeRefs(userProps?.ref, motionRef),
-      ...(initialStyle ? { "data-motion-hydrated": "" } : {}),
+      ...(wroteFirstPaintStyle ? { "data-motion-hydrated": "" } : {}),
     }) as MotionMergedProps<P>
   }
 
@@ -268,28 +350,27 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
 // Helpers
 // ---------------------------------------------------------------------------
 
-function computeInitialStyle(
+function computeInitialTarget(
   opts: MotionOptions,
   parentVariantCtx: VariantContextValue,
   presenceInitial?: Accessor<boolean>,
-): JSX.CSSProperties | null {
+): Target | null {
   // `<Presence initial={false}>` propagates "skip the enter animation" down
   // to every motion descendant. The intent is "render at the animate target"
   // — NOT "render at the initial target with no animation" (the latter would
   // leave the element looking like it failed to mount). So when the surrounding
-  // Presence says "suppress", we compute the style from the animate target
-  // instead of the initial chain. The state machine separately skips the
-  // first-mount animate dispatch via the same `suppressFirstMount` path.
+  // Presence says "suppress", we resolve the animate target as the initial
+  // instead of walking the initial chain. The state machine separately skips
+  // the first-mount animate dispatch via the same `suppressFirstMount` path.
   if (presenceInitial?.() === false) {
     const animateValue = opts.animate !== undefined ? opts.animate : parentVariantCtx.animate?.()
     if (animateValue === undefined) return null
-    const animateTarget = resolveTarget(
+    return resolveTarget(
       animateValue,
       opts.variants as Variants | undefined,
       undefined,
       opts.custom ?? parentVariantCtx.custom?.(),
     )
-    return animateTarget ? targetToStyle(animateTarget as Target) : null
   }
 
   if (opts.initial === false) return null
@@ -311,13 +392,12 @@ function computeInitialStyle(
           : inheritedAnimate
   if (effective === undefined) return null
 
-  const target = resolveTarget(
+  return resolveTarget(
     effective,
     opts.variants as Variants | undefined,
     undefined, // priority chain already consumed parent's labels
     opts.custom ?? parentVariantCtx.custom?.(),
   )
-  return target ? targetToStyle(target as Target) : null
 }
 
 // Re-export Transition for downstream consumers that destructure from useMotion's module.

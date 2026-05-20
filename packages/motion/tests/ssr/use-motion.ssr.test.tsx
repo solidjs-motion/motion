@@ -1,5 +1,6 @@
 import { renderToString } from "solid-js/web"
 import { describe, expect, it } from "vitest"
+import { createMotionValue } from "../../src/primitives/motion-value"
 import { useMotion } from "../../src/use-motion"
 
 // Run under conditions: ["development", "node"] (see vitest.ssr.config.ts) so
@@ -57,6 +58,53 @@ describe("useMotion SSR — initial style emission", () => {
     const c = renderToString(view)
     expect(a).toBe(b)
     expect(b).toBe(c)
+  })
+})
+
+describe("useMotion SSR — Stage 4 initial/style cooperation", () => {
+  it("emits MV snapshots from style into the inline transform on the server", () => {
+    const html = renderToString(() => {
+      const scale = createMotionValue(0.5)
+      const m = useMotion({})
+      // Style MV's snapshot should reach the SSR HTML so client first paint
+      // matches what the writer will compose on mount.
+      return <div {...m({ style: { scale: scale as never } })}>x</div>
+    })
+    expect(html).toContain("scale(0.5)")
+    expect(html).toContain("data-motion-hydrated")
+  })
+
+  it("composes initial values + style MV snapshots into one transform string", () => {
+    const html = renderToString(() => {
+      const scale = createMotionValue(0.8)
+      const m = useMotion({ initial: { y: 20 } })
+      return <div {...m({ style: { scale: scale as never } })}>x</div>
+    })
+    expect(html).toContain("translateY(20px) scale(0.8)")
+    expect(html).toContain("data-motion-hydrated")
+  })
+
+  it("composes static-style transform shortcuts with initial + MV", () => {
+    const html = renderToString(() => {
+      const scale = createMotionValue(0.9)
+      const m = useMotion({ initial: { rotate: 45 } })
+      // x is a static transform shortcut (no MV, no initial entry). Stage 4
+      // composes it alongside scale (MV) and rotate (initial) on SSR.
+      return <div {...m({ style: { scale: scale as never, x: 10 } as never })}>x</div>
+    })
+    expect(html).toContain("translateX(10px) scale(0.9) rotate(45deg)")
+    expect(html).toContain("data-motion-hydrated")
+  })
+
+  it("style MV overrides initial on the same key (style is source of truth)", () => {
+    const html = renderToString(() => {
+      const scale = createMotionValue(0.3)
+      const m = useMotion({ initial: { scale: 0.9 } })
+      // Both define scale. The style MV wins; initial.scale is dropped.
+      return <div {...m({ style: { scale: scale as never } })}>x</div>
+    })
+    expect(html).toContain("scale(0.3)")
+    expect(html).not.toContain("scale(0.9)")
   })
 })
 
