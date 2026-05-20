@@ -332,4 +332,14 @@ export const demos: DemoEntry[] = [
     source: rawSource(() => import("./MotionProxyCreate.tsx?raw")),
     filename: "MotionProxyCreate.tsx",
   },
+  {
+    path: "/sierpinski",
+    title: "Sierpinski (perf stress)",
+    blurb:
+      "6,500+ motion.divs subscribing to one shared MotionValue via style — the canonical fan-out stress test, with live FPS counter and depth slider.",
+    phase: 4,
+    component: lazy(() => import("./SierpinskiTriangle")),
+    source: rawSource(() => import("./SierpinskiTriangle.tsx?raw")),
+    filename: "SierpinskiTriangle.tsx",
+  },
 ]
