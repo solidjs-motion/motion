@@ -61,9 +61,7 @@ describe("motion.X tag-component", () => {
   })
 
   it("motion.button renders an HTMLButtonElement and forwards `type`", () => {
-    const { container, unmount } = render(() => (
-      <motion.button type="submit" data-testid="btn" />
-    ))
+    const { container, unmount } = render(() => <motion.button type="submit" data-testid="btn" />)
     const el = container.querySelector("[data-testid='btn']") as HTMLButtonElement | null
     expect(el).toBeInstanceOf(HTMLButtonElement)
     expect(el?.type).toBe("submit")
@@ -72,6 +70,7 @@ describe("motion.X tag-component", () => {
 
   it("motion.path renders with the SVG namespace via <Dynamic>", () => {
     const { container, unmount } = render(() => (
+      // biome-ignore lint/a11y/noSvgWithoutTitle: namespace check, not a user-facing SVG
       <svg>
         <motion.path d="M0 0 L10 10" data-testid="path" />
       </svg>
@@ -124,11 +123,7 @@ describe("motion.X — auto-Provider variant cascade", () => {
     }
 
     const { unmount } = render(() => (
-      <motion.div
-        initial="closed"
-        animate="open"
-        variants={{ open: {}, closed: {} }}
-      >
+      <motion.div initial="closed" animate="open" variants={{ open: {}, closed: {} }}>
         <PassiveChild />
       </motion.div>
     ))
@@ -225,5 +220,96 @@ describe("MOTION_OPT_KEYS", () => {
     expect(keys.includes("onKeyDown")).toBe(false)
     expect(keys.includes("style")).toBe(false)
     expect(keys.includes("ref")).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// motion.create — HOC entry point
+// ---------------------------------------------------------------------------
+
+describe("motion.create — HOC", () => {
+  it("wraps a Component that spreads {...props} on its DOM root", async () => {
+    function MyCard(props: { class?: string; ref?: (el: HTMLElement) => void }) {
+      return <div {...props} data-testid="card" />
+    }
+    const Animated = motion.create(MyCard)
+    const { container, unmount } = render(() => (
+      <Animated animate={{ opacity: 1 }} class="custom" />
+    ))
+    const el = container.querySelector("[data-testid='card']") as HTMLElement
+    expect(el).toBeInstanceOf(HTMLDivElement)
+    // Non-motion class flowed through. The MOTION_OPT_KEYS split kept
+    // `class` in `rest`, and Solid's reactive spread put it on the element.
+    expect(el.classList.contains("custom")).toBe(true)
+
+    // motion's animate target was dispatched, proving the ref reached the
+    // DOM and createMotion ran.
+    await flush()
+    const animateCall = animateSpy.mock.calls.find((c) => {
+      const target = c[1] as Record<string, unknown> | undefined
+      return target?.opacity === 1
+    })
+    expect(animateCall).toBeDefined()
+    unmount()
+  })
+
+  it("returns Component<P & MotionOptions> — original props preserved", () => {
+    // Pure type-level check: the wrapped Component accepts both its own
+    // original props (title) AND the full MotionOptions surface. If this
+    // didn't typecheck the test file wouldn't load.
+    function Titled(props: { title: string; ref?: (el: HTMLElement) => void }) {
+      return <div ref={props.ref}>{props.title}</div>
+    }
+    const Animated = motion.create(Titled)
+    const { container, unmount } = render(() => <Animated title="Hello" animate={{ x: 10 }} />)
+    expect(container.textContent).toBe("Hello")
+    unmount()
+  })
+})
+
+describe("motion.create — dev-mode warnings", () => {
+  it("warns when wrapping motion.X (double-wrap)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const Double = motion.create(motion.div)
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/double-wraps/)
+    warnSpy.mockRestore()
+    // Sanity: Double is still a usable Component — wrap doesn't crash.
+    expect(typeof Double).toBe("function")
+  })
+
+  it("warns when the wrapped Component doesn't forward props.ref to a DOM root", async () => {
+    // BrokenCard ignores props.ref entirely — motion's ref never reaches
+    // a DOM element, so animations and exit-registration can't wire up.
+    function BrokenCard(_props: { ref?: (el: HTMLElement) => void }) {
+      return <div data-testid="broken">no ref forwarded</div>
+    }
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const Broken = motion.create(BrokenCard)
+    const { unmount } = render(() => <Broken animate={{ opacity: 1 }} />)
+    // onMount runs after the first render, then a microtask defers the
+    // check itself — flush both.
+    await flush()
+    await flush()
+    expect(warnSpy).toHaveBeenCalled()
+    const message = warnSpy.mock.calls[0]?.[0] as string | undefined
+    expect(message).toMatch(/didn't receive motion's ref/)
+    warnSpy.mockRestore()
+    unmount()
+  })
+
+  it("does NOT warn when the wrapped Component forwards props.ref correctly", async () => {
+    function GoodCard(props: { ref?: (el: HTMLElement) => void }) {
+      return <div ref={props.ref} data-testid="good" />
+    }
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const Good = motion.create(GoodCard)
+    const { unmount } = render(() => <Good animate={{ opacity: 1 }} />)
+    await flush()
+    await flush()
+    // No double-wrap, no broken ref → no warnings at all.
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+    unmount()
   })
 })

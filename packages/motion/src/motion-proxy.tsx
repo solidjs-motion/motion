@@ -1,6 +1,7 @@
-import { type Component, type JSX, splitProps } from "solid-js"
+import { mergeRefs } from "@solid-primitives/refs"
+import { type Component, type JSX, mergeProps, onMount, splitProps } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import type { ElementProps, MotionOptions } from "./types"
+import type { ElementProps, MotionElement, MotionOptions } from "./types"
 import { useMotion } from "./use-motion"
 
 // ---------------------------------------------------------------------------
@@ -104,11 +105,33 @@ const _ensureExhaustive: [_MissingMotionOptKeys] extends [never]
  * maps to a typed `Component` whose props are that element's native
  * attribute set intersected with {@link MotionOptions}.
  *
- * The HOC entry point (`create`) is added to this type in the follow-up
- * commit alongside its runtime implementation.
+ * The intersected `{ create: ... }` member adds the HOC entry point. The
+ * intersection's explicit `create` field wins over the mapped type's
+ * lookup (and there's no HTML/SVG tag named `create`), so `motion.create`
+ * is unambiguously typed as the HOC.
  */
 export type Motion = {
   [Tag in keyof JSX.IntrinsicElements]: Component<JSX.IntrinsicElements[Tag] & MotionOptions>
+} & {
+  /**
+   * Wrap a custom Component with motion's behavior. The wrapped Component
+   * must forward props (specifically `ref` and `style`) to a single DOM
+   * element root — either by spreading `{...props}` on its root or by
+   * explicitly setting `ref={props.ref}` and `style={props.style}`. Solid
+   * doesn't have `forwardRef`; the contract is enforced by convention and
+   * a dev-mode runtime warning if motion's ref never reaches the DOM.
+   *
+   * @example
+   * ```tsx
+   * function MyCard(props) {
+   *   return <div {...props}>{props.children}</div>
+   * }
+   * const Animated = motion.create(MyCard)
+   * <Animated animate={{ x: 100 }} hover={{ scale: 1.05 }} class="card" />
+   * ```
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: Solid's Component<P> requires P extends Record<string, any>
+  create: <P extends Record<string, any>>(Component: Component<P>) => Component<P & MotionOptions>
 }
 
 // Module-level cache. `motion.div` returns the SAME component instance
@@ -122,6 +145,12 @@ export type Motion = {
 type AnyComponent = Component<any>
 
 const tagComponentCache = new Map<string, AnyComponent>()
+
+// WeakSet of every component the proxy has manufactured (tag-components AND
+// HOC-wrapped components). Used for the dev-mode `motion.create(motion.X)`
+// double-wrap warning. WeakSet so HMR-replaced components don't pin their
+// predecessors alive.
+const motionComponents = new WeakSet<object>()
 
 function makeMotionTag(tag: string): AnyComponent {
   const cached = tagComponentCache.get(tag)
@@ -138,12 +167,103 @@ function makeMotionTag(tag: string): AnyComponent {
   }
   const stored = Tag as AnyComponent
   tagComponentCache.set(tag, stored)
+  motionComponents.add(stored)
   return stored
 }
 
 /**
+ * `motion.create(Component)` — wraps a custom Component with motion's
+ * behavior. The wrapped Component must forward props to a single DOM
+ * element root; the contract is documented in the {@link Motion.create}
+ * JSDoc above and enforced at runtime (in dev mode) by detecting whether
+ * motion's ref ever reaches the DOM after mount.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: matches Motion.create's generic constraint
+function motionCreate<P extends Record<string, any>>(
+  Component: Component<P>,
+): Component<P & MotionOptions> {
+  // Dev-mode `motion.create(motion.X)` warning. Double-wrapping puts two
+  // motion state machines on the SAME root element — both register with
+  // Presence, both dispatch animate() writes, and the resulting writes
+  // race. Users almost always meant to compose options at one layer.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    motionComponents.has(Component as unknown as object)
+  ) {
+    console.warn(
+      "[solidjs-motion] motion.create(motion.X) double-wraps the same element " +
+        "with two motion state machines. Compose options on a single layer instead.",
+    )
+  }
+
+  const Wrapped: Component<P & MotionOptions> = (props) => {
+    const [motionOpts, rest] = splitProps(
+      props as unknown as Record<string, unknown>,
+      MOTION_OPT_KEYS,
+    )
+    const m = useMotion(() => motionOpts as MotionOptions)
+
+    // Dev-mode wrap-validity check (Q7 in the design grill / future ADR
+    // 0004): the wrapped Component must forward props.ref to a DOM
+    // element so motion's animations and exit registration can actually
+    // wire up. We can't enforce this at the type level in Solid (refs
+    // are conventionally optional, indistinguishable from "missing"), so
+    // we detect at runtime by riding a sentinel through the user-ref
+    // slot. `m()`'s internal mergeRefs combines this sentinel with
+    // motion's own ref — both fire together when the wrapped Component
+    // forwards props.ref to a DOM element. If neither fires after the
+    // mount cycle, the wrap is broken.
+    //
+    // The sentinel-merged ref is computed eagerly (not as a getter) so
+    // Solid's spread equality check doesn't churn — refs are stable
+    // callbacks set once per mount.
+    let refFired = false
+    const detector = (_el: MotionElement) => {
+      refFired = true
+    }
+    const userRef = (rest as { ref?: ((el: MotionElement) => void) | MotionElement }).ref
+    const mergedUserRef =
+      process.env.NODE_ENV !== "production"
+        ? mergeRefs(userRef as ((el: MotionElement) => void) | undefined, detector)
+        : userRef
+    const restWithDetector =
+      process.env.NODE_ENV !== "production" ? mergeProps(rest, { ref: mergedUserRef }) : rest
+
+    if (process.env.NODE_ENV !== "production") {
+      onMount(() => {
+        // Defer one microtask so any synchronous-but-deep ref chain has
+        // had a chance to fire. Solid's createRenderEffect runs refs
+        // during the synchronous mount, but the Component might wrap
+        // its DOM root in another <Show>-like deferral.
+        queueMicrotask(() => {
+          if (!refFired) {
+            console.warn(
+              "[solidjs-motion] motion.create wrapped a Component whose root " +
+                "didn't receive motion's ref. The wrapped Component must " +
+                "either spread {...props} on a single DOM element OR " +
+                "explicitly forward `props.ref` to its root. Motion's " +
+                "animations and exit registration won't run until this " +
+                "is fixed.",
+            )
+          }
+        })
+      })
+    }
+
+    return (
+      <m.Provider>
+        <Component {...(m(restWithDetector as ElementProps) as unknown as P)} />
+      </m.Provider>
+    )
+  }
+  motionComponents.add(Wrapped)
+  return Wrapped
+}
+
+/**
  * `motion` — the indexable proxy. Every property access returns a cached
- * motion-aware component for the given HTML/SVG tag.
+ * motion-aware component for the given HTML/SVG tag. The reserved
+ * `motion.create` key returns the HOC entry point.
  *
  * @example HTML element
  * ```tsx
@@ -157,12 +277,19 @@ function makeMotionTag(tag: string): AnyComponent {
  * <motion.path d="M0 0 L100 100" animate={{ pathLength: 1 }} />
  * ```
  *
+ * @example Wrapping a custom Component via the HOC
+ * ```tsx
+ * const Animated = motion.create(MyCard)
+ * <Animated animate={{ scale: 1.05 }} class="my-card" />
+ * ```
+ *
  * Non-string keys (Symbols, well-known properties) return `undefined` so
  * debugging tools and `typeof` checks see a sane shape.
  */
 export const motion: Motion = new Proxy({} as Motion, {
   get(_target, key) {
     if (typeof key !== "string") return undefined
+    if (key === "create") return motionCreate
     return makeMotionTag(key) as never
   },
 }) as Motion
