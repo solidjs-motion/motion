@@ -23,8 +23,10 @@ describe("MV-in-style — Stage 2 smoke", () => {
       // we cast the literal so the test compiles.
       return (
         <div
-          ref={el}
           {...m({
+            ref: (r) => {
+              el = r as HTMLDivElement
+            },
             style: { scale: scale } as never,
           })}
         />
@@ -51,8 +53,10 @@ describe("MV-in-style — Stage 2 smoke", () => {
       const m = useMotion({})
       return (
         <div
-          ref={el}
           {...m({
+            ref: (r) => {
+              el = r as HTMLDivElement
+            },
             // Mix MV-valued (opacity) and plain (background) keys. The plain
             // one should reach the inline style via Solid's binding; the MV
             // one is written directly by createMotion.
@@ -78,8 +82,10 @@ describe("MV-in-style — Stage 2 smoke", () => {
       const m = useMotion({})
       return (
         <div
-          ref={el}
           {...m({
+            ref: (r) => {
+              el = r as HTMLDivElement
+            },
             style: { scale: scale as never },
           })}
         />
@@ -105,8 +111,10 @@ describe("MV-in-style — Stage 2 smoke", () => {
       const m = useMotion({})
       return (
         <div
-          ref={el}
           {...m({
+            ref: (r) => {
+              el = r as HTMLDivElement
+            },
             style: { color: "rebeccapurple", "font-weight": "bold" },
           })}
         />

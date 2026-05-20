@@ -106,6 +106,19 @@ export type CreateGestureStateMachineDeps = {
    * `setReturned`) closes that gap.
    */
   enterReady?: Accessor<boolean>
+  /**
+   * MV-in-style Stage 3 bridge. When provided, the diff effect calls this
+   * per animate-target key. A returned `MotionValue` routes the animation
+   * through that MV (`animate(mv, value, opts)`) — its change-subscription
+   * (in createMotion) composes `el.style` from the registry. `undefined`
+   * routes the key down the existing `animate(el, target, opts)` WAA path.
+   *
+   * createMotion only activates this when at least one external MV is
+   * registered (i.e., the user supplied `style: { scale: mv }`-shaped
+   * options). Inactive in the common case → 293 baseline tests stay on
+   * the original code path, their animateSpy assertions unaffected.
+   */
+  getValueForAnimate?: (key: string, fallback: unknown) => MotionValue<unknown> | undefined
 }
 
 export type GestureStateMachine = {
@@ -156,6 +169,7 @@ export function createGestureStateMachine(
     externalActiveStore,
     suppressFirstMount,
     enterReady,
+    getValueForAnimate,
   } = deps
 
   // ---------- Active flags ----------
@@ -414,10 +428,53 @@ export function createGestureStateMachine(
       // animate call with snapshots; per-MV subscription happens below.
       const { plain } = splitTarget(changes)
 
+      // ---------- Stage 3 bridge: split `plain` by routing destination ----------
+      // When createMotion's `getValueForAnimate` returns an MV for a key, the
+      // tween runs against that MV (transient or external) and the registry's
+      // writer composes el.style.transform. When it returns undefined (the
+      // common case — no style MVs), the key falls through to the existing
+      // `animate(el, target, opts)` WAA path. With NO routed keys, we make a
+      // single WAA call exactly like before, preserving the call shape that
+      // baseline tests assert against.
+      const routed: Array<{ mv: MotionValue<unknown>; value: unknown }> = []
+      const waaPlain: Record<string, unknown> = {}
+      for (const key in plain) {
+        const value = plain[key]
+        const fallback =
+          initialTarget && key in (initialTarget as Record<string, unknown>)
+            ? (initialTarget as Record<string, unknown>)[key]
+            : getMotionDefault(key)
+        const routedMV = getValueForAnimate?.(key, fallback)
+        if (routedMV) {
+          routed.push({ mv: routedMV, value })
+        } else {
+          waaPlain[key] = value
+        }
+      }
+
       // Cancel any in-flight animation before kicking off the next one.
       prevControls?.stop()
-      // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
-      prevControls = animate(el, plain as any, buildAnimateOptions())
+      const animOpts = buildAnimateOptions()
+      if (routed.length === 0) {
+        // Pure WAA path — identical to the pre-Stage-3 behavior.
+        // biome-ignore lint/suspicious/noExplicitAny: motion's animate has a complex overloaded shape we can't tighten generically; the runtime call is correct.
+        prevControls = animate(el, waaPlain as any, animOpts)
+      } else {
+        // Bridge path — one tween per routed MV plus (optionally) a single
+        // WAA call for non-routed keys. `aggregateControls` combines them
+        // into a thenable that .stop()s each and resolves when all settle,
+        // so the exit-drain logic below works uniformly across both shapes.
+        const controls: AnimationPlaybackControls[] = []
+        for (const { mv, value } of routed) {
+          // biome-ignore lint/suspicious/noExplicitAny: same as above
+          controls.push(animate(mv as any, value as any, animOpts as any))
+        }
+        if (Object.keys(waaPlain).length > 0) {
+          // biome-ignore lint/suspicious/noExplicitAny: same as above
+          controls.push(animate(el, waaPlain as any, animOpts))
+        }
+        prevControls = aggregateControls(controls)
+      }
 
       // Drain `onceExitComplete()` waiters when this dispatch is driven by
       // the exit state — i.e., Presence is awaiting the unmount animation.
@@ -459,11 +516,24 @@ export function createGestureStateMachine(
       const entry = next[key]
       if (!entry) continue
       if (isMotionValue(entry.value)) {
-        const mv = entry.value as MotionValue<unknown>
+        const targetMV = entry.value as MotionValue<unknown>
         onCleanup(
-          mv.on("change", (v) => {
-            // biome-ignore lint/suspicious/noExplicitAny: same as above
-            animate(el, { [key]: v } as any, buildAnimateOptions())
+          targetMV.on("change", (v) => {
+            // Stage 3: route through the registry the same way the main
+            // dispatch does, so a style MV the user also wrote into
+            // `animate` doesn't bypass the writer's transform composition.
+            const fallback =
+              initialTarget && key in (initialTarget as Record<string, unknown>)
+                ? (initialTarget as Record<string, unknown>)[key]
+                : getMotionDefault(key)
+            const routedMV = getValueForAnimate?.(key, fallback)
+            if (routedMV && routedMV !== targetMV) {
+              // biome-ignore lint/suspicious/noExplicitAny: motion's animate overload soup; runtime correct
+              animate(routedMV as any, v as any, buildAnimateOptions() as any)
+            } else {
+              // biome-ignore lint/suspicious/noExplicitAny: same as above
+              animate(el, { [key]: v } as any, buildAnimateOptions())
+            }
           }),
         )
       }
@@ -637,4 +707,66 @@ function animateValueForState(
     case "whileDrag":
       return opts.whileDrag
   }
+}
+
+/**
+ * Combine N AnimationPlaybackControls into a single Thenable+stoppable handle.
+ *
+ * Used by the Stage 3 bridge when an animate dispatch fans out across per-MV
+ * `animate(mv, value, opts)` calls (one per routed key) plus an optional
+ * single `animate(el, target, opts)` for keys still on the WAA path. The
+ * gesture state machine treats `prevControls` as one handle: subsequent diff
+ * runs call `.stop()` on it to cancel the in-flight animation, and the exit
+ * drain awaits `.then(...)` to settle Presence's `onceExitComplete()` waiters.
+ * Aggregating lets both code paths stay uniform whether bridging fired one
+ * underlying motion call or six.
+ *
+ * The other AnimationPlaybackControls methods (pause/play/cancel/complete)
+ * fan out unchanged. `time`/`speed`/`duration` aren't aggregated — they're
+ * read-rare in our codebase and a meaningful aggregate isn't well-defined
+ * across heterogeneous animations.
+ */
+function aggregateControls(
+  controls: readonly AnimationPlaybackControls[],
+): AnimationPlaybackControls {
+  // Cache the settle promise so multiple `.then` consumers don't each spawn a
+  // fresh Promise.all over the same controls. motion's AnimationPlaybackControls
+  // is thenable at runtime (the public type omits `.then`, hence the casts).
+  let settled: Promise<unknown[]> | null = null
+  const settle = (): Promise<unknown[]> => {
+    if (!settled) {
+      settled = Promise.all(controls.map((c) => c as unknown as PromiseLike<unknown>))
+    }
+    return settled
+  }
+  const forAll = (fn: (c: AnimationPlaybackControls) => void): void => {
+    for (const c of controls) fn(c)
+  }
+  const handle: Record<string, unknown> = {
+    stop: () => {
+      forAll((c) => c.stop())
+    },
+    pause: () => {
+      forAll((c) => c.pause())
+    },
+    play: () => {
+      forAll((c) => c.play())
+    },
+    cancel: () => {
+      forAll((c) => c.cancel())
+    },
+    complete: () => {
+      forAll((c) => c.complete())
+    },
+    speed: 1,
+    time: 0,
+    duration: controls.reduce(
+      (acc, c) => Math.max(acc, (c as { duration?: number }).duration ?? 0),
+      0,
+    ),
+    // biome-ignore lint/suspicious/noThenProperty: structurally mirroring motion's AnimationPlaybackControls, which is intentionally thenable.
+    then: (onFulfilled?: unknown, onRejected?: unknown) =>
+      settle().then(onFulfilled as never, onRejected as never),
+  }
+  return handle as unknown as AnimationPlaybackControls
 }

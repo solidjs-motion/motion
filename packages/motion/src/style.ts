@@ -6,7 +6,13 @@ import type { Target } from "./types"
 // Tables (Q5 locked decisions)
 // ---------------------------------------------------------------------------
 
-const TRANSFORM_KEYS = /* @__PURE__ */ new Set([
+/**
+ * Set of CSS shortcut keys motion treats as transform components. Re-used by
+ * `createMotion`'s Stage 3 animate bridge to decide whether an animate-target
+ * key should be routed through the value registry (composed via the writer's
+ * `el.style.transform =`) or sent down the existing WAA path.
+ */
+export const TRANSFORM_KEYS = /* @__PURE__ */ new Set([
   "x",
   "y",
   "z",

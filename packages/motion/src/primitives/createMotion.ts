@@ -3,7 +3,7 @@ import { createSignal, onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
-import { targetToStyle } from "../style"
+import { TRANSFORM_KEYS, targetToStyle } from "../style"
 import type {
   AnimateValue,
   MotionElement,
@@ -217,43 +217,68 @@ export function createMotion(
     applyStaticStyle(el, capturedInitialTarget)
   }
 
-  // ---------- MV-in-style: register external MVs + subscribe a writer ----------
-  // Stage 2 of the MV-in-style work. useMotion has scraped `MotionValue` refs
+  // ---------- MV-in-style: register external MVs + the registry writer ----------
+  // Stage 2/3 of the MV-in-style work. useMotion has scraped `MotionValue` refs
   // out of `style` (e.g., `<motion.div style={{ scale: mv }}>`) and handed
   // them to us in `config.styleMotionValues`. We register each as an external
-  // entry in the registry (so the registry knows "this key is MV-backed";
-  // Stage 3's animate bridge will read this on each diff) and subscribe a
-  // single writer per MV.
+  // entry in the registry and subscribe a single writer that rebuilds the
+  // inline style from a fresh registry snapshot via `applyStaticStyle`.
   //
-  // The writer rebuilds the inline style from a fresh registry snapshot via
-  // `applyStaticStyle(el, target)`. We pay the targetToStyle composition
-  // cost on every MV change, but the cost is bounded by registry size — for
-  // the common `style: { scale: mv }` case it's a single transform-shortcut
-  // walk and one `el.style.transform =` write. Solidjs-motion's bench 04
-  // (mv.set fan-out) measures this path at ~600ns per subscriber.
+  // The writer is also subscribed to transient MVs Stage 3's animate bridge
+  // creates on demand. Composition cost on each MV change is bounded by
+  // registry size — for the common `style: { scale: mv }` case it's a single
+  // transform-shortcut walk and one `el.style.transform =` write
+  // (bench 04 / bench 08 — ~600 ns per subscriber).
   //
-  // Caveat (Stage 2 limitation): if `initial` / `animate` also has a
-  // transform shortcut, the writer's `el.style.transform = ...` clobbers
-  // it. Documented hazard; Stage 4 will make initial values flow through
-  // the registry so the writer composes them all.
+  // Bridge activation rule (Stage 3): the state machine routes animate-target
+  // dispatches through the registry ONLY when at least one external MV has
+  // been registered. Without a style MV, bridging is inactive and the state
+  // machine falls back to the existing `animate(el, target, opts)` WAA path.
+  // This keeps the 293 baseline tests on their original code path — their
+  // `animateSpy.mock.calls[*][1]` assertions still see a target object.
+  const writeFromRegistry = (): void => {
+    const target: Record<string, unknown> = {}
+    let hasAny = false
+    for (const [k, mv] of valueRegistry.entries()) {
+      target[k] = mv.get()
+      hasAny = true
+    }
+    if (!hasAny) return
+    applyStaticStyle(el, target as Target)
+  }
+  let bridgeActive = false
   if (config?.styleMotionValues && config.styleMotionValues.size > 0) {
     for (const [key, mv] of config.styleMotionValues) {
       valueRegistry.setExternal(key, mv)
-    }
-    const writeFromRegistry = (): void => {
-      const target: Record<string, unknown> = {}
-      for (const [k, mv] of valueRegistry.entries()) {
-        target[k] = mv.get()
-      }
-      applyStaticStyle(el, target as Target)
-    }
-    // Initial write so the post-mount paint matches the MV's current value.
-    // If the MV's current value equals what `applyStaticStyle` just wrote
-    // (SSR snapshot matched), this is a no-op string assignment.
-    writeFromRegistry()
-    for (const [, mv] of config.styleMotionValues) {
       onCleanup(mv.on("change", writeFromRegistry))
     }
+    bridgeActive = true
+    // Initial write so the post-mount paint matches the MV's current value.
+    writeFromRegistry()
+  }
+
+  // ---------- Stage 3 bridge function — animate target → registered MV ----------
+  // Returns the MV the state machine should animate for `key`:
+  //   • external (user-provided) MV in registry → return it; animate's tween
+  //     drives this MV directly, and our writer composes the transform.
+  //   • registry doesn't have an MV but key is a transform shortcut → create
+  //     a transient MV initialized to `fallback`, subscribe the writer, return
+  //     the new MV.
+  //   • non-transform key with no external MV → return undefined; state machine
+  //     falls back to WAA.
+  // Inactive when no external MV exists — preserves the existing dispatch
+  // shape end-to-end for non-MV-in-style users.
+  const getValueForAnimate = (
+    key: string,
+    fallback: unknown,
+  ): MotionValue<unknown> | undefined => {
+    if (!bridgeActive) return undefined
+    const existing = valueRegistry.get(key)
+    if (existing) return existing
+    if (!TRANSFORM_KEYS.has(key)) return undefined
+    const mv = valueRegistry.getOrCreateTransient(key, fallback)
+    onCleanup(mv.on("change", writeFromRegistry))
+    return mv
   }
 
   // ---------- Presence-aware enter-readiness gate ----------
@@ -309,6 +334,7 @@ export function createMotion(
     externalActiveStore: config?.activeStore,
     suppressFirstMount,
     enterReady,
+    getValueForAnimate,
   })
   const { setActive, onceExitComplete } = stateMachine
 
