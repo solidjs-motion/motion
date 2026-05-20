@@ -289,10 +289,13 @@ describe("ElementProps / MotionMergedProps", () => {
     expectTypeOf<Merged>().toExtend<{
       class: string
       ref: (el: HTMLElement | SVGElement) => void
-      style: JSX.CSSProperties
     }>()
-    // user's `ref` and `style` types are replaced, not the wider element-props ones
-    expectTypeOf<Merged["style"]>().toEqualTypeOf<JSX.CSSProperties>()
+    // user's `ref` and `style` types are replaced, not the wider element-props ones.
+    // After Stage 5: output style is `MotionStyle & JSX.CSSProperties` so the prop
+    // value is assignable to BOTH a JSX element's style (spread path) AND back
+    // through another useMotion call's input (chain path). Verify by assignability
+    // rather than strict equality.
+    expectTypeOf<Merged["style"]>().toExtend<JSX.CSSProperties>()
   })
 })
 

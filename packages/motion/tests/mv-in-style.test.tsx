@@ -19,15 +19,13 @@ describe("MV-in-style — Stage 2 smoke", () => {
     let el!: HTMLDivElement
     const { unmount } = render(() => {
       const m = useMotion({})
-      // Stage 5 will widen `style`'s type to accept MotionValue. Until then,
-      // we cast the literal so the test compiles.
       return (
         <div
           {...m({
             ref: (r) => {
               el = r as HTMLDivElement
             },
-            style: { scale: scale } as never,
+            style: { scale: scale },
           })}
         />
       )
@@ -60,7 +58,7 @@ describe("MV-in-style — Stage 2 smoke", () => {
             // Mix MV-valued (opacity) and plain (background) keys. The plain
             // one should reach the inline style via Solid's binding; the MV
             // one is written directly by createMotion.
-            style: { opacity: opacity as never, background: "red" },
+            style: { opacity: opacity, background: "red" },
           })}
         />
       )
@@ -86,7 +84,7 @@ describe("MV-in-style — Stage 2 smoke", () => {
             ref: (r) => {
               el = r as HTMLDivElement
             },
-            style: { scale: scale as never },
+            style: { scale: scale },
           })}
         />
       )
@@ -144,7 +142,7 @@ describe("MV-in-style — Stage 4 initial/style cooperation", () => {
             ref: (r) => {
               el = r as HTMLDivElement
             },
-            style: { scale: scale as never },
+            style: { scale: scale },
           })}
         />
       )
@@ -173,7 +171,7 @@ describe("MV-in-style — Stage 4 initial/style cooperation", () => {
             },
             // x is a static transform shortcut (no MV) — also flows through
             // the composition. scale is an MV. rotate comes from initial.
-            style: { scale: scale as never, x: 10 } as never,
+            style: { scale: scale, x: 10 },
           })}
         />
       )
@@ -203,7 +201,7 @@ describe("MV-in-style — Stage 4 initial/style cooperation", () => {
             ref: (r) => {
               el = r as HTMLDivElement
             },
-            style: { scale: scale as never },
+            style: { scale: scale },
           })}
         />
       )

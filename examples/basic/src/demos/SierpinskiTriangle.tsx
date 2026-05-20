@@ -99,10 +99,11 @@ function Dot(props: {
         // (~1000-2000 typical); with 6,500+ dots the hint forces too many
         // layers, exhausts GPU memory, and falls back to CPU for the
         // overflow — net slower than letting the browser auto-decide.
-        // Cast: Stage 5 will widen `style` to accept MotionValue. Today the
-        // runtime works (useMotion's captureStyleEntries scrapes MVs out of
-        // style); only the TS surface needs the cast.
-        scale: props.scale as never,
+        // No cast needed — Stage 5's `MotionStyle` type widens `scale` (and
+        // every other transform shortcut + CSS property) to accept
+        // MotionValue. captureStyleEntries scrapes it into the registry at
+        // mount and the writer fires per change.
+        scale: props.scale,
       }}
     >
       {props.showText ? props.seconds() : null}

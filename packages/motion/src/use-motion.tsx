@@ -11,6 +11,7 @@ import type {
   MotionElement,
   MotionMergedProps,
   MotionOptions,
+  MotionStyle,
   Target,
   Transition,
   UseMotionResult,
@@ -241,9 +242,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
    * handles both via the registry-write path; we strip them here so the
    * Solid-bound `cleaned` style only contains regular CSS keys.
    */
-  const stripStyleEntriesOwnedByRegistry = (
-    style: JSX.CSSProperties | undefined,
-  ): JSX.CSSProperties => {
+  const stripStyleEntriesOwnedByRegistry = (style: MotionStyle | undefined): JSX.CSSProperties => {
     if (!style) return {}
     const out: Record<string, unknown> = {}
     for (const key in style) {
@@ -269,9 +268,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
    * registry's writer (in createMotion) owns el.style directly and this
    * function isn't consulted.
    */
-  const composeFirstPaintStyle = (
-    userStyle: JSX.CSSProperties | undefined,
-  ): JSX.CSSProperties | null => {
+  const composeFirstPaintStyle = (userStyle: MotionStyle | undefined): JSX.CSSProperties | null => {
     const merged: Record<string, unknown> = {}
     let hasAny = false
     if (initialTarget) {

@@ -1,7 +1,7 @@
 import { mergeRefs } from "@solid-primitives/refs"
 import { type Component, type JSX, mergeProps, onMount, splitProps } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import type { ElementProps, MotionElement, MotionOptions } from "./types"
+import type { ElementProps, MotionElement, MotionOptions, MotionStyle } from "./types"
 import { useMotion } from "./use-motion"
 
 // ---------------------------------------------------------------------------
@@ -111,7 +111,14 @@ const _ensureExhaustive: [_MissingMotionOptKeys] extends [never]
  * is unambiguously typed as the HOC.
  */
 export type Motion = {
-  [Tag in keyof JSX.IntrinsicElements]: Component<JSX.IntrinsicElements[Tag] & MotionOptions>
+  // Override each intrinsic element's `style` to accept `MotionStyle` (which
+  // adds transform shortcuts + MotionValue variants on top of standard CSS).
+  // Without this override, `<motion.div style={{ scale: mv }} />` wouldn't
+  // typecheck — the intrinsic `style: JSX.CSSProperties` doesn't know about
+  // motion's transform-shortcut keys or MV values.
+  [Tag in keyof JSX.IntrinsicElements]: Component<
+    Omit<JSX.IntrinsicElements[Tag], "style"> & { style?: MotionStyle } & MotionOptions
+  >
 } & {
   /**
    * Wrap a custom Component with motion's behavior. The wrapped Component

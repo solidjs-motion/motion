@@ -100,7 +100,7 @@ describe("MV-in-style — Stage 3 bridge", () => {
               ref: (r) => {
                 void r
               },
-              style: { opacity: opacity as never },
+              style: { opacity: opacity },
             })}
           />
         )
@@ -131,7 +131,7 @@ describe("MV-in-style — Stage 3 bridge", () => {
               ref: (r) => {
                 void r
               },
-              style: { scale: scale as never },
+              style: { scale: scale },
             })}
           />
         )
@@ -157,7 +157,7 @@ describe("MV-in-style — Stage 3 bridge", () => {
               ref: (r) => {
                 void r
               },
-              style: { scale: scale as never },
+              style: { scale: scale },
             })}
           />
         )
@@ -189,7 +189,7 @@ describe("MV-in-style — Stage 3 bridge", () => {
               ref: (r) => {
                 void r
               },
-              style: { scale: scale as never },
+              style: { scale: scale },
             })}
           />
         )
@@ -228,7 +228,7 @@ describe("MV-in-style — Stage 3 bridge", () => {
               ref: (r) => {
                 el = r as HTMLDivElement
               },
-              style: { scale: scale as never },
+              style: { scale: scale },
             })}
           />
         )

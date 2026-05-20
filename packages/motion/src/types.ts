@@ -326,13 +326,123 @@ export type MotionOptions = MotionCallbacks &
  */
 export type MotionElement = HTMLElement | SVGElement
 
-export type ElementProps = JSX.HTMLAttributes<MotionElement> & {
+// ---------------------------------------------------------------------------
+// MotionStyle — the `style` prop shape accepted by useMotion + motion.X.
+//
+// Extends `JSX.CSSProperties` with two additions:
+//
+//   1. Motion's transform-shortcut keys (`x`, `y`, `scale`, `rotate`, ...).
+//      These aren't valid CSS property names — motion composes them into
+//      the `transform` CSS property at runtime via the registry-writer.
+//
+//   2. MotionValue variants of every value. `style={{ opacity: opacityMV,
+//      scale: scaleMV }}` typechecks because every key (CSS or transform
+//      shortcut) accepts either its native value type OR a MotionValue.
+//
+// The runtime contract lives in useMotion's `captureStyleEntries`:
+// MotionValues land in the registry and the writer composes them on
+// every change; static transform shortcuts seed transient registry
+// entries; plain CSS keys pass through to Solid's style binding.
+// ---------------------------------------------------------------------------
+
+/**
+ * Motion's transform-shortcut keys and their value types. Each key may be
+ * a value OR a `MotionValue` holding that value.
+ *
+ * Value units (when expressed as a `number`):
+ *   - `x` / `y` / `z` / `transformPerspective` → px
+ *   - `scale*` → dimensionless multiplier
+ *   - `rotate*` / `skew*` → deg
+ *
+ * Strings with explicit units pass through verbatim (e.g.
+ * `x: "50%"`, `rotate: "0.5turn"`).
+ *
+ * Variance note: motion's `MotionValue<T>` is invariant in `T` (it has both
+ * `get(): T` and `set(v: T)`), which means a user's `MotionValue<number>`
+ * cannot widen to `MotionValue<number | string>`. We use `MotionValue<any>`
+ * across the shortcut value types so a literal `createMotionValue(1)` is
+ * assignable as `x` / `y` / etc. without forcing the caller to type the MV
+ * with the full union. Type-safety on the value side is mostly recovered by
+ * the runtime: `formatProperty` and `transformFunctionFor` handle the
+ * number/string distinction.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: see variance note above.
+type AnyMotionValue = MotionValue<any>
+
+export type MotionTransformShortcuts = {
+  x?: number | string | AnyMotionValue
+  y?: number | string | AnyMotionValue
+  z?: number | string | AnyMotionValue
+  scale?: number | string | AnyMotionValue
+  scaleX?: number | string | AnyMotionValue
+  scaleY?: number | string | AnyMotionValue
+  scaleZ?: number | string | AnyMotionValue
+  rotate?: number | string | AnyMotionValue
+  rotateX?: number | string | AnyMotionValue
+  rotateY?: number | string | AnyMotionValue
+  rotateZ?: number | string | AnyMotionValue
+  skew?: number | string | AnyMotionValue
+  skewX?: number | string | AnyMotionValue
+  skewY?: number | string | AnyMotionValue
+  transformPerspective?: number | string | AnyMotionValue
+}
+
+/**
+ * Widen each value of `T` to also accept any `MotionValue`. Pragmatic shape:
+ * motion's `MotionValue<T>` is invariant in T, so a strict per-key
+ * `MotionValue<NonNullable<T[K]>>` would reject e.g. `MotionValue<number>` for
+ * a `width: string | number` key. `MotionValue<any>` is the necessary
+ * escape hatch — the runtime always normalizes via `mv.get()` and
+ * `formatProperty`.
+ */
+type WithMotionValues<T> = {
+  [K in keyof T]?: T[K] | AnyMotionValue
+}
+
+/**
+ * The `style` prop shape for motion-aware elements: every native CSS
+ * property (with values optionally widened to a `MotionValue`), plus motion's
+ * transform-shortcut keys (with the same widening).
+ *
+ * Some CSS individual-transform properties (`scale`, `rotate`) collide with
+ * motion shortcut keys of the same name. We strip them from the CSS side
+ * before intersecting — motion's semantics win, the legacy CSS individual-
+ * transform path is a corner case users almost never reach for.
+ *
+ * @example
+ * const scale = createMotionValue(1)
+ * const m = useMotion({})
+ * <div {...m({ style: { scale, opacity: 0.5, color: "red" } })} />
+ */
+export type MotionStyle = MotionTransformShortcuts &
+  WithMotionValues<Omit<JSX.CSSProperties, keyof MotionTransformShortcuts>>
+
+// Override `ref` + `style` from `JSX.HTMLAttributes` rather than intersecting
+// (the latter would produce a `string | MotionStyle` mess for `style` because
+// the base allows a raw CSS string and TypeScript can't narrow the union
+// through the consumer code paths in useMotion).
+export type ElementProps = Omit<JSX.HTMLAttributes<MotionElement>, "ref" | "style"> & {
   ref?: ((el: MotionElement) => void) | MotionElement | undefined
-  style?: JSX.CSSProperties
+  style?: MotionStyle
 }
 
 export type MotionMergedProps<P extends ElementProps> = Omit<P, "ref" | "style"> & {
-  style: JSX.CSSProperties
+  // Output style is the INTERSECTION of MotionStyle and JSX.CSSProperties.
+  // This is the only shape that works in both directions:
+  //
+  //   • Spread onto a raw JSX element: `<div {...m({})} />` — element's
+  //     `style` expects `string | CSSProperties | undefined`. Intersection's
+  //     scale/rotate collapse to `number | string` (MV variants drop out
+  //     against the CSS Scale/Rotation types), assignable to CSSProperties.
+  //
+  //   • Chained back as input: `fade(slide({ class: "card" }))` — outer
+  //     useMotion's `m()` expects `ElementProps` with `style: MotionStyle`.
+  //     The intersection is also assignable to MotionStyle (narrower).
+  //
+  // Runtime emits MV-stripped values via `stripStyleEntriesOwnedByRegistry`,
+  // so the actually-rendered prop carries only the intersection-narrow
+  // values — type and runtime agree at this point.
+  style: MotionStyle & JSX.CSSProperties
   ref: (el: MotionElement) => void
   "data-motion-hydrated"?: ""
 }
