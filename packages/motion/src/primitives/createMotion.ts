@@ -1,4 +1,4 @@
-import { animate } from "motion"
+import { animate, type MotionValue } from "motion"
 import { createSignal, onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
@@ -127,6 +127,18 @@ export type CreateMotionConfig = {
    * falls back to `useVariantContext()` directly (the standalone path).
    */
   parentContext?: VariantContextValue
+  /**
+   * MV-in-style Stage 2 — useMotion scrapes `MotionValue`-valued keys out of
+   * the user's `style` prop and passes them here. createMotion registers
+   * each as an external (user-owned) entry in the value registry and
+   * subscribes a writer that re-composes `el.style` from the registry
+   * snapshot on every change. The MV's `.get()` is also written immediately
+   * so the post-mount paint reflects the current value (overriding any
+   * `initial`-driven transform on collision — Stage 2 documented hazard;
+   * Stage 4 fixes this by routing initial-style writes through the
+   * registry too).
+   */
+  styleMotionValues?: Map<string, MotionValue<unknown>>
 }
 
 /**
@@ -203,6 +215,45 @@ export function createMotion(
   const suppressFirstMount = untrack(() => presence.initial?.()) === false
   if (!config?.initialAppliedBySSR && !suppressFirstMount && capturedInitialTarget) {
     applyStaticStyle(el, capturedInitialTarget)
+  }
+
+  // ---------- MV-in-style: register external MVs + subscribe a writer ----------
+  // Stage 2 of the MV-in-style work. useMotion has scraped `MotionValue` refs
+  // out of `style` (e.g., `<motion.div style={{ scale: mv }}>`) and handed
+  // them to us in `config.styleMotionValues`. We register each as an external
+  // entry in the registry (so the registry knows "this key is MV-backed";
+  // Stage 3's animate bridge will read this on each diff) and subscribe a
+  // single writer per MV.
+  //
+  // The writer rebuilds the inline style from a fresh registry snapshot via
+  // `applyStaticStyle(el, target)`. We pay the targetToStyle composition
+  // cost on every MV change, but the cost is bounded by registry size — for
+  // the common `style: { scale: mv }` case it's a single transform-shortcut
+  // walk and one `el.style.transform =` write. Solidjs-motion's bench 04
+  // (mv.set fan-out) measures this path at ~600ns per subscriber.
+  //
+  // Caveat (Stage 2 limitation): if `initial` / `animate` also has a
+  // transform shortcut, the writer's `el.style.transform = ...` clobbers
+  // it. Documented hazard; Stage 4 will make initial values flow through
+  // the registry so the writer composes them all.
+  if (config?.styleMotionValues && config.styleMotionValues.size > 0) {
+    for (const [key, mv] of config.styleMotionValues) {
+      valueRegistry.setExternal(key, mv)
+    }
+    const writeFromRegistry = (): void => {
+      const target: Record<string, unknown> = {}
+      for (const [k, mv] of valueRegistry.entries()) {
+        target[k] = mv.get()
+      }
+      applyStaticStyle(el, target as Target)
+    }
+    // Initial write so the post-mount paint matches the MV's current value.
+    // If the MV's current value equals what `applyStaticStyle` just wrote
+    // (SSR snapshot matched), this is a no-op string assignment.
+    writeFromRegistry()
+    for (const [, mv] of config.styleMotionValues) {
+      onCleanup(mv.on("change", writeFromRegistry))
+    }
   }
 
   // ---------- Presence-aware enter-readiness gate ----------

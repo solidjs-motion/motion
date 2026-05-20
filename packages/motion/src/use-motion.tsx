@@ -1,4 +1,5 @@
 import { mergeRefs } from "@solid-primitives/refs"
+import { isMotionValue, type MotionValue } from "motion"
 import { type Accessor, type Component, type JSX, mergeProps, onMount, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { usePresenceContext } from "./presence-context"
@@ -113,6 +114,21 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   })
   const [active] = activeStore
 
+  // ---------- MV-in-style scrape (Stage 2) ----------
+  // Walked once on the first m() call (see `getProps` below) and threaded
+  // into createMotion via `styleMotionValues`. The contract (locked in the
+  // grill): MV references in `style` are STATIC — captured once, not
+  // re-scanned on subsequent m() calls. Users who want a reactive MV swap
+  // can't do `style: { scale: cond() ? mvA : mvB }`; they animate the MV's
+  // value instead.
+  //
+  // Why capture in m() and not in motionRef: m()'s call is the only point
+  // where the user's `style` prop is observable from useMotion's body.
+  // motionRef fires later (after JSX evaluates), at which time we no
+  // longer have a handle on userProps.
+  const styleMotionValues = new Map<string, MotionValue<unknown>>()
+  let styleCaptured = false
+
   // ---------- Build the motion ref ----------
   // Pass the shadowed parent context to createMotion so its state machine
   // and initial-target resolver consume the same controlling-aware view.
@@ -121,6 +137,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
       initialAppliedBySSR: !!initialStyle,
       activeStore,
       parentContext: parentVariantCtx,
+      styleMotionValues: styleMotionValues.size > 0 ? styleMotionValues : undefined,
     })
   }
 
@@ -153,11 +170,58 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   onMount(() => {
     renderedOnce = true
   })
+
+  /**
+   * Walk `style` once and pull `MotionValue` refs into `styleMotionValues`.
+   * Idempotent across re-renders — Stage 2's contract is "MV refs in style
+   * are captured on first call and never re-scraped." Subsequent m()
+   * invocations that pass a different style with new MVs won't pick them
+   * up; that pattern wasn't in scope for v0.1.
+   *
+   * The read is `untrack`ed because m() is typically called from inside a
+   * JSX spread, which Solid evaluates within a tracked owner. Without
+   * untrack we'd subscribe to whatever signals the user's `style` object
+   * references and re-fire this useMotion's owner-level effects on every
+   * change.
+   */
+  const captureStyleMVs = (style: unknown): void => {
+    if (styleCaptured) return
+    styleCaptured = true
+    if (!style || typeof style !== "object") return
+    for (const key in style) {
+      const value = (style as Record<string, unknown>)[key]
+      if (isMotionValue(value)) {
+        styleMotionValues.set(key, value as MotionValue<unknown>)
+      }
+    }
+  }
+
+  /**
+   * Produce a style object with MV-valued keys removed. Solid's style
+   * binding would try to write the `MotionValue` instance as a literal
+   * (coercing it via String()), producing garbage like `"[object Object]"`
+   * on the inline style. createMotion subscribes those keys separately
+   * and writes the resolved values straight to `el.style`, so we strip
+   * them here.
+   */
+  const stripMVKeys = (style: JSX.CSSProperties | undefined): JSX.CSSProperties => {
+    if (!style) return {}
+    if (styleMotionValues.size === 0) return style
+    const out: Record<string, unknown> = {}
+    for (const key in style) {
+      if (styleMotionValues.has(key)) continue
+      out[key] = (style as Record<string, unknown>)[key]
+    }
+    return out as JSX.CSSProperties
+  }
+
   function getProps<P extends ElementProps>(userProps?: P): MotionMergedProps<P> {
+    untrack(() => captureStyleMVs(userProps?.style))
     return mergeProps(userProps ?? {}, {
       get style() {
-        if (renderedOnce) return (userProps?.style ?? {}) as JSX.CSSProperties
-        return { ...(userProps?.style ?? {}), ...(initialStyle ?? {}) }
+        const cleaned = stripMVKeys(userProps?.style)
+        if (renderedOnce) return cleaned
+        return { ...cleaned, ...(initialStyle ?? {}) }
       },
       ref: mergeRefs(userProps?.ref, motionRef),
       ...(initialStyle ? { "data-motion-hydrated": "" } : {}),
