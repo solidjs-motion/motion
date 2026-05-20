@@ -1,5 +1,5 @@
 import { mergeRefs } from "@solid-primitives/refs"
-import { type Accessor, type Component, type JSX, untrack } from "solid-js"
+import { type Accessor, type Component, type JSX, mergeProps, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { usePresenceContext } from "./presence-context"
 import { asVariantLabels, createMotion, resolveTarget } from "./primitives/createMotion"
@@ -125,15 +125,27 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   }
 
   // ---------- The getter that merges user props with motion's ----------
+  // Built on Solid's `mergeProps` rather than an eager object spread. The
+  // returned value is a reactive proxy: reads against any property defer to
+  // its source, so reactive non-motion props the user spreads through `m()`
+  // (e.g. `<div {...m({ class: signal() ? "on" : "off" })}>`) keep their
+  // reactivity through to the rendered element. The previous spread-based
+  // implementation snapshotted userProps at call time, which broke this
+  // path for the Phase 4 motion proxy.
+  //
+  // The `style` field is a getter so reactive user.style is re-evaluated
+  // on each read while motion's initialStyle still layers on top via
+  // shallow merge. `ref` is computed once and snapshotted — refs are
+  // conventionally callbacks set once per mount; re-running mergeRefs
+  // on each read is wasted work.
   function getProps<P extends ElementProps>(userProps?: P): MotionMergedProps<P> {
-    const merged: Record<string, unknown> = {
-      ...(userProps ?? {}),
-      // Motion wins style conflicts (Q2 sub-1): user style first, motion's overrides.
-      style: { ...(userProps?.style ?? {}), ...(initialStyle ?? {}) },
+    return mergeProps(userProps ?? {}, {
+      get style() {
+        return { ...(userProps?.style ?? {}), ...(initialStyle ?? {}) }
+      },
       ref: mergeRefs(userProps?.ref, motionRef),
-    }
-    if (initialStyle) merged["data-motion-hydrated"] = ""
-    return merged as MotionMergedProps<P>
+      ...(initialStyle ? { "data-motion-hydrated": "" } : {}),
+    }) as MotionMergedProps<P>
   }
 
   // ---------- Provider for opt-in variant context propagation ----------

@@ -53,6 +53,48 @@ afterEach(() => {
 // useMotion getter shape & prop merging (Q2)
 // ---------------------------------------------------------------------------
 
+describe("useMotion — m() preserves reactivity on user props", () => {
+  // Regression: the previous eager-spread implementation of getProps
+  // snapshotted userProps at call time, breaking any reactive non-motion
+  // prop the user threaded through m(). The mergeProps-based refactor
+  // returns a reactive proxy so signal-driven `class`, `style`, etc. flow
+  // through to the rendered element on each update. This is the foundation
+  // the Phase 4 motion proxy depends on — the proxy passes the (reactive)
+  // splitProps `rest` object through m() and expects every non-motion prop
+  // to keep its reactivity.
+  it("reactively forwards a non-motion prop (class) through m()", async () => {
+    const [active, setActive] = createSignal(false)
+    const { container, unmount } = render(() => {
+      const m = useMotion({ animate: { opacity: 1 } })
+      return <div {...m({ class: active() ? "on" : "off" })} data-testid="el" />
+    })
+    const el = container.querySelector("[data-testid='el']") as HTMLElement
+    expect(el?.className).toBe("off")
+
+    setActive(true)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(el?.className).toBe("on")
+    unmount()
+  })
+
+  it("reactively merges user style with motion's initial style", async () => {
+    const [color, setColor] = createSignal("red")
+    const { container, unmount } = render(() => {
+      const m = useMotion({ initial: { x: 0 }, animate: { x: 100 } })
+      return <div {...m({ style: { color: color() } })} data-testid="el" />
+    })
+    const el = container.querySelector("[data-testid='el']") as HTMLElement
+    expect(el?.style.color).toBe("red")
+
+    setColor("blue")
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(el?.style.color).toBe("blue")
+    unmount()
+  })
+})
+
 describe("useMotion — getter shape", () => {
   it("returns a callable function with a Provider component attached", () => {
     createRoot((dispose) => {
