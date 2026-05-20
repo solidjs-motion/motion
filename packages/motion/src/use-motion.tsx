@@ -133,12 +133,13 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // where the user's `style` prop is observable from useMotion's body.
   // motionRef fires later (after JSX evaluates), at which time we no
   // longer have a handle on userProps.
-  const styleMotionValues = new Map<string, MotionValue<unknown>>()
-  // Stage 4: static transform-shortcut entries get their own map so
-  // createMotion can register them as transients in the registry alongside
-  // initial transforms and style MVs. snapshotValue resolves arrays /
-  // MVs / accessors to a concrete leaf at scrape time.
-  const styleStaticTransforms = new Map<string, number | string>()
+  // Stage 4.5: lazy-allocate both maps. Most elements have no MV-in-style
+  // and no static transform shortcut, so allocating these eagerly per
+  // `useMotion` call was pure waste. The `??=` in `captureStyleEntries`
+  // creates them only on first add; downstream consumers handle the
+  // `undefined` case via optional chaining.
+  let styleMotionValues: Map<string, MotionValue<unknown>> | undefined
+  let styleStaticTransforms: Map<string, number | string> | undefined
   let styleCaptured = false
 
   // ---------- Build the motion ref ----------
@@ -154,11 +155,13 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   const motionRef = (el: MotionElement) => {
     createMotion(el, getOpts, {
       initialAppliedBySSR:
-        initialTarget !== null || styleMotionValues.size > 0 || styleStaticTransforms.size > 0,
+        initialTarget !== null ||
+        styleMotionValues !== undefined ||
+        styleStaticTransforms !== undefined,
       activeStore,
       parentContext: parentVariantCtx,
-      styleMotionValues: styleMotionValues.size > 0 ? styleMotionValues : undefined,
-      styleStaticTransforms: styleStaticTransforms.size > 0 ? styleStaticTransforms : undefined,
+      styleMotionValues,
+      styleStaticTransforms,
     })
   }
 
@@ -212,6 +215,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
     for (const key in style) {
       const value = (style as Record<string, unknown>)[key]
       if (isMotionValue(value)) {
+        if (!styleMotionValues) styleMotionValues = new Map()
         styleMotionValues.set(key, value as MotionValue<unknown>)
       } else if (TRANSFORM_KEYS.has(key)) {
         // Static transform shortcut. Stage 4 lands these in the registry as
@@ -220,7 +224,10 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
         // wrappers to a leaf — though by this branch we already know it's
         // not an MV. The reduction also rejects boolean/object junk values.
         const snap = snapshotValue(value)
-        if (snap !== undefined) styleStaticTransforms.set(key, snap)
+        if (snap !== undefined) {
+          if (!styleStaticTransforms) styleStaticTransforms = new Map()
+          styleStaticTransforms.set(key, snap)
+        }
       }
     }
   }
@@ -240,7 +247,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
     if (!style) return {}
     const out: Record<string, unknown> = {}
     for (const key in style) {
-      if (styleMotionValues.has(key)) continue
+      if (styleMotionValues?.has(key)) continue
       if (TRANSFORM_KEYS.has(key)) continue
       out[key] = (style as Record<string, unknown>)[key]
     }
@@ -272,14 +279,16 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
       hasAny = true
     }
     // MV snapshots from style override initialTarget for the same key.
-    for (const [key, mv] of styleMotionValues) {
-      merged[key] = mv.get()
-      hasAny = true
+    if (styleMotionValues) {
+      for (const [key, mv] of styleMotionValues) {
+        merged[key] = mv.get()
+        hasAny = true
+      }
     }
     // Static transform shortcuts in style (NOT captured as MVs) override too.
     if (userStyle) {
       for (const key in userStyle) {
-        if (styleMotionValues.has(key)) continue
+        if (styleMotionValues?.has(key)) continue
         if (!TRANSFORM_KEYS.has(key)) continue
         const v = (userStyle as Record<string, unknown>)[key]
         if (typeof v === "number" || typeof v === "string") {
@@ -297,7 +306,9 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
     // `getProps` (rather than recomputing per style-getter read) keeps it
     // a stable attribute key on the mergeProps source object.
     const wroteFirstPaintStyle =
-      initialTarget !== null || styleMotionValues.size > 0 || styleStaticTransforms.size > 0
+      initialTarget !== null ||
+      styleMotionValues !== undefined ||
+      styleStaticTransforms !== undefined
     return mergeProps(userProps ?? {}, {
       get style() {
         const cleaned = stripStyleEntriesOwnedByRegistry(userProps?.style)

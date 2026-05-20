@@ -18,7 +18,7 @@ import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
 import { createDrag } from "./createDrag"
 import { createGestures } from "./createGestures"
 import { type ActiveStoreTuple, createGestureStateMachine } from "./gesture-state"
-import { createValueRegistry } from "./value-registry"
+import { createValueRegistry, type ValueRegistry } from "./value-registry"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -170,15 +170,24 @@ export function createMotion(
   const motionConfig = useMotionConfig()
   const systemReducedMotion = createReducedMotion()
 
-  // ---------- Per-element value registry ----------
-  // Stage 1 of the MV-in-style work: the registry exists for downstream
-  // stages to wire into. Nothing reads or writes it yet — `dispose()` here
-  // is a no-op until Stage 3 starts populating transient MVs for animate
-  // targets. Kept here so the ownership story is clear from day one: the
-  // registry's lifetime is bounded by `createMotion`'s owner, same as the
-  // gesture state machine.
-  const valueRegistry = createValueRegistry()
-  onCleanup(() => valueRegistry.dispose())
+  // ---------- Per-element value registry (lazy — Stage 4.5) ----------
+  // Most elements never need a registry: they have no MV in style, no static
+  // transform shortcut in style, and no Stage 3 transient is ever required
+  // because the WAA dispatch path stays active throughout. For those elements
+  // (the bulk of typical motion usage), allocating an empty registry was pure
+  // waste. We now create it on first use via `ensureRegistry()`.
+  //
+  // No `onCleanup(() => valueRegistry?.dispose())` — `dispose()` was just
+  // `transient.clear() + values.clear()`. When createMotion's closure dies,
+  // GC reclaims the Map+Set + their MV references; user-provided MVs survive
+  // because they have other references; transient MVs that no longer have
+  // any subscriber will GC naturally. Calling dispose() explicitly bought
+  // nothing.
+  let valueRegistry: ValueRegistry | undefined
+  const ensureRegistry = (): ValueRegistry => {
+    if (!valueRegistry) valueRegistry = createValueRegistry()
+    return valueRegistry
+  }
 
   // Snapshot once at construction. Subsequent reactivity goes through
   // the createEffect below, so we don't subscribe in the body of this fn.
@@ -245,6 +254,11 @@ export function createMotion(
   // This keeps the 293 baseline tests on their original code path — their
   // `animateSpy.mock.calls[*][1]` assertions still see a target object.
   const writeFromRegistry = (): void => {
+    // Registry is lazy: if nothing's been registered, there's nothing to
+    // compose. Subscribers that fire `writeFromRegistry` were all hooked up
+    // AFTER an entry was added, so by the time this runs the registry
+    // exists — but the guard keeps the function safe to call from any spot.
+    if (!valueRegistry) return
     const target: Record<string, unknown> = {}
     let hasAny = false
     for (const [k, mv] of valueRegistry.entries()) {
@@ -262,8 +276,9 @@ export function createMotion(
   // entries, transforms stay on the pre-existing WAA dispatch path.
   let bridgeActive = false
   if (config?.styleMotionValues && config.styleMotionValues.size > 0) {
+    const registry = ensureRegistry()
     for (const [key, mv] of config.styleMotionValues) {
-      valueRegistry.setExternal(key, mv)
+      registry.setExternal(key, mv)
       onCleanup(mv.on("change", writeFromRegistry))
     }
     bridgeActive = true
@@ -302,27 +317,29 @@ export function createMotion(
   // needs a concrete leaf to start from. styleStaticTransforms is already
   // pre-snapshotted by useMotion.
   if (bridgeActive && capturedInitialTarget) {
+    const registry = ensureRegistry()
     for (const key in capturedInitialTarget) {
       if (key === "transition") continue
       if (!TRANSFORM_KEYS.has(key)) continue
-      if (valueRegistry.has(key)) continue
+      if (registry.has(key)) continue
       const raw = (capturedInitialTarget as Record<string, unknown>)[key]
       const snapshot = snapshotValue(raw)
       if (snapshot === undefined) continue
-      const mv = valueRegistry.getOrCreateTransient(key, snapshot)
+      const mv = registry.getOrCreateTransient(key, snapshot)
       onCleanup(mv.on("change", writeFromRegistry))
     }
   }
   if (bridgeActive && config?.styleStaticTransforms) {
+    const registry = ensureRegistry()
     for (const [key, value] of config.styleStaticTransforms) {
       // Static style entries WIN over initial on key collision — style is
       // the runtime source of truth for any key it specifies. Replace any
       // transient just seeded from initialTarget with this value's transient.
-      const existing = valueRegistry.get(key)
+      const existing = registry.get(key)
       if (existing) {
         existing.set(value)
       } else {
-        const mv = valueRegistry.getOrCreateTransient(key, value)
+        const mv = registry.getOrCreateTransient(key, value)
         onCleanup(mv.on("change", writeFromRegistry))
       }
     }
@@ -348,10 +365,15 @@ export function createMotion(
   // shape end-to-end for non-MV-in-style users.
   const getValueForAnimate = (key: string, fallback: unknown): MotionValue<unknown> | undefined => {
     if (!bridgeActive) return undefined
-    const existing = valueRegistry.get(key)
+    // `bridgeActive=true` implies the registry was ensured by one of the
+    // registration blocks above, but TypeScript can't see that correlation.
+    // Re-resolve through `ensureRegistry()` — idempotent and free if already
+    // created.
+    const registry = ensureRegistry()
+    const existing = registry.get(key)
     if (existing) return existing
     if (!TRANSFORM_KEYS.has(key)) return undefined
-    const mv = valueRegistry.getOrCreateTransient(key, fallback)
+    const mv = registry.getOrCreateTransient(key, fallback)
     onCleanup(mv.on("change", writeFromRegistry))
     return mv
   }
