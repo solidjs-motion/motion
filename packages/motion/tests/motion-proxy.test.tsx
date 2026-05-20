@@ -25,6 +25,7 @@ vi.mock("motion", async () => {
 
 const { MOTION_OPT_KEYS, motion } = await import("../src/motion-proxy")
 const { useMotion } = await import("../src/use-motion")
+const { createMotionValue } = await import("../src/primitives/motion-value")
 
 beforeEach(() => {
   animateSpy.mockClear()
@@ -311,5 +312,143 @@ describe("motion.create — dev-mode warnings", () => {
     expect(warnSpy).not.toHaveBeenCalled()
     warnSpy.mockRestore()
     unmount()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// motion.X + MV-in-style — the canonical Sierpinski / motion-react pattern.
+//
+// Stage 2 covered the useMotion-direct path; Stage 5 widened the type.
+// These tests close the loop on the actual user-facing surface:
+// `<motion.div style={{ scale: mv }}>` end-to-end. No `as never` casts —
+// the MotionStyle type now accepts MotionValues natively.
+// ---------------------------------------------------------------------------
+
+describe("motion.X — MV-in-style", () => {
+  it("`<motion.div style={{ scale: mv }}>` writes el.style.transform on MV change", () => {
+    const scale = createMotionValue(1)
+    let el!: HTMLDivElement
+    const { unmount } = render(() => (
+      <motion.div
+        ref={(r: HTMLDivElement) => {
+          el = r
+        }}
+        style={{ scale }}
+        data-testid="dot"
+      />
+    ))
+
+    // Initial paint composes from the registry's single entry via the
+    // specialized writer (Stage 4.5b fast path).
+    expect(el.style.transform).toBe("scale(1)")
+
+    scale.set(0.5)
+    expect(el.style.transform).toBe("scale(0.5)")
+
+    scale.set(1.2)
+    expect(el.style.transform).toBe("scale(1.2)")
+
+    unmount()
+  })
+
+  it("`<motion.div style={{ opacity: mv }}>` writes el.style.opacity directly (non-transform key)", () => {
+    const opacity = createMotionValue(0.5)
+    let el!: HTMLDivElement
+    const { unmount } = render(() => (
+      <motion.div
+        ref={(r: HTMLDivElement) => {
+          el = r
+        }}
+        style={{ opacity, color: "rebeccapurple" }}
+      />
+    ))
+
+    // MV-driven non-transform key.
+    expect(el.style.opacity).toBe("0.5")
+    // Plain CSS key passes through Solid's style binding unchanged.
+    expect(el.style.color).toBe("rebeccapurple")
+
+    opacity.set(0.2)
+    expect(el.style.opacity).toBe("0.2")
+
+    unmount()
+  })
+
+  it("multiple style MVs on one motion.X compose via the multi-key writer", () => {
+    // Exercises the registry-writer's 2+-entry branch (multiKeyWriter) —
+    // the writer falls back to applyStaticStyle which composes the full
+    // transform in motion's canonical order (translate → scale → rotate).
+    const x = createMotionValue(10)
+    const scale = createMotionValue(0.8)
+    let el!: HTMLDivElement
+    const { unmount } = render(() => (
+      <motion.div
+        ref={(r: HTMLDivElement) => {
+          el = r
+        }}
+        style={{ x, scale }}
+      />
+    ))
+
+    expect(el.style.transform).toBe("translateX(10px) scale(0.8)")
+
+    // Updating one MV recomposes the full transform string — translateX
+    // and scale stay coordinated.
+    scale.set(1.5)
+    expect(el.style.transform).toBe("translateX(10px) scale(1.5)")
+
+    x.set(100)
+    expect(el.style.transform).toBe("translateX(100px) scale(1.5)")
+
+    unmount()
+  })
+
+  it("auto-Provider doesn't break the MV-in-style subscription on children", () => {
+    // motion.X wraps its output in m.Provider unconditionally (ADR 0004).
+    // Verify the parent's MV-in-style still works while propagating
+    // variant context to children.
+    const scale = createMotionValue(1)
+    let parentEl!: HTMLDivElement
+    const { unmount } = render(() => (
+      <motion.div
+        ref={(r: HTMLDivElement) => {
+          parentEl = r
+        }}
+        style={{ scale }}
+        animate="closed"
+        variants={{ closed: { opacity: 0 }, open: { opacity: 1 } }}
+      >
+        <span>child</span>
+      </motion.div>
+    ))
+
+    expect(parentEl.style.transform).toBe("scale(1)")
+    scale.set(0.5)
+    expect(parentEl.style.transform).toBe("scale(0.5)")
+
+    unmount()
+  })
+
+  it("unmount tears down the MV subscription (no stray writes)", () => {
+    const scale = createMotionValue(1)
+    let el!: HTMLDivElement
+    const { unmount } = render(() => (
+      <motion.div
+        ref={(r: HTMLDivElement) => {
+          el = r
+        }}
+        style={{ scale }}
+      />
+    ))
+
+    expect(el.style.transform).toBe("scale(1)")
+    const before = el.style.transform
+
+    unmount()
+
+    // After unmount the subscription's onCleanup ran; setting the MV
+    // shouldn't reach this detached element.
+    scale.set(99)
+    expect(el.style.transform).toBe(before)
   })
 })

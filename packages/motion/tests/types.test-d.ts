@@ -300,6 +300,93 @@ describe("ElementProps / MotionMergedProps", () => {
 })
 
 // ---------------------------------------------------------------------------
+// MotionStyle shape — type-level assertions for the Stage 5 widening.
+// These are compile-time guards: TypeScript catches regressions in PRs that
+// touch the type definition.
+// ---------------------------------------------------------------------------
+
+describe("MotionStyle — Stage 5 widening", () => {
+  // Re-import inside this describe so a hypothetical type-export regression
+  // surfaces as a localised failure rather than crashing the whole file.
+  type MotionStyleAlias = NonNullable<ElementProps["style"]>
+
+  it("accepts native CSS properties (passthrough)", () => {
+    const style: MotionStyleAlias = { color: "red", "font-weight": "bold" }
+    expectTypeOf(style).toExtend<MotionStyleAlias>()
+  })
+
+  it("accepts transform shortcuts as plain values", () => {
+    // x/y/z + scale + rotate + skew — all motion-only keys, not in JSX.CSSProperties.
+    const style: MotionStyleAlias = {
+      x: 10,
+      y: "50%",
+      scale: 1.5,
+      rotate: 45,
+      skewX: "0.5turn",
+    }
+    expectTypeOf(style).toExtend<MotionStyleAlias>()
+  })
+
+  it("accepts MotionValue in transform shortcuts", () => {
+    const scaleMV = createMotionValue(1)
+    const xMV = createMotionValue("50%")
+    const style: MotionStyleAlias = { scale: scaleMV, x: xMV }
+    expectTypeOf(style).toExtend<MotionStyleAlias>()
+  })
+
+  it("accepts MotionValue in non-transform CSS properties", () => {
+    const opacityMV = createMotionValue(0.5)
+    const style: MotionStyleAlias = { opacity: opacityMV }
+    expectTypeOf(style).toExtend<MotionStyleAlias>()
+  })
+
+  it("accepts mixed shape — static + MV + transform shortcuts", () => {
+    const scale = createMotionValue(1)
+    const opacity = createMotionValue(1)
+    const style: MotionStyleAlias = {
+      scale,
+      x: 10,
+      opacity,
+      color: "rebeccapurple",
+      "border-radius": "8px",
+    }
+    expectTypeOf(style).toExtend<MotionStyleAlias>()
+  })
+
+  it("rejects unknown keys", () => {
+    // @ts-expect-error — `fooBar` isn't a known CSS prop OR transform shortcut.
+    const style: MotionStyleAlias = { fooBar: createMotionValue(1) }
+    void style
+  })
+
+  it("rejects boolean values for known keys", () => {
+    // @ts-expect-error — `opacity` requires number | string | MotionValue; boolean is invalid.
+    const style: MotionStyleAlias = { opacity: true }
+    void style
+  })
+
+  it("useMotion's m() accepts MotionStyle in style", () => {
+    const scale = createMotionValue(1)
+    const m = useMotion({})
+    // Should typecheck end-to-end: motion's m() takes ElementProps where
+    // style is MotionStyle.
+    const props = m({ style: { scale, color: "red" } })
+    expectTypeOf(props).toExtend<{ ref: (el: HTMLElement | SVGElement) => void }>()
+  })
+
+  it("chained useMotion calls (m(m({}))) typecheck — the output style is assignable as input", () => {
+    const fade = useMotion({ initial: { opacity: 0 } })
+    const slide = useMotion({ initial: { y: 20 } })
+    // This is the Stage 5 intersection-output payoff: slide's merged props can
+    // be passed straight back through fade's m() without a cast. The
+    // `style: MotionStyle & JSX.CSSProperties` shape makes both directions
+    // assignable.
+    const props = fade(slide({ class: "card" }))
+    expectTypeOf(props).toExtend<{ ref: (el: HTMLElement | SVGElement) => void }>()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // useMotion accepts both static options and a reactive function form
 // ---------------------------------------------------------------------------
 
