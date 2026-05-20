@@ -1,5 +1,5 @@
 import { animate } from "motion"
-import { createSignal, untrack } from "solid-js"
+import { createSignal, onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
@@ -18,6 +18,7 @@ import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
 import { createDrag } from "./createDrag"
 import { createGestures } from "./createGestures"
 import { type ActiveStoreTuple, createGestureStateMachine } from "./gesture-state"
+import { createValueRegistry } from "./value-registry"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -148,6 +149,16 @@ export function createMotion(
   const presence = usePresenceContext()
   const motionConfig = useMotionConfig()
   const systemReducedMotion = createReducedMotion()
+
+  // ---------- Per-element value registry ----------
+  // Stage 1 of the MV-in-style work: the registry exists for downstream
+  // stages to wire into. Nothing reads or writes it yet — `dispose()` here
+  // is a no-op until Stage 3 starts populating transient MVs for animate
+  // targets. Kept here so the ownership story is clear from day one: the
+  // registry's lifetime is bounded by `createMotion`'s owner, same as the
+  // gesture state machine.
+  const valueRegistry = createValueRegistry()
+  onCleanup(() => valueRegistry.dispose())
 
   // Snapshot once at construction. Subsequent reactivity goes through
   // the createEffect below, so we don't subscribe in the body of this fn.
