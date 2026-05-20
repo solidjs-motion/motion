@@ -4,6 +4,10 @@
 export { animate, inView, isMotionValue, motionValue, scroll, spring } from "motion"
 // Context layer.
 export { MotionConfig, MotionConfigContext, useMotionConfig } from "./motion-config"
+// motion proxy (Phase 4) — indexable surface yielding cached, motion-aware
+// tag-components per HTML/SVG tag. `motion.create` (the HOC entry point)
+// lands in the follow-up commit.
+export { MOTION_OPT_KEYS, type Motion, motion } from "./motion-proxy"
 // Presence — exit-animation coordinator + imperative hook (Phase 3).
 export {
   Presence,
