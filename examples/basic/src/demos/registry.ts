@@ -17,7 +17,7 @@ export type DemoEntry = {
   /** One-line description shown under the title in the demo header. */
   blurb: string
   /** Phase tag — drives sidebar grouping. */
-  phase: 1 | 2 | 3
+  phase: 1 | 2 | 3 | 4
   /** Lazy-loaded page component. */
   component: ReturnType<typeof lazy>
   /**
@@ -310,5 +310,26 @@ export const demos: DemoEntry[] = [
     component: lazy(() => import("./PresenceImageStack")),
     source: rawSource(() => import("./PresenceImageStack.tsx?raw")),
     filename: "PresenceImageStack.tsx",
+  },
+  // ---- Phase 4 ----
+  {
+    path: "/motion-proxy-tag",
+    title: "motion.X tag-component",
+    blurb:
+      "Orchestrated stagger via <motion.ul> + passive <motion.li> children — no useMotion calls, no manual m.Provider.",
+    phase: 4,
+    component: lazy(() => import("./MotionProxyTag")),
+    source: rawSource(() => import("./MotionProxyTag.tsx?raw")),
+    filename: "MotionProxyTag.tsx",
+  },
+  {
+    path: "/motion-proxy-create",
+    title: "motion.create (HOC)",
+    blurb:
+      "Wrap a custom Component with motion — original props compose with the full MotionOptions surface.",
+    phase: 4,
+    component: lazy(() => import("./MotionProxyCreate")),
+    source: rawSource(() => import("./MotionProxyCreate.tsx?raw")),
+    filename: "MotionProxyCreate.tsx",
   },
 ]
