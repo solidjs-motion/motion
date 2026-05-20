@@ -3,7 +3,13 @@ import { createSignal, onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
-import { snapshotValue, TRANSFORM_KEYS, targetToStyle } from "../style"
+import {
+  formatProperty,
+  pickTransformFormatter,
+  snapshotValue,
+  TRANSFORM_KEYS,
+  targetToStyle,
+} from "../style"
 import type {
   AnimateValue,
   MotionElement,
@@ -253,20 +259,88 @@ export function createMotion(
   // machine falls back to the existing `animate(el, target, opts)` WAA path.
   // This keeps the 293 baseline tests on their original code path — their
   // `animateSpy.mock.calls[*][1]` assertions still see a target object.
-  const writeFromRegistry = (): void => {
-    // Registry is lazy: if nothing's been registered, there's nothing to
-    // compose. Subscribers that fire `writeFromRegistry` were all hooked up
-    // AFTER an entry was added, so by the time this runs the registry
-    // exists — but the guard keeps the function safe to call from any spot.
+  // ---------- Specialized writer (Stage 4.5b) ----------
+  // `writeFromRegistry` is the subscription target: every MV in the registry
+  // is hooked to it via `mv.on("change", writeFromRegistry)`. Internally it
+  // dispatches to a `writer` closure that's COMPILED based on the registry's
+  // current shape:
+  //
+  //   - 0 entries → noop (the registry is empty; nothing to paint)
+  //   - 1 entry  → SPECIALIZED closure that captures (key, mv) in scope.
+  //                Per-call cost is just mv.get() → snapshotValue → format →
+  //                DOM write. No iterator allocations, no TRANSFORM_KEYS
+  //                lookup, no branching on key shape — the shape is baked
+  //                into the closure choice.
+  //   - 2+ ents  → `multiKeyWriter`, which walks the registry, composes a
+  //                Target, and runs the full applyStaticStyle path.
+  //
+  // The closure is recompiled by `refreshWriter()` whenever the registry's
+  // size changes (called from every registration site: Stage 2 styleMV
+  // loop, Stage 4 initial-target walk, Stage 4 static-transforms walk, and
+  // Stage 3 `getValueForAnimate`'s transient-creation branch).
+  //
+  // Why this matters at scale: Sierpinski at depth 8 has 6,561 dots × one
+  // style MV each = 6,561 calls per scale.set, × 60 Hz = 393k calls/sec.
+  // The previous fast path allocated 3 IteratorResults per call → 1.2M
+  // allocations/sec of GC pressure. The specialized closure has zero per-
+  // call allocations.
+  const noop = (): void => {}
+  let writer: () => void = noop
+  const writeFromRegistry = (): void => writer()
+
+  const multiKeyWriter = (): void => {
     if (!valueRegistry) return
     const target: Record<string, unknown> = {}
-    let hasAny = false
     for (const [k, mv] of valueRegistry.entries()) {
       target[k] = mv.get()
-      hasAny = true
     }
-    if (!hasAny) return
+    if (Object.keys(target).length === 0) return
     applyStaticStyle(el, target as Target)
+  }
+
+  const compileSingleKeyWriter = (): (() => void) => {
+    // Safe: caller guarantees size === 1.
+    const [key, mv] = (valueRegistry as ValueRegistry).entries().next().value as [
+      string,
+      MotionValue<unknown>,
+    ]
+    if (TRANSFORM_KEYS.has(key)) {
+      // Pre-pick the formatter so the per-call hot path skips the
+      // transform-key switch entirely. Captured in the closure scope; the
+      // switch happens ONCE per element at compile time, never per write.
+      const formatter = pickTransformFormatter(key)
+      if (formatter !== undefined) {
+        return () => {
+          const v = snapshotValue(mv.get())
+          if (v !== undefined) el.style.transform = formatter(v)
+        }
+      }
+    }
+    if (key.startsWith("--")) {
+      return () => {
+        const v = snapshotValue(mv.get())
+        if (v !== undefined) el.style.setProperty(key, String(v))
+      }
+    }
+    return () => {
+      const v = snapshotValue(mv.get())
+      if (v === undefined) return
+      const formatted = formatProperty(key, v)
+      ;(el.style as unknown as Record<string, string | number>)[key] = formatted
+    }
+  }
+
+  const refreshWriter = (): void => {
+    const size = valueRegistry?.size ?? 0
+    if (size === 0) {
+      writer = noop
+      return
+    }
+    if (size === 1) {
+      writer = compileSingleKeyWriter()
+      return
+    }
+    writer = multiKeyWriter
   }
   // Bridge activates whenever the user supplied ANY registry-owned style
   // entry — an MV in style OR a static transform shortcut. The transform
@@ -349,6 +423,11 @@ export function createMotion(
   // + static-style transforms into a single transform string. Skipped when
   // nothing is registered.
   if (bridgeActive) {
+    // All initial registrations complete; compile the specialized writer
+    // based on the final registry size before firing the first paint.
+    // Subsequent transient additions (via getValueForAnimate) call
+    // refreshWriter themselves.
+    refreshWriter()
     writeFromRegistry()
   }
 
@@ -375,6 +454,11 @@ export function createMotion(
     if (!TRANSFORM_KEYS.has(key)) return undefined
     const mv = registry.getOrCreateTransient(key, fallback)
     onCleanup(mv.on("change", writeFromRegistry))
+    // Registry size just grew — recompile the writer so the next paint uses
+    // the multi-key path that composes all transforms together. (Transitions
+    // 1→2 swap from specialized single-key to multiKeyWriter; 2+→N+1 stays
+    // on multiKeyWriter, refreshWriter is then idempotent.)
+    refreshWriter()
     return mv
   }
 

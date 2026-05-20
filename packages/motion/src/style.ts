@@ -139,53 +139,69 @@ export function snapshotValue(value: unknown): Leaf | undefined {
 // shorthand keys present in the target.
 // ---------------------------------------------------------------------------
 
-function transformFunctionFor(key: string, value: Leaf): string {
-  switch (key) {
-    case "x":
-      return `translateX(${withUnit(value, "px")})`
-    case "y":
-      return `translateY(${withUnit(value, "px")})`
-    case "z":
-      return `translateZ(${withUnit(value, "px")})`
-    case "scale":
-      return `scale(${value})`
-    case "scaleX":
-      return `scaleX(${value})`
-    case "scaleY":
-      return `scaleY(${value})`
-    case "scaleZ":
-      return `scaleZ(${value})`
-    case "rotate":
-      return `rotate(${withUnit(value, "deg")})`
-    case "rotateX":
-      return `rotateX(${withUnit(value, "deg")})`
-    case "rotateY":
-      return `rotateY(${withUnit(value, "deg")})`
-    case "rotateZ":
-      return `rotateZ(${withUnit(value, "deg")})`
-    case "skew":
-      return `skew(${withUnit(value, "deg")})`
-    case "skewX":
-      return `skewX(${withUnit(value, "deg")})`
-    case "skewY":
-      return `skewY(${withUnit(value, "deg")})`
-    case "transformPerspective":
-      return `perspective(${withUnit(value, "px")})`
-    default:
-      return ""
-  }
+/**
+ * Per-key transform formatter functions. Pre-built once at module load and
+ * shared across all elements. Used by `createMotion`'s specialized writer
+ * to avoid evaluating the transform-key switch on every single-key write —
+ * at Sierpinski-scale fan-out (thousands of writes per frame) the switch's
+ * 15 case-comparisons add up to non-trivial CPU.
+ *
+ * Pre-pick the formatter with `pickTransformFormatter(key)` ONCE at writer-
+ * compile time, then the per-call cost in the hot path is just `formatter(v)`.
+ */
+type TransformFormatter = (value: Leaf) => string
+
+const TRANSFORM_FORMATTERS: Readonly<Record<string, TransformFormatter>> = {
+  // Translate: number → "px", string passes through verbatim.
+  x: (v) => `translateX(${typeof v === "string" ? v : `${v}px`})`,
+  y: (v) => `translateY(${typeof v === "string" ? v : `${v}px`})`,
+  z: (v) => `translateZ(${typeof v === "string" ? v : `${v}px`})`,
+  // Scale: dimensionless. Skip the type check entirely.
+  scale: (v) => `scale(${v})`,
+  scaleX: (v) => `scaleX(${v})`,
+  scaleY: (v) => `scaleY(${v})`,
+  scaleZ: (v) => `scaleZ(${v})`,
+  // Rotate / skew: number → "deg", string passes through.
+  rotate: (v) => `rotate(${typeof v === "string" ? v : `${v}deg`})`,
+  rotateX: (v) => `rotateX(${typeof v === "string" ? v : `${v}deg`})`,
+  rotateY: (v) => `rotateY(${typeof v === "string" ? v : `${v}deg`})`,
+  rotateZ: (v) => `rotateZ(${typeof v === "string" ? v : `${v}deg`})`,
+  skew: (v) => `skew(${typeof v === "string" ? v : `${v}deg`})`,
+  skewX: (v) => `skewX(${typeof v === "string" ? v : `${v}deg`})`,
+  skewY: (v) => `skewY(${typeof v === "string" ? v : `${v}deg`})`,
+  transformPerspective: (v) => `perspective(${typeof v === "string" ? v : `${v}px`})`,
 }
 
-function withUnit(value: Leaf, unit: string): string {
-  if (typeof value === "string") return value
-  return `${value}${unit}`
+/**
+ * Look up the formatter for a transform-shortcut key. Returns `undefined`
+ * for non-transform keys; callers should check `TRANSFORM_KEYS.has(key)`
+ * before assuming a formatter exists.
+ */
+export function pickTransformFormatter(key: string): TransformFormatter | undefined {
+  return TRANSFORM_FORMATTERS[key]
+}
+
+/**
+ * Format a motion transform-shortcut key + value as the corresponding CSS
+ * transform function string (e.g. `transformFunctionFor("scale", 1.05)`
+ * → `"scale(1.05)"`). One-shot variant — for hot paths, use
+ * `pickTransformFormatter(key)` once at compile time and reuse.
+ */
+export function transformFunctionFor(key: string, value: Leaf): string {
+  return TRANSFORM_FORMATTERS[key]?.(value) ?? ""
 }
 
 // ---------------------------------------------------------------------------
 // Property formatting — apply unit table for non-transform CSS properties.
 // ---------------------------------------------------------------------------
 
-function formatProperty(key: string, value: Leaf): string | number {
+/**
+ * Format a non-transform CSS property's value (e.g. `formatProperty("width", 100)`
+ * → `"100px"`, `formatProperty("opacity", 0.5)` → `0.5`). Applies motion's
+ * default-unit table (PX for dimensional CSS, dimensionless otherwise);
+ * leaves CSS variables alone. Exported for `createMotion`'s writer fast path.
+ */
+export function formatProperty(key: string, value: Leaf): string | number {
   if (typeof value === "string") return value
   // CSS variables: stringify the number, never auto-unit (Q5 sub-4).
   if (key.startsWith("--")) return String(value)

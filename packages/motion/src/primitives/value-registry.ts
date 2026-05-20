@@ -45,6 +45,12 @@ export type ValueRegistry = {
   /** Has any MV been registered for `key`? */
   has(key: string): boolean
   /**
+   * Number of entries currently registered. Used by `createMotion` to decide
+   * whether the per-element writer can take a specialized single-key path
+   * (size === 1) or needs the general-purpose `applyStaticStyle` walk.
+   */
+  readonly size: number
+  /**
    * Register a user-provided MV. The registry will NOT dispose it on
    * teardown. If a transient MV exists for the key, it is replaced (the
    * external MV becomes the new source of truth).
@@ -96,6 +102,9 @@ export function createValueRegistry(): ValueRegistry {
     },
     entries() {
       return values.entries()
+    },
+    get size() {
+      return values.size
     },
     dispose() {
       transient.clear()
