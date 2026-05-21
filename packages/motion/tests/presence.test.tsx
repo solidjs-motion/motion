@@ -113,6 +113,74 @@ describe("<Presence> — switch path: enter timing", () => {
   })
 })
 
+describe("<Presence> — nested motion enter timing", () => {
+  it("fires enter animate for NESTED motion descendants of the tracked child", async () => {
+    // Regression: PresenceContext propagates to every motion descendant,
+    // so they all call registerEnter. But transition-group only invokes
+    // beforeMount on its direct tracked children — without a subtree
+    // walk, nested motion elements' runEnter callbacks would sit in
+    // the registry forever and their enter-readiness gate would never
+    // flip. Visible symptom: a page-transition wrapper around route
+    // content blocks every nested initial→animate (and any gesture
+    // animation that depends on the diff effect's first iteration).
+    //
+    // Mirrors the existing exit-side subtree walk in beforeUnmount.
+    const [page, setPage] = createSignal<"a" | "b">("a")
+    const { unmount } = render(() => (
+      <Presence>
+        <Show when={page()} keyed>
+          {(p) => {
+            // Outer wrapper — the transition-group-tracked element.
+            const outer = useMotion({
+              initial: { opacity: 0 },
+              animate: { opacity: 1 },
+              exit: { opacity: 0 },
+            })
+            // Nested — registers with Presence's runEnters but is NOT
+            // a direct tracked child. Without the beforeMount subtree
+            // walk, its animate never dispatches.
+            const inner = useMotion({
+              initial: { y: 20 },
+              animate: { y: 0 },
+            })
+            return (
+              <div {...outer()} data-panel={p}>
+                <div {...inner()} data-nested="">
+                  {p}
+                </div>
+              </div>
+            )
+          }}
+        </Show>
+      </Presence>
+    ))
+    await flush()
+
+    // First render: nested element's animate target (y: 0) must reach
+    // animateSpy. Without the fix it would never be dispatched.
+    const nestedAnimate = animateSpy.mock.calls.some((c) => {
+      const t = c[1] as Record<string, unknown>
+      return t?.y === 0
+    })
+    expect(nestedAnimate).toBe(true)
+
+    animateSpy.mockClear()
+    setPage("b")
+    await flush()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Page transition: the new outer + new nested both animate on swap.
+    const newNestedAnimate = animateSpy.mock.calls.some((c) => {
+      const t = c[1] as Record<string, unknown>
+      return t?.y === 0
+    })
+    expect(newNestedAnimate).toBe(true)
+
+    unmount()
+  })
+})
+
 describe("<Presence> — switch path", () => {
   it("runs the child's exit animate before the element is removed from the DOM", async () => {
     const [open, setOpen] = createSignal(true)

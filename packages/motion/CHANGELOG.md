@@ -5,6 +5,38 @@ All notable changes to `solidjs-motion` / `@solidjs-motion/motion` are documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] — 2026-05-21
+
+### Fixed
+
+- **Nested motion inside `<Presence>` now reliably runs its first
+  animate.** Previously, motion's enter-readiness gate flipped true via
+  Presence's `beforeMount` callback unconditionally — but for nested
+  motion elements inside a deeper `<Presence>` whose `onEnter` fires
+  synchronously during render (while the surrounding tracked subtree is
+  still off-DOM in a wait-mode holding pen), this caused the diff
+  effect's first `animate(el, ...)` to fire against a disconnected
+  element. WAAPI ran the animation to completion off-DOM and silently
+  dropped `commitStyles`, so the element painted at its `initial` target
+  with no visible transition.
+
+  Both signals that could trip readiness now route through a shared
+  `isConnected` check: Presence's `beforeMount` callback AND the
+  microtask fallback flip ready only when `el.isConnected === true`,
+  otherwise schedule a `requestAnimationFrame` retry until connectedness
+  flips (or the owner is disposed). This handles three previously-broken
+  scenarios:
+  - Nested motion descendants of a Presence's tracked subtree
+  - Initial children of `<Presence initial={false}>` (appear=false)
+  - Direct tracked children whose nested `<Presence>` fires
+    `beforeMount` synchronously while the parent subtree is still
+    off-DOM (the canonical case: a page-transition wrapper around
+    routes that themselves contain `<Presence>`)
+
+  New regression test in `tests/presence.test.tsx` asserts a nested
+  motion descendant's animate target reaches the animate spy on both
+  initial mount AND on a `<Presence>` swap.
+
 ## [0.1.5] — 2026-05-21
 
 ### Fixed

@@ -204,6 +204,19 @@ export const Presence: Component<PresenceProps> = (props) => {
       runEnters.set(el, runEnter)
     },
     beforeMount: (el) => {
+      // Fires the runEnter for THE tracked element that transition-group
+      // is signalling via onEnter / onChange.added. Nested motion
+      // descendants of this element do NOT have their runEnter fired
+      // here — they handle their own readiness via createMotion's
+      // isConnected-based fallback (see the comment at that fallback
+      // site for why). Doing the subtree walk here was tried and
+      // misfired during wait-mode nested-Presence swaps: NESTED
+      // Presence's onEnter runs synchronously while NESTED's Panel is
+      // still off-DOM inside the outer page-transition holding pen, so
+      // flipping enterReady=true would dispatch animate to a
+      // disconnected element and the WAAPI commitStyles would silently
+      // drop, leaving the element painted at its animate target with
+      // no visible transition.
       const fn = runEnters.get(el)
       runEnters.delete(el)
       fn?.()

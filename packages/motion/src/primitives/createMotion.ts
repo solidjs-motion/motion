@@ -482,20 +482,47 @@ export function createMotion(
   const inPresence = presence.registerEnter !== undefined
   const [enterReady, setEnterReady] = createSignal(!inPresence)
   if (inPresence && presence.registerEnter) {
-    presence.registerEnter(el, () => setEnterReady(true))
-    // Fallback: transition-group's onEnter / onChange.added only fires for
-    // elements that are NEW to the source list. The initial children of a
-    // `<Presence initial={false}>` (appear=false case) are already in the
-    // signal at construction and never trigger an enter callback. We flip
-    // readiness from a microtask if the element is connected by then —
-    // Solid's synchronous render of `returned()` has run, and any element
-    // that was meant to be on screen is in the DOM. For wait-mode swaps
-    // where the new child is still off-DOM (the old one's exit is in
-    // flight), the `isConnected` check fails and we leave readiness false;
-    // Presence will fire beforeMount through onEnter when the exit settles.
-    queueMicrotask(() => {
-      if (el.isConnected) setEnterReady(true)
+    // Single source of truth for readiness: `el.isConnected`. The diff
+    // effect's first iteration must NOT fire animate against a
+    // disconnected element — motion's WAAPI animation runs to completion
+    // off-DOM, then silently drops `commitStyles`, leaving the element
+    // painted at its `initial` target with no visible transition.
+    //
+    // Both signals that could trip readiness are routed through this
+    // function:
+    //
+    //   1. Presence's `beforeMount(el)` callback — fires when
+    //      transition-group inserts the tracked element. For a tracked
+    //      direct child of Presence, by the time this fires the element
+    //      is in the DOM, so `isConnected` is true and we flip
+    //      immediately. For a NESTED motion element inside a deeper
+    //      Presence whose `onEnter` fires synchronously during render
+    //      (while the surrounding outer-Presence-tracked subtree is
+    //      STILL off-DOM in a holding pen), `isConnected` is false and
+    //      we schedule a retry.
+    //
+    //   2. The initial-microtask fallback — for cases where Presence's
+    //      `beforeMount` doesn't fire at all (e.g., a `<Presence
+    //      initial={false}>` appear=false case, where transition-group
+    //      doesn't raise enter for the initial source items).
+    //
+    // The rAF retry self-terminates the moment `setEnterReady(true)`
+    // fires; the `live` flag (cleared via `onCleanup`) prevents leaks
+    // if the owner is disposed before insertion ever happens.
+    let live = true
+    onCleanup(() => {
+      live = false
     })
+    const checkConnection = (): void => {
+      if (!live) return
+      if (el.isConnected) {
+        setEnterReady(true)
+        return
+      }
+      requestAnimationFrame(checkConnection)
+    }
+    presence.registerEnter(el, checkConnection)
+    queueMicrotask(checkConnection)
   }
 
   // ---------- Gesture state machine (Q3b, ADR 0002) ----------
