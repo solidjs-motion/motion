@@ -45,11 +45,16 @@ jobs:
       # The library's `solid` export condition points at TS source, so the
       # example consumes solidjs-motion directly. No separate library build
       # step is needed for the example to compile.
+      #
+      # SolidStart build (Vinxi + Nitro `static` preset) prerenders every
+      # route to HTML and emits the full static bundle under
+      # `.output/public/`. The `DEPLOY_BASE` env var is honored by
+      # `app.config.ts` so links + asset paths get the `/motion/` prefix.
       - name: Build example
         env:
           # Pages serves at https://<org>.github.io/<repo>/ — repo is
-          # solidjs-motion/motion. Vite's `base` and Solid Router's `base`
-          # both pick this up via import.meta.env.BASE_URL.
+          # solidjs-motion/motion. SolidStart's `server.baseURL` picks this
+          # up; Solid Router on the client inherits the same effective base.
           DEPLOY_BASE: /motion/
         run: bun --filter basic build
 
@@ -57,7 +62,7 @@ jobs:
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: examples/basic/dist
+          path: examples/basic/.output/public
 
   deploy:
     needs: build

@@ -1,4 +1,5 @@
 import { createSignal, type JSX, onCleanup, Show } from "solid-js"
+import { isServer } from "solid-js/web"
 import { createMotionValue, motion } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
@@ -184,31 +185,39 @@ export default function SierpinskiTriangle(): JSX.Element {
   // Single rAF loop drives the scale animation + FPS counter + seconds
   // counter. Anchoring all three avoids three independent rAF callbacks
   // competing for the frame.
-  const start = performance.now()
-  let frames = 0
-  let lastFpsUpdate = start
-  let lastSecondsUpdate = start
-  let raf = 0
-  const tick = (now: number): void => {
-    // Pulse the shared scale MV between 0.1 and 1.0 — a dramatic shrink
-    // that makes the per-element transform write visually obvious. Math:
-    //   midpoint = (1.0 + 0.1) / 2 = 0.55
-    //   amplitude = (1.0 - 0.1) / 2 = 0.45
-    scale.set(0.55 + Math.sin((now - start) / 240) * 0.45)
-    frames++
-    if (now - lastFpsUpdate >= 1000) {
-      setFps(Math.round((frames * 1000) / (now - lastFpsUpdate)))
-      frames = 0
-      lastFpsUpdate = now
-    }
-    if (now - lastSecondsUpdate >= 1000) {
-      setSeconds(Math.floor((now - start) / 1000))
-      lastSecondsUpdate = now
+  //
+  // Guarded behind `isServer` so SolidStart's static prerender (which
+  // executes the component body during `renderToString`) doesn't crash
+  // on the undefined `requestAnimationFrame` / `performance` globals.
+  // The animation is purely visual — there's nothing to render
+  // server-side. Hydration restarts it on the client.
+  if (!isServer) {
+    const start = performance.now()
+    let frames = 0
+    let lastFpsUpdate = start
+    let lastSecondsUpdate = start
+    let raf = 0
+    const tick = (now: number): void => {
+      // Pulse the shared scale MV between 0.1 and 1.0 — a dramatic shrink
+      // that makes the per-element transform write visually obvious. Math:
+      //   midpoint = (1.0 + 0.1) / 2 = 0.55
+      //   amplitude = (1.0 - 0.1) / 2 = 0.45
+      scale.set(0.55 + Math.sin((now - start) / 240) * 0.45)
+      frames++
+      if (now - lastFpsUpdate >= 1000) {
+        setFps(Math.round((frames * 1000) / (now - lastFpsUpdate)))
+        frames = 0
+        lastFpsUpdate = now
+      }
+      if (now - lastSecondsUpdate >= 1000) {
+        setSeconds(Math.floor((now - start) / 1000))
+        lastSecondsUpdate = now
+      }
+      raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
+    onCleanup(() => cancelAnimationFrame(raf))
   }
-  raf = requestAnimationFrame(tick)
-  onCleanup(() => cancelAnimationFrame(raf))
 
   return (
     <div>

@@ -1,9 +1,9 @@
-/// <reference types="vite/client" />
+/// <reference types="@solidjs/start/env" />
 
-// Vite's `?raw` query returns the file contents as a string. The reference
-// above already declares `*?raw`, but TS misses .tsx?raw without the
-// explicit declaration below (the wildcard pattern doesn't cover all
-// extension+query combos out of the box).
+// Vinxi/Vite's `?raw` query returns the file contents as a string. The
+// reference above declares the base `*?raw` shape, but TS misses
+// .tsx?raw without the explicit declaration below (the wildcard
+// pattern doesn't cover all extension+query combos out of the box).
 declare module "*.tsx?raw" {
   const src: string
   export default src
