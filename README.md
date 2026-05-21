@@ -55,16 +55,19 @@ bun --filter basic dev
 
 ## Status
 
-Pre-alpha (0.0.x). Phases 1 and 2 are landed:
+Pre-alpha (0.0.x). Phases 1 through 4 are landed — the v0.1 surface is feature-complete:
 
 - **Shipped:** `useMotion`, the full MotionValue family (`createMotionValue`,
   `createTransform`, `createSpring`, `createTime`, `createVelocity`, `createTemplate`),
   scroll + viewport (`createScroll`, `createInView`), gestures (hover / press / focus /
   whileInView), drag with constraints/elastic/momentum, `createPan`, `createDragControls`,
-  variants with parent-cascade + controlling-children rule, `<MotionConfig>`,
+  variants with parent-cascade + controlling-children rule, `<Presence>` +
+  `useAnimatePresence` for exit animations, `<motion.X>` proxy + `motion.create(Component)`
+  HOC for JSX-level wrappers with automatic variant-context propagation, MV-in-style
+  (`<motion.div style={{ scale: mv }}>` — MotionValues compose with `initial` / `animate` /
+  gestures through a per-element value registry, see
+  [ADR 0005](./docs/adr/0005-mv-in-style-value-registry.md)), `<MotionConfig>`,
   `createReducedMotion`, SSR-friendly first paint.
-- **Next up:** `<Presence>` for exit animations; `<motion.div>` proxy + `motion(Component)`
-  HOC for JSX-level wrappers with automatic variant-context propagation.
 - **Deferred to v0.2+:** layout animations, `layoutId` shared-element transitions,
   `<Reorder>`, SVG path drawing, `useAnimate`, `LazyMotion`.
 

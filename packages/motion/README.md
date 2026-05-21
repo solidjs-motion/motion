@@ -3,8 +3,8 @@
 An animation library for [SolidJS](https://solidjs.com) — a port of `motion/react` patterns
 built on the framework-agnostic [`motion`](https://motion.dev) package.
 
-> **Status: pre-alpha (0.0.x).** Phases 1 and 2 are landed; public API is
-> stabilizing toward v0.1. Live demos:
+> **Status: pre-alpha (0.0.x).** Phases 1 through 4 are landed — the v0.1
+> public surface is feature-complete and stabilizing. Live demos:
 > [solidjs-motion.github.io/motion](https://solidjs-motion.github.io/motion/).
 
 ## Install
@@ -89,6 +89,30 @@ serialized into SSR HTML so the first paint is flicker-free.
 - "Controlling variants" rule: a child with its own variant label opts out of the parent cascade (motion-dom parity).
 - Dynamic variants: each variant can be a function of `custom` for per-instance staggering and per-index timing.
 
+**Presence + exit animations**
+
+- `<Presence>` — coordinator that runs each child's `exit` target before unmount. Works with `<Show>`, `<For>`, and arbitrary mount/unmount toggles.
+- `mode: "sync" | "wait"` — synchronous swap (default) or sequential swap where the outgoing child exits fully before the incoming child enters.
+- `initial: false` — suppress the entrance animation for the initial mount; subsequent mounts animate.
+- `useAnimatePresence()` — imperative escape hatch returning `{ Provider, exit() }` for cases where you need to await exit completion before flipping state yourself.
+- Descendant-walk exit registration: passive children inside `m.Provider` with a `variants` map keyed off the parent's exit label exit alongside the parent automatically (the orchestrated-exit cascade).
+
+**`<motion.X>` proxy + `motion.create(Component)` HOC**
+
+- `motion.div`, `motion.span`, `motion.path` — every HTML/SVG intrinsic element accessed off `motion` returns a typed `Component` whose props are that element's native attributes intersected with `MotionOptions`. SVG namespace handled via `<Dynamic>`.
+- Each tag-component auto-wraps its rendered output in `m.Provider`, so variant cascade reaches descendants without manual wrapping for the common case.
+- `motion.create(MyComponent)` — HOC for custom components. The wrapped component must forward `props.ref` to a single DOM-element root (Solid's "ref forwarding by convention" reality). A dev-mode warning fires if the wrap is broken.
+- See [ADR 0004](../../docs/adr/0004-motion-proxy-and-hoc.md) for the design rationale.
+
+**MV-in-style** (`<motion.div style={{ scale: mv }}>`)
+
+- Pass any `MotionValue` directly in `style` — motion subscribes to it and writes the corresponding DOM property/transform on every change. No React-style re-render cycle.
+- Composes with `initial`, `animate`, gestures, and `exit` on the same key: the MV is the source of truth, and animate dispatches tween THROUGH the MV (matches motion-react fidelity).
+- Static transform shortcuts (`x: 10`, `scale: 1.5`) also work — motion composes them into the `transform` string in canonical order (translate → scale → rotate).
+- SSR-aware: the MV's snapshot value lands in the rendered HTML so client hydration is flicker-free.
+- `MotionStyle` type widens `JSX.CSSProperties` to accept `MotionValue` in every slot, plus motion's transform shortcuts.
+- See [ADR 0005](../../docs/adr/0005-mv-in-style-value-registry.md) for the per-element value-registry architecture.
+
 **Config + reduced motion**
 
 - `<MotionConfig transition reducedMotion nonce>` — shared defaults for a subtree.
@@ -101,11 +125,6 @@ serialized into SSR HTML so the first paint is flicker-free.
 **Re-exports from upstream `motion`**
 
 - `animate`, `inView`, `isMotionValue`, `motionValue`, `scroll`, `spring` — for direct use where the framework wrapper isn't needed.
-
-### Next up
-
-- **`<Presence>`** — exit animations. `PresenceContext` is wired with a no-op default today; `<Presence>` will provide the real implementation, registering each child's `exit` target and awaiting completion before unmount.
-- **`<motion.div>` / `motion(Component)`** — JSX-level wrappers. `<motion.div>` will be a proxy over every HTML tag; `motion(MyButton)` will be an HOC. Both will auto-propagate variant context so the explicit `<m.Provider>` becomes optional for the common case.
 
 ### Deferred to v0.2+
 
