@@ -12,16 +12,20 @@ import { AppShell } from "./layout/AppShell"
 // is required by Solid Router so lazy-loaded route bundles get a clean
 // fallback while their JS is loading on the client.
 //
-// `<Router base>` is intentionally absent here — SolidStart's static
-// preset uses `server.baseURL` from `app.config.ts` to prefix the
-// generated HTML's <link>/<script> tags and to namespace the prerender
-// output. Solid Router on the client uses the same effective base because
-// the entry script ran from the prefixed URL, so navigation is consistent.
+// `<Router base>` must reflect the deploy subpath (e.g. `/motion` on GitHub
+// Pages) so client-side route matching strips the prefix before comparing
+// against `routes/*.tsx`, AND so `<A href="/foo">` resolves to
+// `/motion/foo` rather than the host root. SolidStart sets Vite's `base`
+// from `server.baseURL` in `app.config.ts`, so `import.meta.env.BASE_URL`
+// is the source of truth (`"/motion/"` in production, `"/"` in dev).
 // ---------------------------------------------------------------------------
+
+const ROUTER_BASE = import.meta.env.BASE_URL.replace(/\/$/, "")
 
 export default function App() {
   return (
     <Router
+      base={ROUTER_BASE}
       root={(props) => (
         <AppShell>
           <Suspense>{props.children}</Suspense>
