@@ -5,6 +5,30 @@ All notable changes to `solidjs-motion` / `@solidjs-motion/motion` are documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-05-20
+
+### Fixed
+
+- **Drag now coexists with `initial` / `animate` / `exit`.** A draggable
+  element with an entrance animation (`<motion.X drag initial={{x:-300}}
+  animate={{x:0}}>`) used to break in two ways: animate's `x`/`y` never
+  reached the DOM, and on pointerdown the element snapped back to the
+  initial position. Three linked fixes:
+  - Drag's exclusion of `x`/`y` from the gesture-state winners is now
+    gated on `active.whileDrag` (pointer-engaged) instead of
+    `dragEnabled` (configured), matching motion-react. Animate's `x`/`y`
+    flow normally while drag is configured but idle; drag only claims
+    them during active interaction.
+  - The diff effect's removed-key fallback no longer reverts `x`/`y` to
+    `initial` when drag activates and excludes them. Drag *claiming* a
+    key is not the same as removing it.
+  - `handlePanStart` now syncs the x/y MotionValues to the element's
+    current visible translate (parsed from `getComputedStyle` +
+    `el.style.transform`) before capturing `dragStart`. motion's
+    `animate(el, target)` interpolates style.transform via WAAPI but
+    doesn't keep the visualElement's MVs in sync, so the MV would still
+    hold the entrance start value when drag began.
+
 ## [0.1.1] — 2026-05-20
 
 ### Docs
