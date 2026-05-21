@@ -47,7 +47,7 @@ export default function CreateSpringDemo() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Move your cursor over the pad. The blue dot tracks the raw position; the orange dot is the
         same value piped through <code>createSpring</code> — physics-smoothed.
       </p>
@@ -57,8 +57,8 @@ export default function CreateSpringDemo() {
           position: "relative",
           height: "320px",
           "border-radius": "16px",
-          background: "#f5f5f5",
-          border: "1px dashed #ccc",
+          background: "var(--color-surface)",
+          border: "1px dashed var(--color-border)",
           overflow: "hidden",
         }}
       >
@@ -103,7 +103,7 @@ export default function CreateSpringDemo() {
           "margin-top": "1rem",
           "font-family": "ui-monospace, monospace",
           "font-size": "0.85rem",
-          color: "#555",
+          color: "var(--color-muted)",
         }}
       >
         <div>

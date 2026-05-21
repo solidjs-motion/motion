@@ -28,7 +28,7 @@ export default function CreateTemplateDemo() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Three MotionValues compose into a single transform string via <code>createTemplate</code>.
         The template re-evaluates whenever any input changes — no manual concat, no stale closures.
       </p>
@@ -41,7 +41,7 @@ export default function CreateTemplateDemo() {
           "margin-bottom": "1.5rem",
           "font-family": "ui-monospace, monospace",
           "font-size": "0.85rem",
-          color: "#555",
+          color: "var(--color-muted)",
         }}
       >
         <span>x ({x().toFixed(0)}px)</span>
@@ -57,9 +57,9 @@ export default function CreateTemplateDemo() {
           onClick={() => x.set(0)}
           style={{
             padding: "0.2rem 0.4rem",
-            border: "1px solid #ddd",
+            border: "1px solid var(--color-border)",
             "border-radius": "4px",
-            background: "white",
+            background: "var(--color-elevated)",
             cursor: "pointer",
             font: "inherit",
             "font-size": "0.75rem",
@@ -80,9 +80,9 @@ export default function CreateTemplateDemo() {
           onClick={() => y.set(0)}
           style={{
             padding: "0.2rem 0.4rem",
-            border: "1px solid #ddd",
+            border: "1px solid var(--color-border)",
             "border-radius": "4px",
-            background: "white",
+            background: "var(--color-elevated)",
             cursor: "pointer",
             font: "inherit",
             "font-size": "0.75rem",
@@ -103,9 +103,9 @@ export default function CreateTemplateDemo() {
           onClick={() => rotate.set(0)}
           style={{
             padding: "0.2rem 0.4rem",
-            border: "1px solid #ddd",
+            border: "1px solid var(--color-border)",
             "border-radius": "4px",
-            background: "white",
+            background: "var(--color-elevated)",
             cursor: "pointer",
             font: "inherit",
             "font-size": "0.75rem",
@@ -118,8 +118,8 @@ export default function CreateTemplateDemo() {
         style={{
           height: "240px",
           "border-radius": "12px",
-          background: "#f5f5f5",
-          border: "1px dashed #ccc",
+          background: "var(--color-surface)",
+          border: "1px dashed var(--color-border)",
           display: "grid",
           "place-items": "center",
           overflow: "hidden",

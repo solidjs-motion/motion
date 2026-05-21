@@ -1,28 +1,21 @@
+import { Collapsible } from "@kobalte/core/collapsible"
 import { createEffect, createSignal, onCleanup, Show } from "solid-js"
+import { motion } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
-// DemoSource — renders the source of the current demo inside a collapsible
-// <details> block. Highlights with Shiki, but Shiki is dynamic-imported only
-// when the user expands the block (or on the first render when already open
-// after a navigation) — keeps the initial page bundle lean.
+// DemoSource — Kobalte Collapsible wraps the source viewer so the trigger
+// + content stay accessible (aria-expanded, keyboard activation, paired
+// data attributes for animation), while the chevron rotation is driven by
+// motion. CSS handles the height animation via Kobalte's exposed
+// `--kb-collapsible-content-height` variable (see app.css).
 //
-// The `source` prop is a loader function (not a static string) so each
-// demo's source file is itself only fetched on expansion. Pairs with the
-// registry's `() => import("./Demo.tsx?raw")` pattern.
+// Source loading stays lazy: shiki is only fetched once `open` flips true.
+// The source loader itself is also a function so the demo's raw .tsx
+// import is deferred until the user actually expands the block.
 //
 // Reactivity contract: when the surrounding route changes, AppShell hands
-// us a new `source` loader (pointing at the new demo's file). We must:
-//   1. Throw away the previously-highlighted HTML — otherwise the user
-//      navigates to demo B and still sees demo A's code.
-//   2. If the <details> is currently open, immediately re-fetch and
-//      re-highlight the new source.
-//   3. Cancel any in-flight highlight from the previous source so a slow
-//      response can't overwrite the new one.
-//
-// We treat <details> as uncontrolled: the browser owns its open state. An
-// `open` signal mirrors that state for the effect below, set via onToggle.
-// Persists across navigations naturally (the DOM element is reused), which
-// is the behavior you want — open stays open as you browse.
+// us a new `source` loader. We discard the prior highlight + re-fetch if
+// currently open, and cancel any in-flight previous request.
 // ---------------------------------------------------------------------------
 
 export type DemoSourceProps = {
@@ -37,9 +30,6 @@ export function DemoSource(props: DemoSourceProps) {
   const [error, setError] = createSignal<string | null>(null)
   const [open, setOpen] = createSignal(false)
 
-  // Re-runs whenever the `source` loader OR `open` signal changes. Solid's
-  // iteration-scoped onCleanup flips a cancelled flag so a previous run's
-  // async work can't write into the new run's signals.
   createEffect(() => {
     const loader = props.source
     const isOpen = open()
@@ -73,14 +63,24 @@ export function DemoSource(props: DemoSourceProps) {
           ])
         if (cancelled) return
         const highlighter = await createHighlighterCore({
-          themes: [import("shiki/themes/github-light.mjs")],
+          // Dual-theme load: Shiki emits inline-style CSS variables for
+          // BOTH light + dark variants in the same output. The active
+          // theme is selected by the `@media (prefers-color-scheme:
+          // dark)` rule in app.css — no JS toggle needed.
+          themes: [
+            import("shiki/themes/github-light.mjs"),
+            import("shiki/themes/github-dark.mjs"),
+          ],
           langs: [import("shiki/langs/tsx.mjs")],
           engine: createJavaScriptRegexEngine(),
         })
         if (cancelled) return
         const rendered = highlighter.codeToHtml(source, {
           lang: "tsx",
-          theme: "github-light",
+          themes: {
+            light: "github-light",
+            dark: "github-dark",
+          },
         })
         if (cancelled) return
         setHtml(rendered)
@@ -94,60 +94,44 @@ export function DemoSource(props: DemoSourceProps) {
   })
 
   return (
-    <details
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
-      style={{
-        "margin-top": "2.5rem",
-        "border-top": "1px solid #eee",
-        "padding-top": "1.25rem",
-      }}
+    <Collapsible
+      open={open()}
+      onOpenChange={setOpen}
+      class="mt-10 border-t border-border pt-5"
     >
-      <summary
-        style={{
-          cursor: "pointer",
-          "user-select": "none",
-          "font-size": "0.85rem",
-          "font-weight": 600,
-          color: "#555",
-          "letter-spacing": "0.02em",
-        }}
-      >
-        {props.filename ?? "View source"}
-      </summary>
-      <div
-        style={{
-          "margin-top": "0.75rem",
-          "border-radius": "8px",
-          overflow: "hidden",
-          border: "1px solid #eee",
-          "font-size": "0.8rem",
-          "line-height": 1.5,
-        }}
-      >
-        <Show
-          when={!loading() && !error() && html()}
-          fallback={<Placeholder loading={loading()} error={error()} />}
+      <Collapsible.Trigger class="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-sm font-semibold tracking-wide text-fg/85 hover:text-fg focus-visible:outline-2 focus-visible:outline-primary">
+        <span>{props.filename ?? "View source"}</span>
+        <motion.svg
+          viewBox="0 0 20 20"
+          class="h-4 w-4 text-muted"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          animate={{ rotate: open() ? 180 : 0 }}
+          transition={{ duration: 0.2 }}
         >
-          {/* Shiki's HTML is trusted output we generated ourselves from
-             the demo source — safe for Solid's `innerHTML` prop. */}
-          <div innerHTML={html() ?? ""} style={{ "max-height": "560px", "overflow-y": "auto" }} />
-        </Show>
-      </div>
-    </details>
+          <path d="M5 8l5 5 5-5" stroke-linecap="round" stroke-linejoin="round" />
+        </motion.svg>
+      </Collapsible.Trigger>
+      <Collapsible.Content class="kb-collapsible-animated overflow-hidden">
+        <div class="mt-3 overflow-hidden rounded-lg border border-border text-sm leading-relaxed">
+          <Show
+            when={!loading() && !error() && html()}
+            fallback={<Placeholder loading={loading()} error={error()} />}
+          >
+            {/* Shiki's HTML is trusted output we generated ourselves from
+               the demo source — safe for Solid's `innerHTML` prop. */}
+            <div innerHTML={html() ?? ""} class="max-h-[560px] overflow-y-auto" />
+          </Show>
+        </div>
+      </Collapsible.Content>
+    </Collapsible>
   )
 }
 
 function Placeholder(props: { loading: boolean; error: string | null }) {
   return (
-    <div
-      style={{
-        padding: "1rem",
-        background: "#fafafa",
-        color: "#777",
-        "font-family": "ui-monospace, monospace",
-        "font-size": "0.8rem",
-      }}
-    >
+    <div class="bg-surface p-4 font-mono text-sm text-muted">
       {props.error
         ? `couldn't load source: ${props.error}`
         : props.loading

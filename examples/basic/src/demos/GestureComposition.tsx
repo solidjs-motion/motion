@@ -23,7 +23,7 @@ export default function GestureComposition() {
   })
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Hover / press / Tab into the button below. Each gesture has its own variant; the state
         machine picks a winner per CSS property when multiple are active.
       </p>

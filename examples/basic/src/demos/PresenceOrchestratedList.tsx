@@ -32,7 +32,7 @@ export default function PresenceOrchestratedList() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Toggle to mount and unmount the list. The parent shell dictates the active label
         (<code>"open"</code> on enter, <code>"closed"</code> on exit) via{" "}
         <code>m.Provider</code>; passive children inherit that label and resolve their own
@@ -46,7 +46,7 @@ export default function PresenceOrchestratedList() {
       <div
         style={{
           "min-height": "260px",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
           "border-radius": "12px",
           padding: "1.5rem",
         }}
@@ -133,7 +133,7 @@ function Item(props: { index: number; label: string }) {
       {...motion({
         style: {
           padding: "0.6rem 0.85rem",
-          background: "white",
+          background: "var(--color-elevated)",
           "border-radius": "8px",
           border: "1px solid #e0e0e0",
           "font-family": "ui-monospace, monospace",
@@ -145,7 +145,7 @@ function Item(props: { index: number; label: string }) {
       })}
     >
       <span>{props.label}</span>
-      <span style={{ color: "#aaa", "font-size": "0.75rem" }}>#{props.index}</span>
+      <span style={{ color: "var(--color-muted)", "font-size": "0.75rem" }}>#{props.index}</span>
     </li>
   )
 }

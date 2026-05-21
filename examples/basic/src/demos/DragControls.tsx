@@ -26,7 +26,7 @@ export default function DragControlsDemo() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Press <strong>the handle button</strong> below and drag — the card to the right follows even
         though the pointer never touches it. <code>snapToCursor</code> centers the card under the
         pointer at drag-start.

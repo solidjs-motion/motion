@@ -34,7 +34,7 @@ export default function Pan() {
   // (booleans aren't animate-able, so we did not wrap it in a MotionValue).
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Drag inside the pad. The dot's hue is driven by <code>pan.offset.x</code> piped through{" "}
         <code>createTransform</code>.
       </p>
@@ -60,7 +60,7 @@ export default function Pan() {
               width: "60px",
               height: "60px",
               "border-radius": "50%",
-              background: "white",
+              background: "var(--color-elevated)",
               "box-shadow": "0 6px 18px rgba(0,0,0,0.2)",
             },
           })}
@@ -74,7 +74,7 @@ export default function Pan() {
           gap: "0.5rem 1.5rem",
           "font-family": "ui-monospace, monospace",
           "font-size": "0.85rem",
-          color: "#555",
+          color: "var(--color-muted)",
         }}
       >
         <dt>isPanning</dt>

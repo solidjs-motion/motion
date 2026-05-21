@@ -36,7 +36,7 @@ export default function PresenceList() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Add, remove, or clear all — each item runs its own enter/exit independently. Removed items
         animate to the right while surviving items stay put.
       </p>
@@ -57,7 +57,7 @@ export default function PresenceList() {
           padding: "1rem",
           margin: 0,
           "border-radius": "12px",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
           display: "grid",
           gap: "0.5rem",
           "min-height": "180px",
@@ -83,9 +83,9 @@ function Row(props: { item: Item }) {
       {...motion({
         style: {
           padding: "0.6rem 0.9rem",
-          background: "white",
+          background: "var(--color-elevated)",
           "border-radius": "8px",
-          border: "1px solid #eee",
+          border: "1px solid var(--color-border)",
           "border-left": `4px solid ${colorFor(props.item.id)}`,
           "font-family": "ui-monospace, monospace",
           "font-size": "0.9rem",
@@ -96,7 +96,7 @@ function Row(props: { item: Item }) {
       })}
     >
       <span>{props.item.label}</span>
-      <span style={{ color: "#aaa", "font-size": "0.75rem" }}>#{props.item.id}</span>
+      <span style={{ color: "var(--color-muted)", "font-size": "0.75rem" }}>#{props.item.id}</span>
     </li>
   )
 }

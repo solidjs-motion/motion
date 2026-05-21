@@ -26,7 +26,7 @@ export default function ScrollLinked() {
       >
         <div {...motion({ style: { height: "100%", background: "tomato" } })} />
       </div>
-      <p style={{ color: "#444", "margin-bottom": "2rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "2rem" }}>
         Scroll the page — the fixed bar at the top of the viewport tracks scrollYProgress from 0 to
         1.
       </p>
@@ -35,8 +35,8 @@ export default function ScrollLinked() {
           style={{
             padding: "1rem",
             "border-radius": "8px",
-            background: "#f0f0f0",
-            color: "#888",
+            background: "var(--color-surface)",
+            color: "var(--color-muted)",
           }}
         >
           Spacer content. The page is intentionally tall so the bar has somewhere to go.

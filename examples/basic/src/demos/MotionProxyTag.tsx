@@ -26,7 +26,7 @@ export default function MotionProxyTag() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Toggle the parent <code>&lt;motion.ul&gt;</code>. Each <code>&lt;motion.li&gt;</code> is a
         PASSIVE child — it only declares <code>variants</code>, no own <code>animate</code> label —
         and inherits the parent's <code>"open"</code> / <code>"closed"</code> via the auto-Provider
@@ -52,7 +52,7 @@ export default function MotionProxyTag() {
           padding: "1rem",
           margin: 0,
           "border-radius": "12px",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
           display: "grid",
           gap: "0.5rem",
         }}
@@ -98,9 +98,9 @@ function Item(props: { index: number; label: string }) {
       }}
       style={{
         padding: "0.5rem 0.75rem",
-        background: "white",
+        background: "var(--color-elevated)",
         "border-radius": "8px",
-        border: "1px solid #eee",
+        border: "1px solid var(--color-border)",
         "font-family": "ui-monospace, monospace",
         "font-size": "0.9rem",
       }}

@@ -41,7 +41,7 @@ export default function PresenceModalDialog() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Open the modal — backdrop and dialog share the <code>"open"</code> /{" "}
         <code>"closed"</code> / <code>"dropped"</code> label vocabulary. Toggling exit style
         switches which variant the children resolve when they unmount; the change takes effect
@@ -68,7 +68,7 @@ export default function PresenceModalDialog() {
       </div>
       <Show when={confirmed()}>
         {(msg) => (
-          <div style={{ color: "#666", "font-size": "0.85rem", "margin-bottom": "1rem" }}>
+          <div style={{ color: "var(--color-muted)", "font-size": "0.85rem", "margin-bottom": "1rem" }}>
             Last action: <code>{msg()}</code>
           </div>
         )}
@@ -77,7 +77,7 @@ export default function PresenceModalDialog() {
         style={{
           position: "relative",
           "min-height": "260px",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
           "border-radius": "12px",
           overflow: "hidden",
         }}
@@ -172,7 +172,7 @@ function Dialog(props: {
         {...motion({
           style: {
             "pointer-events": "auto",
-            background: "white",
+            background: "var(--color-elevated)",
             "border-radius": "12px",
             padding: "1.5rem",
             "max-width": "360px",
@@ -187,7 +187,7 @@ function Dialog(props: {
         </h3>
         <p
           style={{
-            color: "#666",
+            color: "var(--color-muted)",
             "font-size": "0.9rem",
             "line-height": 1.4,
             margin: "0 0 1.25rem",

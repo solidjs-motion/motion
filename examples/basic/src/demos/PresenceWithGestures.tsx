@@ -20,7 +20,7 @@ export default function PresenceWithGestures() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Hover and press the card to feel the gesture stack, then click "remove" to see the same card
         exit. All four targets (initial / animate / hover / press) compose with the new exit target.
       </p>

@@ -13,7 +13,7 @@ export default function PresenceFade() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Toggle the card. <code>&lt;Presence&gt;</code> keeps it mounted while the <code>exit</code>{" "}
         animation plays.
       </p>

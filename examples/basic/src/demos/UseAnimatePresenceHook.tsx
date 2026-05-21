@@ -36,7 +36,7 @@ export default function UseAnimatePresenceHook() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         "Save" runs the exit AND a fake 400ms network call in parallel. The card unmounts only after
         both settle — same shape every library-author uses for route transitions or async
         confirmation dialogs.
@@ -53,7 +53,7 @@ export default function UseAnimatePresenceHook() {
         <button type="button" class="demo-button" onClick={reset} disabled={mounted()}>
           reset
         </button>
-        <span style={{ "align-self": "center", color: "#888", "font-size": "0.85rem" }}>
+        <span style={{ "align-self": "center", color: "var(--color-muted)", "font-size": "0.85rem" }}>
           state: <strong>{savingState()}</strong>
         </span>
       </div>

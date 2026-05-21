@@ -94,7 +94,7 @@ export default function MotionProxyCreate() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         <code>MotionCard = motion.create(Card)</code>. The wrapped component keeps its own props (
         <code>title</code>, <code>tone</code>) and gains the full motion surface (
         <code>animate</code>, <code>hover</code>, <code>press</code>, etc.).

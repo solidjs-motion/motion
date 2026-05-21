@@ -17,7 +17,7 @@ import { useMotion } from "solidjs-motion"
 export default function InViewAndProvider() {
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Scroll down. Each card fades in once a small slice intersects the viewport. The label inside
         each card inherits the parent's animate state through <code>m.Provider</code> — no duplicate
         gesture wiring.
@@ -50,8 +50,8 @@ function Card(props: { index: number }) {
         style: {
           padding: "1.5rem",
           "border-radius": "12px",
-          background: "white",
-          border: "1px solid #eee",
+          background: "var(--color-elevated)",
+          border: "1px solid var(--color-border)",
           "box-shadow": "0 1px 2px rgba(0,0,0,0.04)",
         },
       })}

@@ -22,7 +22,7 @@ const FINE_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20)
 export default function InViewLiveRatio() {
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Scroll. Each card uses a 21-threshold array (5% steps), so the observer fires continuously
         as you scroll past — visible opacity and scale track
         <code> view.entry().intersectionRatio</code> live.
@@ -48,8 +48,8 @@ function Watcher(props: { index: number }) {
       style={{
         padding: "1.25rem",
         "border-radius": "12px",
-        background: "white",
-        border: "1px solid #eee",
+        background: "var(--color-elevated)",
+        border: "1px solid var(--color-border)",
         // Visual reads ratio() directly — with the fine array threshold,
         // this updates smoothly as the card scrolls through the viewport.
         opacity: 0.3 + 0.7 * ratio(),
@@ -62,7 +62,7 @@ function Watcher(props: { index: number }) {
         style={{
           "font-family": "ui-monospace, monospace",
           "font-size": "0.85rem",
-          color: "#666",
+          color: "var(--color-muted)",
         }}
       >
         isInView: <strong>{String(view.isInView())}</strong>

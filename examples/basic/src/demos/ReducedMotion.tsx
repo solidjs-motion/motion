@@ -10,13 +10,13 @@ export default function ReducedMotion() {
   const reduced = createReducedMotion()
   return (
     <div>
-      <p style={{ color: "#444" }}>
+      <p style={{ color: "var(--color-fg)" }}>
         Current system preference:&nbsp;
         <strong style={{ color: reduced() ? "#e52e71" : "#0a7" }}>
           {reduced() ? "reduce" : "no-preference"}
         </strong>
       </p>
-      <p style={{ color: "#777", "font-size": "0.875rem" }}>
+      <p style={{ color: "var(--color-muted)", "font-size": "0.875rem" }}>
         Wrap a subtree with <code>&lt;MotionConfig reducedMotion="user" /&gt;</code> to make every
         nested useMotion respect this pref automatically.
       </p>

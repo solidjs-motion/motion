@@ -78,8 +78,8 @@ export default function Drag() {
         style={{
           position: "relative",
           height: "300px",
-          background: "#f5f5f5",
-          border: "1px dashed #ccc",
+          background: "var(--color-surface)",
+          border: "1px dashed var(--color-border)",
           "border-radius": "12px",
           overflow: "hidden",
         }}
@@ -108,10 +108,10 @@ export default function Drag() {
 
 const controlStyle = {
   padding: "0.4rem 0.6rem",
-  border: "1px solid #ddd",
+  border: "1px solid var(--color-border)",
   "border-radius": "6px",
   font: "inherit",
-  background: "white",
+  background: "var(--color-elevated)",
 }
 
 function Field(props: { label: string; children: import("solid-js").JSX.Element }) {
@@ -121,7 +121,7 @@ function Field(props: { label: string; children: import("solid-js").JSX.Element 
   // input-with-text pairs do (which they handle internally).
   return (
     <div style={{ display: "flex", "flex-direction": "column", gap: "0.25rem" }}>
-      <span style={{ "font-size": "0.75rem", color: "#666" }}>{props.label}</span>
+      <span style={{ "font-size": "0.75rem", color: "var(--color-muted)" }}>{props.label}</span>
       {props.children}
     </div>
   )

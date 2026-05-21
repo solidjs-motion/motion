@@ -1,21 +1,23 @@
 import { A, useLocation } from "@solidjs/router"
-import { createMemo, For, type ParentProps, Show } from "solid-js"
+import { createMemo, createSignal, type ParentProps, Show } from "solid-js"
 import { DemoSource } from "../components/DemoSource"
 import { demos } from "../demos/registry"
+import { Hamburger } from "./Hamburger"
+import { MobileDrawer } from "./MobileDrawer"
+import { NavLinks } from "./NavLinks"
 
 // ---------------------------------------------------------------------------
-// AppShell — sidebar nav on the left, demo content on the right. The nav
-// reads from `demos/registry.ts`, grouped by phase. Routing is set up in
-// main.tsx; this component only renders chrome + the matched route's output.
+// AppShell — responsive chrome.
+//
+// Mobile (< md): sticky top app bar (hamburger + wordmark), nav lives in
+//   <MobileDrawer> (Kobalte Dialog + motion).
+// Desktop (md+):  persistent left sidebar, no top bar.
+//
+// stripBase / activeDemo: `useLocation().pathname` may return paths with
+// or without the deploy prefix depending on solid-router internals. The
+// strip is a no-op when the path is already base-less.
 // ---------------------------------------------------------------------------
 
-// Solid Router's <Router base="..."> only affects routing/link resolution
-// — `useLocation().pathname` still exposes the FULL path including the base
-// (`/motion/fade-in` rather than `/fade-in`). Registry entries are declared
-// base-less (e.g. path: "/fade-in") so anything matching pathname against
-// `d.path` has to strip the configured base first. The base is injected by
-// `vite.define` in app.config.ts ("/motion/" in production, "/" in dev) —
-// see app.tsx for why `import.meta.env.BASE_URL` doesn't work here.
 const ROUTER_BASE = __DEPLOY_BASE__.replace(/\/$/, "")
 
 function stripBase(pathname: string): string {
@@ -27,117 +29,56 @@ function stripBase(pathname: string): string {
 
 export function AppShell(props: ParentProps) {
   const location = useLocation()
-  const grouped = createMemo(() => ({
-    phase1: demos.filter((d) => d.phase === 1),
-    phase2: demos.filter((d) => d.phase === 2),
-    phase3: demos.filter((d) => d.phase === 3),
-    phase4: demos.filter((d) => d.phase === 4),
-  }))
   const activeDemo = createMemo(() => {
     const path = stripBase(location.pathname)
     return demos.find((d) => d.path === path)
   })
+  const [drawerOpen, setDrawerOpen] = createSignal(false)
 
   return (
-    <div
-      style={{
-        display: "grid",
-        "grid-template-columns": "240px 1fr",
-        "min-height": "100vh",
-        "font-family": "system-ui, sans-serif",
-        color: "#111",
-      }}
-    >
-      <aside
-        style={{
-          "border-right": "1px solid #eee",
-          background: "#fafafa",
-          padding: "1.5rem 1rem",
-          "overflow-y": "auto",
-        }}
-      >
-        <A
-          href="/"
-          style={{
-            display: "block",
-            "font-weight": 700,
-            "font-size": "1rem",
-            color: "#111",
-            "text-decoration": "none",
-            "margin-bottom": "1.5rem",
-          }}
-        >
-          solidjs-motion
+    <div class="min-h-screen bg-bg font-sans text-fg">
+      {/* Mobile top app bar — hidden on md+ */}
+      <header class="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-bg/95 px-3 backdrop-blur md:hidden">
+        <MobileDrawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          trigger={(state) => <Hamburger state={state} />}
+        />
+        <A href="/" class="font-semibold no-underline">
+          <span class="text-primary">solidjs-</span>
+          <span class="border-b-2 border-accent text-primary">motion</span>
         </A>
-        <NavGroup title="Phase 1" entries={grouped().phase1} />
-        <NavGroup title="Phase 2" entries={grouped().phase2} />
-        <NavGroup title="Phase 3" entries={grouped().phase3} />
-        <NavGroup title="Phase 4" entries={grouped().phase4} />
-      </aside>
-      <main style={{ padding: "2.5rem 3rem", "max-width": "880px" }}>
-        <Show when={activeDemo()}>
-          {(demo) => (
-            <header style={{ "margin-bottom": "2rem" }}>
-              <h1 style={{ "font-size": "1.75rem", "font-weight": 600, margin: "0 0 0.5rem" }}>
-                {demo().title}
-              </h1>
-              <p style={{ color: "#555", margin: 0 }}>{demo().blurb}</p>
-            </header>
-          )}
-        </Show>
-        {props.children}
-        <Show when={activeDemo()}>
-          {(demo) => <DemoSource source={demo().source} filename={demo().filename} />}
-        </Show>
-      </main>
-    </div>
-  )
-}
+      </header>
 
-function NavGroup(props: { title: string; entries: typeof demos }) {
-  // Active style is driven from `useLocation` rather than an activeClass CSS
-  // rule — biome flags the `!important` needed to beat <A>'s inline styles,
-  // so we compute the merged style per link here instead.
-  const location = useLocation()
-  return (
-    <nav style={{ "margin-bottom": "1.5rem" }}>
-      <div
-        style={{
-          "font-size": "0.7rem",
-          "text-transform": "uppercase",
-          "letter-spacing": "0.08em",
-          color: "#888",
-          "margin-bottom": "0.5rem",
-        }}
-      >
-        {props.title}
+      <div class="flex">
+        {/* Desktop sidebar — hidden on mobile */}
+        <aside class="sticky top-0 hidden h-screen w-60 shrink-0 overflow-y-auto border-r border-border bg-surface px-4 py-6 md:block">
+          <A href="/" class="mb-6 block text-base font-bold no-underline">
+            <span class="text-primary">solidjs-</span>
+            <span class="border-b-2 border-accent text-primary">motion</span>
+          </A>
+          <NavLinks />
+        </aside>
+
+        <main class="flex-1 px-4 py-6 md:px-12 md:py-10">
+          <div class="mx-auto max-w-3xl">
+            <Show when={activeDemo()}>
+              {(demo) => (
+                <header class="mb-8">
+                  <h1 class="m-0 mb-2 text-2xl font-semibold tracking-tight md:text-3xl">
+                    {demo().title}
+                  </h1>
+                  <p class="m-0 text-muted">{demo().blurb}</p>
+                </header>
+              )}
+            </Show>
+            {props.children}
+            <Show when={activeDemo()}>
+              {(demo) => <DemoSource source={demo().source} filename={demo().filename} />}
+            </Show>
+          </div>
+        </main>
       </div>
-      <ul style={{ "list-style": "none", padding: 0, margin: 0 }}>
-        <For each={props.entries}>
-          {(entry) => {
-            const isActive = createMemo(() => stripBase(location.pathname) === entry.path)
-            return (
-              <li style={{ "margin-bottom": "0.25rem" }}>
-                <A
-                  href={entry.path}
-                  end
-                  style={{
-                    display: "block",
-                    padding: "0.4rem 0.6rem",
-                    "border-radius": "6px",
-                    "text-decoration": "none",
-                    "font-size": "0.9rem",
-                    background: isActive() ? "#111" : "transparent",
-                    color: isActive() ? "white" : "#333",
-                  }}
-                >
-                  {entry.title}
-                </A>
-              </li>
-            )
-          }}
-        </For>
-      </ul>
-    </nav>
+    </div>
   )
 }

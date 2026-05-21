@@ -35,7 +35,7 @@ export default function VariantOrchestration() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Toggle the parent below. Each <code>&lt;Item&gt;</code> inherits the parent's variant label
         via <code>m.Provider</code>, and its dynamic variant uses <code>custom</code> (the index) to
         compute a staggered <code>delay</code>.
@@ -55,7 +55,7 @@ export default function VariantOrchestration() {
             padding: "1rem",
             margin: 0,
             "border-radius": "12px",
-            background: "#f5f5f5",
+            background: "var(--color-surface)",
             display: "grid",
             gap: "0.5rem",
           },
@@ -111,9 +111,9 @@ function Item(props: { index: number; label: string }) {
       {...m({
         style: {
           padding: "0.5rem 0.75rem",
-          background: "white",
+          background: "var(--color-elevated)",
           "border-radius": "8px",
-          border: "1px solid #eee",
+          border: "1px solid var(--color-border)",
           "font-family": "ui-monospace, monospace",
           "font-size": "0.9rem",
         },

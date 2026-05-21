@@ -35,7 +35,7 @@ export default function PresenceInitialFalse() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Reload the page and watch the two columns. With{" "}
         <code>&lt;Presence initial={"{false}"}&gt;</code> the initial children appear instantly
         (painted at the animate target); without it they cascade in. Adding items mid-life
@@ -76,7 +76,7 @@ function Column(props: {
       <div style={{ "font-family": "ui-monospace, monospace", "font-size": "0.85rem" }}>
         {props.title}
       </div>
-      <div style={{ color: "#888", "font-size": "0.75rem", "margin-bottom": "0.5rem" }}>
+      <div style={{ color: "var(--color-muted)", "font-size": "0.75rem", "margin-bottom": "0.5rem" }}>
         {props.subtitle}
       </div>
       <div style={{ display: "flex", gap: "0.35rem", "margin-bottom": "0.75rem" }}>
@@ -104,7 +104,7 @@ function Column(props: {
           padding: "0.75rem",
           margin: 0,
           "border-radius": "10px",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
           display: "grid",
           gap: "0.4rem",
           "min-height": "120px",
@@ -130,7 +130,7 @@ function Pill(props: { text: string }) {
       {...motion({
         style: {
           padding: "0.4rem 0.7rem",
-          background: "white",
+          background: "var(--color-elevated)",
           "border-radius": "6px",
           border: "1px solid #e0e0e0",
           "font-size": "0.85rem",

@@ -27,7 +27,7 @@ export default function PresenceWaitMode() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         One button drives both strips. <strong>sync</strong> on top: panels cross paths in the
         middle of the strip (both visible at once). <strong>wait</strong> on bottom: panel fully
         leaves before the next arrives (only one visible at a time, twice as long total).
@@ -45,7 +45,7 @@ export default function PresenceWaitMode() {
             "align-self": "center",
             "font-family": "ui-monospace, monospace",
             "font-size": "0.8rem",
-            color: "#888",
+            color: "var(--color-muted)",
           }}
         >
           page {pageIdx() + 1} / {PAGES.length}
@@ -70,7 +70,7 @@ function Strip(props: {
         style={{
           "font-family": "ui-monospace, monospace",
           "font-size": "0.8rem",
-          color: "#666",
+          color: "var(--color-muted)",
           "margin-bottom": "0.4rem",
         }}
       >
@@ -82,7 +82,7 @@ function Strip(props: {
           height: "140px",
           "border-radius": "12px",
           overflow: "hidden",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
         }}
       >
         <Presence mode={props.mode}>

@@ -51,7 +51,7 @@ export default function PresenceToastQueue() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Fire toasts; they slide in from the right and auto-dismiss after 4 seconds (or click any
         toast to dismiss early). Burst is staggered so each toast is visually distinct, and{" "}
         <code>exitMethod="keep-index"</code> keeps the dismissed toast in place while it fades
@@ -72,7 +72,7 @@ export default function PresenceToastQueue() {
             "align-self": "center",
             "font-family": "ui-monospace, monospace",
             "font-size": "0.8rem",
-            color: "#64748b",
+            color: "var(--color-muted)",
           }}
         >
           {toasts().length} active

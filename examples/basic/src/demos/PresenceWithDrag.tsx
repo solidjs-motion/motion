@@ -17,7 +17,7 @@ export default function PresenceWithDrag() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Drag the card around, then click "remove". Exit's translation wins over drag's claim — the
         card glides off to the right regardless of where you left it.
       </p>
@@ -30,7 +30,7 @@ export default function PresenceWithDrag() {
         style={{
           position: "relative",
           "min-height": "200px",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
           "border-radius": "12px",
           padding: "1.5rem",
           overflow: "hidden",

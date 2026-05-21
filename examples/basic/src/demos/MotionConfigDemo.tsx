@@ -29,7 +29,7 @@ export default function MotionConfigDemo() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Three boxes share their transition default via{" "}
         <code>&lt;MotionConfig transition={"{...}"}&gt;</code>. Change the preset and every box
         picks up the new physics — no per-box wiring needed.
@@ -42,7 +42,7 @@ export default function MotionConfigDemo() {
               onClick={() => setPreset(p)}
               style={{
                 padding: "0.4rem 0.8rem",
-                border: "1px solid #ddd",
+                border: "1px solid var(--color-border)",
                 "border-radius": "6px",
                 background: preset() === p ? "#111" : "white",
                 color: preset() === p ? "white" : "#333",

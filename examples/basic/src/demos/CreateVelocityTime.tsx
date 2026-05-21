@@ -51,7 +51,7 @@ export default function CreateVelocityTime() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1.5rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1.5rem" }}>
         <strong>Top:</strong> <code>createTime()</code> drives a sine-wave x position;
         <code>createVelocity()</code> on that x rotates the box — tilting in the direction of
         motion.
@@ -65,7 +65,7 @@ export default function CreateVelocityTime() {
           style={{
             height: "120px",
             "border-radius": "12px",
-            background: "#f5f5f5",
+            background: "var(--color-surface)",
             display: "grid",
             "place-items": "center",
             position: "relative",
@@ -96,7 +96,7 @@ export default function CreateVelocityTime() {
           style={{
             height: "120px",
             "border-radius": "12px",
-            background: "#f5f5f5",
+            background: "var(--color-surface)",
             display: "grid",
             "place-items": "center",
           }}
@@ -156,7 +156,7 @@ function Section(props: { title: string; children: import("solid-js").JSX.Elemen
           "font-size": "0.85rem",
           "text-transform": "uppercase",
           "letter-spacing": "0.08em",
-          color: "#888",
+          color: "var(--color-muted)",
           margin: "0 0 0.75rem",
           "font-weight": 600,
         }}
@@ -177,12 +177,12 @@ function ReadoutRow(props: { values: Array<{ label: string; value: string }> }) 
         "margin-top": "0.75rem",
         "font-family": "ui-monospace, monospace",
         "font-size": "0.85rem",
-        color: "#555",
+        color: "var(--color-muted)",
       }}
     >
       {props.values.map((v) => (
         <div>
-          <span style={{ color: "#999" }}>{v.label}:</span> {v.value}
+          <span style={{ color: "var(--color-muted)" }}>{v.label}:</span> {v.value}
         </div>
       ))}
     </div>

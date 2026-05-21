@@ -24,7 +24,7 @@ export default function Landing() {
       >
         solidjs-motion is alive
       </h1>
-      <p style={{ color: "#555", margin: "0 0 2rem" }}>
+      <p style={{ color: "var(--color-muted)", margin: "0 0 2rem" }}>
         SolidJS port of motion/react. Pick a demo from the sidebar — or any card below.
       </p>
       <div
@@ -57,10 +57,10 @@ function DemoCard(props: { demo: (typeof demos)[number] }) {
       <article
         {...cardMotion({
           style: {
-            border: "1px solid #eee",
+            border: "1px solid var(--color-border)",
             "border-radius": "10px",
             padding: "1rem",
-            background: "white",
+            background: "var(--color-elevated)",
             cursor: "pointer",
           },
         })}
@@ -70,14 +70,14 @@ function DemoCard(props: { demo: (typeof demos)[number] }) {
             "font-size": "0.7rem",
             "text-transform": "uppercase",
             "letter-spacing": "0.08em",
-            color: "#888",
+            color: "var(--color-muted)",
             "margin-bottom": "0.5rem",
           }}
         >
           Phase {props.demo.phase}
         </div>
         <div style={{ "font-weight": 600, "margin-bottom": "0.25rem" }}>{props.demo.title}</div>
-        <div style={{ color: "#666", "font-size": "0.85rem", "line-height": 1.4 }}>
+        <div style={{ color: "var(--color-muted)", "font-size": "0.85rem", "line-height": 1.4 }}>
           {props.demo.blurb}
         </div>
       </article>

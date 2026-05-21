@@ -221,7 +221,7 @@ export default function SierpinskiTriangle(): JSX.Element {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Every dot is a <code>&lt;motion.div&gt;</code> with{" "}
         <code>style=&#123;&#123; scale: sharedMV &#125;&#125;</code> subscribing to one shared{" "}
         <code>createMotionValue</code> driven by a sine pulse. Each dot also renders the seconds
@@ -272,7 +272,7 @@ export default function SierpinskiTriangle(): JSX.Element {
           width: `${CONTAINER_W}px`,
           height: `${CONTAINER_H}px`,
           "max-width": "100%",
-          background: "#fafafa",
+          background: "var(--color-surface)",
           border: "1px solid #e5e5e5",
           "border-radius": "8px",
           overflow: "hidden",

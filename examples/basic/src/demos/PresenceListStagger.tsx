@@ -42,7 +42,7 @@ export default function PresenceListStagger() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Per-item exits with cascading delays computed from <code>custom</code>. Enter forward, exit
         reverse — the list rolls in and unrolls out.
       </p>

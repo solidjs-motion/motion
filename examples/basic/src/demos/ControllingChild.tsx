@@ -29,7 +29,7 @@ export default function ControllingChild() {
     initial: "idle",
     animate: active() ? "active" : "idle",
     variants: {
-      idle: { "background-color": "#eef" },
+      idle: { "background-color": "var(--color-surface)" },
       active: { "background-color": "#e3f2fd" },
     },
     transition: { duration: 0.3 },
@@ -37,7 +37,7 @@ export default function ControllingChild() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Toggle the parent. The <strong>passive child</strong> (no animate prop) inherits the
         parent's label and follows along. The <strong>controlling child</strong> has its own{" "}
         <code>animate: "rest"</code> and opts out — the cascade stops there.

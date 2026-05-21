@@ -45,7 +45,7 @@ export default function PresenceImageStack() {
 
   return (
     <div>
-      <p style={{ color: "#444", "margin-bottom": "1rem" }}>
+      <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Drag the top card past the edge, or use the buttons. The exit's <code>x</code> tracks the
         swipe direction; the next card promotes into place.
       </p>
@@ -61,7 +61,7 @@ export default function PresenceImageStack() {
         style={{
           position: "relative",
           height: "260px",
-          background: "#f5f5f5",
+          background: "var(--color-surface)",
           "border-radius": "16px",
           display: "flex",
           "align-items": "center",
