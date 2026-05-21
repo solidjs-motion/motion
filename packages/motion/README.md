@@ -46,6 +46,297 @@ export function Card() {
 with motion's initial styles; user refs and motion's ref both fire; the initial style is
 serialized into SSR HTML so the first paint is flicker-free.
 
+## Recipes
+
+### 1. Reactive options
+
+Pass a function to `useMotion` to track Solid signals inside the target.
+
+```tsx
+import { useMotion } from "solidjs-motion"
+import { createSignal } from "solid-js"
+
+export function Toggle() {
+  const [open, setOpen] = createSignal(false)
+  const motion = useMotion(() => ({
+    animate: { rotate: open() ? 180 : 0 },
+    transition: { duration: 0.3 },
+  }))
+  return (
+    <button onClick={() => setOpen((p) => !p)} {...motion()}>
+      ↑
+    </button>
+  )
+}
+```
+
+### 2. `<motion.X>` proxy with variants
+
+Every HTML/SVG tag is reachable off `motion`. Variant labels on the parent cascade to
+descendants through `m.Provider` (auto-installed by the proxy).
+
+```tsx
+import { motion } from "solidjs-motion"
+
+const variants = {
+  rest: { y: 0, scale: 1 },
+  lift: { y: -8, scale: 1.04 },
+}
+
+export function Card() {
+  return (
+    <motion.article animate="rest" hover="lift" variants={variants}>
+      <motion.h2 variants={variants}>Inherits lift on hover</motion.h2>
+    </motion.article>
+  )
+}
+```
+
+### 3. `motion.create(Component)` HOC
+
+Wrap a custom component to make it motion-aware. The wrapped component must spread its
+props (including `ref`) onto a single DOM-element root.
+
+```tsx
+import { motion } from "solidjs-motion"
+import type { ComponentProps } from "solid-js"
+
+function Button(props: ComponentProps<"button">) {
+  return <button {...props} class={`btn ${props.class ?? ""}`} />
+}
+
+const MotionButton = motion.create(Button)
+
+export function Stage() {
+  return (
+    <MotionButton hover={{ scale: 1.05 }} press={{ scale: 0.95 }}>
+      Press me
+    </MotionButton>
+  )
+}
+```
+
+### 4. MotionValues + `createTransform`
+
+MotionValues are the source of truth for animated state. They're both Solid Accessors and
+upstream `MotionValue`s — drop them straight into `style`.
+
+```tsx
+import { motion, createMotionValue, createTransform } from "solidjs-motion"
+
+export function FadeSlider() {
+  const x = createMotionValue(0)
+  const opacity = createTransform(x, [-100, 0, 100], [0, 1, 0])
+  return (
+    <motion.div
+      drag="x"
+      dragConstraints={{ left: -100, right: 100 }}
+      style={{ x, opacity }}
+    >
+      Drag me
+    </motion.div>
+  )
+}
+```
+
+### 5. Spring-smoothed pointer
+
+`createSpring` mirrors any numeric input with physics smoothing.
+
+```tsx
+import { motion, createMotionValue, createSpring } from "solidjs-motion"
+import { onCleanup, onMount } from "solid-js"
+
+export function Cursor() {
+  const x = createMotionValue(0)
+  const y = createMotionValue(0)
+  const sx = createSpring(x, { stiffness: 200, damping: 30 })
+  const sy = createSpring(y, { stiffness: 200, damping: 30 })
+
+  onMount(() => {
+    const move = (e: PointerEvent) => {
+      x.set(e.clientX)
+      y.set(e.clientY)
+    }
+    window.addEventListener("pointermove", move)
+    onCleanup(() => window.removeEventListener("pointermove", move))
+  })
+
+  return <motion.div class="cursor" style={{ x: sx, y: sy }} />
+}
+```
+
+### 6. Scroll-linked progress bar
+
+```tsx
+import { motion, createScroll, createTransform } from "solidjs-motion"
+
+export function ProgressBar() {
+  const { scrollYProgress } = createScroll()
+  const width = createTransform(scrollYProgress, [0, 1], ["0%", "100%"])
+  return <motion.div class="progress" style={{ width }} />
+}
+```
+
+### 7. Viewport-triggered fade-in
+
+```tsx
+import { motion } from "solidjs-motion"
+
+export function FadeInOnce() {
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 40 }}
+      inView={{ opacity: 1, y: 0 }}
+      inViewOptions={{ once: true, margin: "0px 0px -10% 0px" }}
+    >
+      Comes in once, stays.
+    </motion.section>
+  )
+}
+```
+
+### 8. `createTemplate` for interpolated strings
+
+Build a `MotionValue<string>` from interpolated MVs/Accessors — feed it to any string-valued
+CSS property.
+
+```tsx
+import { motion, createMotionValue, createTemplate } from "solidjs-motion"
+
+export function GradientBox() {
+  const angle = createMotionValue(0)
+  const background = createTemplate`linear-gradient(${angle}deg, #f0f, #0ff)`
+  return (
+    <motion.div
+      hover={{ rotate: 360 }}
+      transition={{ duration: 2 }}
+      style={{ background }}
+    />
+  )
+}
+```
+
+### 9. `<Presence>` for exit animations
+
+Wrap a conditionally-rendered child to animate its exit before unmount.
+
+```tsx
+import { motion, Presence } from "solidjs-motion"
+import { Show, createSignal } from "solid-js"
+
+export function Drawer() {
+  const [open, setOpen] = createSignal(false)
+  return (
+    <>
+      <button onClick={() => setOpen((p) => !p)}>Toggle</button>
+      <Presence>
+        <Show when={open()}>
+          <motion.aside
+            initial={{ x: -300 }}
+            animate={{ x: 0 }}
+            exit={{ x: -300 }}
+            transition={{ duration: 0.25 }}
+          >
+            Drawer content
+          </motion.aside>
+        </Show>
+      </Presence>
+    </>
+  )
+}
+```
+
+### 10. `mode="wait"` + list exits
+
+`mode="wait"` plays the outgoing child's `exit` fully before the incoming child enters.
+For lists, `Presence` wraps a `<For>` and animates add/remove together.
+
+```tsx
+import { motion, Presence } from "solidjs-motion"
+import { For, Show, createSignal } from "solid-js"
+
+export function Tabs() {
+  const [tab, setTab] = createSignal("a")
+  return (
+    <Presence mode="wait">
+      <Show when={tab()} keyed>
+        {(t) => (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+          >
+            Tab {t}
+          </motion.div>
+        )}
+      </Show>
+    </Presence>
+  )
+}
+
+export function Notifications(props: { items: () => string[] }) {
+  return (
+    <Presence>
+      <For each={props.items()}>
+        {(msg) => (
+          <motion.li
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 16 }}
+          >
+            {msg}
+          </motion.li>
+        )}
+      </For>
+    </Presence>
+  )
+}
+```
+
+### 11. Drag with constraints
+
+`dragConstraints` accepts numeric bounds or a parent ref. `dragElastic` controls overshoot.
+
+```tsx
+import { motion } from "solidjs-motion"
+
+export function DraggableCard() {
+  let bounds!: HTMLDivElement
+  return (
+    <div ref={bounds} class="bounds">
+      <motion.div
+        drag
+        dragConstraints={bounds}
+        dragElastic={0.2}
+        whileDrag={{ scale: 1.05 }}
+      >
+        Drag inside
+      </motion.div>
+    </div>
+  )
+}
+```
+
+### 12. `<MotionConfig>` + reduced motion
+
+`<MotionConfig>` flows defaults (transition, reduced-motion mode, CSP nonce) to descendants.
+`createReducedMotion()` reads the system preference directly.
+
+```tsx
+import { MotionConfig, createReducedMotion, motion } from "solidjs-motion"
+
+export function App() {
+  const reduced = createReducedMotion()
+  return (
+    <MotionConfig reducedMotion="user" transition={{ duration: 0.4, ease: "easeOut" }}>
+      <motion.div animate={{ x: 100 }}>Honors `prefers-reduced-motion`</motion.div>
+      <p>System reduced-motion: {String(reduced())}</p>
+    </MotionConfig>
+  )
+}
+```
+
 ## Roadmap
 
 ### Shipped
