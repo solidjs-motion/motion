@@ -32,7 +32,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist node_modules",
     "publish:npm": "bun run build && npm publish --access public",
-    "publish:jsr": "bunx jsr publish"
+    "publish:jsr": "bunx jsr publish --token $JSR_TOKEN"
   },
   "peerDependencies": {
     "solid-js": "^1.9.0",
