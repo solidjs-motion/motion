@@ -100,7 +100,20 @@ export function DemoSource(props: DemoSourceProps) {
       class="mt-10 border-t border-border pt-5"
     >
       <Collapsible.Trigger class="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-sm font-semibold tracking-wide text-fg/85 hover:text-fg focus-visible:outline-2 focus-visible:outline-primary">
-        <span>{props.filename ?? "View source"}</span>
+        {/*
+          The label tucks down ~3px and back to 0 on open — a small
+          "the content arrived" beat that reinforces the chevron flip
+          and the height expansion. Keyframe array [-3, 0] means motion
+          plays through both stops; when `open` toggles back to false
+          the value just lands at 0 instantly (no spring back). Same
+          easing as the chevron rotate so the two move together.
+        */}
+        <motion.span
+          animate={{ y: open() ? [-3, 0] : 0 }}
+          transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+        >
+          {props.filename ?? "View source"}
+        </motion.span>
         <motion.svg
           viewBox="0 0 20 20"
           class="h-4 w-4 text-muted"

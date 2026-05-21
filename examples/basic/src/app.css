@@ -173,14 +173,21 @@
   border: 1px solid var(--color-border);
   border-radius: 6px;
   cursor: pointer;
+  /* Spring-like cubic-bezier on `transform` so the press-down has the
+   * same "feel" as motion's stiff springs (overshoot-free, fast settle).
+   */
   transition:
     background-color 0.15s ease,
     border-color 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    transform 0.12s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .demo-button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-primary) 8%, var(--color-elevated));
   border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+}
+.demo-button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .demo-button:disabled {
   opacity: 0.5;

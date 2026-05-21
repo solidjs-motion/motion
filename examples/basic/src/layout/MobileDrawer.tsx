@@ -3,6 +3,7 @@ import type { JSX } from "solid-js"
 import { Show } from "solid-js"
 import { createDragControls, motion, type PanInfo, Presence } from "solidjs-motion"
 import { NavLinks } from "./NavLinks"
+import { Wordmark } from "./Wordmark"
 
 // ---------------------------------------------------------------------------
 // MobileDrawer — Kobalte Dialog as the a11y/portal/focus shell, motion as
@@ -151,8 +152,7 @@ function DrawerSurface(props: { onClose: () => void }) {
         >
           <div class="flex items-center justify-between border-b border-border-soft px-4 py-3">
             <Dialog.Title class="text-base font-semibold">
-              <span class="text-primary">solidjs-</span>
-              <span class="border-b-2 border-accent text-primary">motion</span>
+              <Wordmark />
             </Dialog.Title>
             <Dialog.CloseButton
               class="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-primary/10 hover:text-fg focus-visible:outline-2 focus-visible:outline-primary"

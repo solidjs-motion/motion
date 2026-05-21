@@ -74,7 +74,7 @@ function NavGroup(props: {
                   href={entry.path}
                   end
                   onClick={() => props.onNavigate?.()}
-                  class="relative block rounded-md py-2 pl-4 pr-3 text-sm no-underline transition-colors"
+                  class="group relative block rounded-md py-2 pl-4 pr-3 text-sm no-underline transition-colors"
                   classList={{
                     "bg-active text-white font-medium shadow-sm": isActive(),
                     "text-fg/85 hover:bg-primary/10 hover:text-fg": !isActive(),
@@ -83,7 +83,20 @@ function NavGroup(props: {
                   {/* Active-state stripe — accent-color marker pinned
                       inside the left edge. Inset slightly top/bottom so
                       it doesn't reach the pill's rounded corners. */}
-                  <Show when={isActive()}>
+                  <Show
+                    when={isActive()}
+                    fallback={
+                      // Ghost stripe on inactive links: scaleY 0 by
+                      // default, scales to 1 on group-hover. Telegraphs
+                      // "this is what active looks like" without
+                      // committing — and gives every hover a small
+                      // beat of motion.
+                      <span
+                        aria-hidden="true"
+                        class="pointer-events-none absolute inset-y-1.5 left-1.5 w-1 origin-center scale-y-0 rounded-full bg-accent/55 transition-transform duration-150 ease-out group-hover:scale-y-100"
+                      />
+                    }
+                  >
                     <span class="pointer-events-none absolute inset-y-1.5 left-1.5 w-1 rounded-full bg-accent" />
                   </Show>
                   {entry.title}

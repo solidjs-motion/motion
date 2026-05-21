@@ -1,10 +1,12 @@
 import { A, useLocation } from "@solidjs/router"
 import { createMemo, createSignal, type ParentProps, Show } from "solid-js"
+import { motion, Presence } from "solidjs-motion"
 import { DemoSource } from "../components/DemoSource"
 import { demos } from "../demos/registry"
 import { Hamburger } from "./Hamburger"
 import { MobileDrawer } from "./MobileDrawer"
 import { NavLinks } from "./NavLinks"
+import { Wordmark } from "./Wordmark"
 
 // ---------------------------------------------------------------------------
 // AppShell — responsive chrome.
@@ -45,8 +47,7 @@ export function AppShell(props: ParentProps) {
           trigger={(state) => <Hamburger state={state} />}
         />
         <A href="/" class="font-semibold no-underline">
-          <span class="text-primary">solidjs-</span>
-          <span class="border-b-2 border-accent text-primary">motion</span>
+          <Wordmark />
         </A>
       </header>
 
@@ -54,28 +55,49 @@ export function AppShell(props: ParentProps) {
         {/* Desktop sidebar — hidden on mobile */}
         <aside class="sticky top-0 hidden h-screen w-60 shrink-0 overflow-y-auto border-r border-border bg-surface px-4 py-6 md:block">
           <A href="/" class="mb-6 block text-base font-bold no-underline">
-            <span class="text-primary">solidjs-</span>
-            <span class="border-b-2 border-accent text-primary">motion</span>
+            <Wordmark />
           </A>
           <NavLinks />
         </aside>
 
         <main class="flex-1 px-4 py-6 md:px-12 md:py-10">
           <div class="mx-auto max-w-3xl">
-            <Show when={activeDemo()}>
-              {(demo) => (
-                <header class="mb-8">
-                  <h1 class="m-0 mb-2 text-2xl font-semibold tracking-tight md:text-3xl">
-                    {demo().title}
-                  </h1>
-                  <p class="m-0 text-muted">{demo().blurb}</p>
-                </header>
-              )}
-            </Show>
-            {props.children}
-            <Show when={activeDemo()}>
-              {(demo) => <DemoSource source={demo().source} filename={demo().filename} />}
-            </Show>
+            {/*
+              Per-route page transition. `<Presence mode="wait">` keyed on
+              the route path remounts a fresh <motion.div> on every
+              navigation; the outgoing one exits before the incoming one
+              enters. Subtle y-lift (8 → 0) + fade gives every nav click
+              a "the new demo just arrived" beat without delaying perceived
+              load. Title + blurb + DemoSource ride inside, so they also
+              re-enter together.
+            */}
+            <Presence mode="wait">
+              <Show when={location.pathname} keyed>
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1], delayChildren: 0.5 }}
+                >
+                  <Show when={activeDemo()}>
+                    {(demo) => (
+                      <header class="mb-8">
+                        <h1 class="m-0 mb-2 text-2xl font-semibold tracking-tight md:text-3xl">
+                          {demo().title}
+                        </h1>
+                        <p class="m-0 text-muted">{demo().blurb}</p>
+                      </header>
+                    )}
+                  </Show>
+                  {props.children}
+                  <Show when={activeDemo()}>
+                    {(demo) => (
+                      <DemoSource source={demo().source} filename={demo().filename} />
+                    )}
+                  </Show>
+                </motion.div>
+              </Show>
+            </Presence>
           </div>
         </main>
       </div>
