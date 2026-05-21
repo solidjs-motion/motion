@@ -13,9 +13,10 @@ import { demos } from "../demos/registry"
 // — `useLocation().pathname` still exposes the FULL path including the base
 // (`/motion/fade-in` rather than `/fade-in`). Registry entries are declared
 // base-less (e.g. path: "/fade-in") so anything matching pathname against
-// `d.path` has to strip the configured base first. Vite gives us the base
-// via `import.meta.env.BASE_URL` (e.g. "/motion/" in production, "/" in dev).
-const ROUTER_BASE = import.meta.env.BASE_URL.replace(/\/$/, "")
+// `d.path` has to strip the configured base first. The base is injected by
+// `vite.define` in app.config.ts ("/motion/" in production, "/" in dev) —
+// see app.tsx for why `import.meta.env.BASE_URL` doesn't work here.
+const ROUTER_BASE = __DEPLOY_BASE__.replace(/\/$/, "")
 
 function stripBase(pathname: string): string {
   if (ROUTER_BASE && pathname.startsWith(ROUTER_BASE)) {

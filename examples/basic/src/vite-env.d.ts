@@ -13,3 +13,10 @@ declare module "*.ts?raw" {
   const src: string
   export default src
 }
+
+// Injected at build time by app.config.ts (`vite.define`). Holds the
+// deploy base path (e.g. "/motion/" on GitHub Pages, "/" in dev) for the
+// client-side Router. We can't use `import.meta.env.BASE_URL` for this:
+// Vinxi resolves that to its asset-bundle path ("/motion/_build"), not
+// the app's URL prefix.
+declare const __DEPLOY_BASE__: string

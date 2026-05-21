@@ -15,12 +15,14 @@ import { AppShell } from "./layout/AppShell"
 // `<Router base>` must reflect the deploy subpath (e.g. `/motion` on GitHub
 // Pages) so client-side route matching strips the prefix before comparing
 // against `routes/*.tsx`, AND so `<A href="/foo">` resolves to
-// `/motion/foo` rather than the host root. SolidStart sets Vite's `base`
-// from `server.baseURL` in `app.config.ts`, so `import.meta.env.BASE_URL`
-// is the source of truth (`"/motion/"` in production, `"/"` in dev).
+// `/motion/foo` rather than the host root. The base comes from
+// `__DEPLOY_BASE__`, a compile-time literal injected by `vite.define` in
+// `app.config.ts` (`"/motion/"` in production, `"/"` in dev). We can't
+// use `import.meta.env.BASE_URL` because Vinxi resolves that to the
+// asset-bundle path ("/motion/_build"), not the app's URL prefix.
 // ---------------------------------------------------------------------------
 
-const ROUTER_BASE = import.meta.env.BASE_URL.replace(/\/$/, "")
+const ROUTER_BASE = __DEPLOY_BASE__.replace(/\/$/, "")
 
 export default function App() {
   return (

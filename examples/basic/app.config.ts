@@ -40,6 +40,13 @@ export default defineConfig({
     },
   },
   vite: {
+    // Inject the app's deploy base as a string literal so the client
+    // Router can use it. `import.meta.env.BASE_URL` is unreliable here:
+    // Vinxi sets Vite's `base` to the asset-bundle path ("/motion/_build")
+    // rather than the URL prefix the app actually lives at ("/motion/").
+    define: {
+      __DEPLOY_BASE__: JSON.stringify(DEPLOY_BASE),
+    },
     resolve: {
       // Mirrors the library's customConditions: pulls solidjs-motion's
       // source (via the `solid` export condition) rather than `dist/`,
