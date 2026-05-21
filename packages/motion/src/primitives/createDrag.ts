@@ -474,7 +474,16 @@ export function createDrag(
     restoreBodyAndElementStyles()
     releasePointerCaptureSafely()
 
-    getOpts().onDragEnd?.(event, info)
+    // The user's `onDragEnd` callback fires at the END of this function
+    // (just before the early-out), not here. Rationale: a synchronous
+    // state flip from the callback (e.g. closing a Dialog whose contents
+    // are this draggable) used to race motion's own post-callback work
+    // — momentum dispatch, MV-ref cleanup — and could wedge surrounding
+    // libraries that observe the same DOM (scroll lock, pointer-event
+    // layers). Firing AFTER all motion DOM-touching work guarantees a
+    // clean handoff: by the time the callback runs, the drag session is
+    // fully torn down and any subsequent reactive cascade is unambiguous
+    // about ownership.
 
     // Capture refs locally — the closure clears xMV/yMV below before the
     // momentum promise can resolve, but the inertia animation needs stable
@@ -630,6 +639,9 @@ export function createDrag(
     xMV = null
     yMV = null
     sessionBounds = null
+
+    // Callback fires last — see the note at the top of handlePanEnd.
+    getOpts().onDragEnd?.(event, info)
   }
 
   // Function-form options so createPan reads `panThreshold` reactively.

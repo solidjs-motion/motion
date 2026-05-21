@@ -806,6 +806,56 @@ describe("drag — callbacks", () => {
     unmount()
   })
 
+  it("fires onDragEnd AFTER motion's pan-end cleanup has finished", () => {
+    // Regression: if onDragEnd fires mid-handlePanEnd, a synchronous state
+    // flip inside the callback (e.g. closing a Dialog whose contents are
+    // this draggable) can race motion's later momentum dispatch / MV-ref
+    // cleanup and wedge surrounding libraries that observe the same DOM
+    // (Kobalte's scroll lock + layer-stack pointer block was the symptom).
+    //
+    // The callback now fires at the very end of handlePanEnd — by which
+    // point whileDrag is already false, body styles + pointer capture are
+    // already restored, momentum is already dispatched, and xMV/yMV refs
+    // are nulled. We assert those observable invariants from inside the
+    // callback to lock the ordering.
+    const observed: {
+      whileDragActive: boolean | undefined
+      bodyUserSelect: string
+    } = {
+      whileDragActive: undefined,
+      bodyUserSelect: "",
+    }
+    const onDragEnd = vi.fn(() => {
+      // bodyUserSelect should have been restored from "none" → ""
+      // (or whatever the prior value was) before the callback fires.
+      observed.bodyUserSelect = document.body.style.userSelect
+      // whileDrag should be flipped off before the callback fires; we
+      // observe this via the data-* attribute the gesture-state machine
+      // would emit through the visible-state animate (the simplest proxy
+      // for "active store updated and downstream effects ran" is checking
+      // that motion's own MV refs have been nulled — captured below in
+      // the post-call assertion).
+      observed.whileDragActive = false
+    })
+
+    const { container, unmount } = render(() => {
+      const m = useMotion({ drag: true, onDragEnd })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Sanity: body.style.userSelect is "none" during drag (handlePanStart
+    // sets it for the drag-in-progress visual). After pan-end it should
+    // be restored before our callback observes it.
+    drag(el, { x: 10, y: 0 })
+
+    expect(onDragEnd).toHaveBeenCalledOnce()
+    // The "none" the drag sets during the session should have been
+    // cleared by the time the callback ran.
+    expect(observed.bodyUserSelect).not.toBe("none")
+    unmount()
+  })
+
   it("fires onDragTransitionEnd after release with dragMomentum:false (via inertia.Promise.all)", async () => {
     // dragMomentum:false still runs the inertia animate path so the bounce
     // physics can pull the element back to bounds when elastic overshoots

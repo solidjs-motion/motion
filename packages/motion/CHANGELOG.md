@@ -5,6 +5,25 @@ All notable changes to `solidjs-motion` / `@solidjs-motion/motion` are documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-05-21
+
+### Fixed
+
+- **`onDragEnd` now fires at the very end of pan-end** (after motion's
+  `whileDrag` flip, body-style restore, pointer-capture release, momentum
+  / snap-back dispatch, AND MV-ref cleanup) instead of mid-handler. A
+  synchronous state flip from a user `onDragEnd` callback — e.g. closing
+  a Kobalte / Radix-style Dialog whose contents are the draggable — used
+  to race motion's later DOM-touching work and could wedge surrounding
+  libraries that observe the same DOM (scroll lock, pointer-event
+  layer-stack). The new ordering closes the race: by the time the
+  callback runs, the drag session is fully torn down and any reactive
+  cascade triggered from it is unambiguous about ownership.
+
+  Observationally compatible with the previous behavior for callbacks
+  that don't flip global state; users can keep their callbacks as plain
+  synchronous functions and drop `queueMicrotask` workarounds.
+
 ## [0.1.2] — 2026-05-20
 
 ### Fixed
