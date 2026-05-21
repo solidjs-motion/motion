@@ -647,15 +647,26 @@ export function createDrag(
   // Function-form options so createPan reads `panThreshold` reactively.
   // Handler references are stable — only the threshold (and the wrapping
   // object) is recreated per call from createPan.
-  createPan(
-    () => el,
-    () => ({
-      threshold: getOpts().panThreshold,
-      onPanStart: handlePanStart,
-      onPan: handlePan,
-      onPanEnd: handlePanEnd,
-    }),
-  )
+  //
+  // `dragListener: false` opts out of motion's own pointerdown listener
+  // on `el`. Drag becomes external-only — triggered through
+  // `dragControls.start(event)` from another element. Pointer
+  // interaction on `el` itself stays inert, letting the surface remain
+  // scrollable (the canonical case: a drawer body with a dedicated drag
+  // handle). One-time read at construction matches motion-react's
+  // semantic — toggling `dragListener` reactively is intentionally not
+  // supported.
+  if (getOpts().dragListener !== false) {
+    createPan(
+      () => el,
+      () => ({
+        threshold: getOpts().panThreshold,
+        onPanStart: handlePanStart,
+        onPan: handlePan,
+        onPanEnd: handlePanEnd,
+      }),
+    )
+  }
 
   // ---------- External drag (Q9 — createDragControls integration) ----------
   // When the user wires `dragControls: someControls` into MotionOptions, an

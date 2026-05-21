@@ -219,6 +219,20 @@ export type DragOptions = {
   dragSnapToOrigin?: boolean
   /** Imperatively-triggered drag (from createDragControls). */
   dragControls?: DragControls
+  /**
+   * Whether drag listens for its OWN pointerdown events on the element.
+   * Defaults to `true`.
+   *
+   * Set to `false` when drag should only be started externally via a
+   * `dragControls.start(event)` call from a different element (typically
+   * a "drag handle"). The element itself remains non-draggable from
+   * direct pointer interaction — useful for drawers, sheets, and other
+   * surfaces where the body must stay scrollable and only a dedicated
+   * affordance should commit to a drag.
+   *
+   * Mirrors motion-react's `dragListener` prop.
+   */
+  dragListener?: boolean
 }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,28 @@ All notable changes to `solidjs-motion` / `@solidjs-motion/motion` are documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] — 2026-05-21
+
+### Added
+
+- **`dragListener` option** on `useMotion` / `<motion.X>` / `motion.create`.
+  Mirrors motion-react's prop. Defaults to `true`. When set to `false`,
+  drag skips attaching its own pointerdown listener to the element —
+  drag becomes external-only, triggered through `dragControls.start(e)`
+  from a handle elsewhere. The canonical case is a scrollable drawer
+  body where direct pointer interaction must stay scroll-only, and a
+  dedicated edge handle is the single drag affordance.
+
+  ```tsx
+  const controls = createDragControls()
+  return (
+    <motion.aside drag="x" dragControls={controls} dragListener={false}>
+      {/* body stays scrollable — no drag from direct touch */}
+      <span onPointerDown={(e) => controls.start(e)}>handle</span>
+    </motion.aside>
+  )
+  ```
+
 ## [0.1.3] — 2026-05-21
 
 ### Fixed

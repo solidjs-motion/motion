@@ -184,6 +184,30 @@ describe("drag — enable check", () => {
     unmount()
   })
 
+  it("dragListener:false skips motion's own pointer listener — element stays inert", () => {
+    // Regression: a scrollable surface (drawer body, sheet, etc.) that
+    // wants drag-to-close via a SEPARATE handle should not initiate drag
+    // from direct pointer interaction on its own body. With
+    // `dragListener: false`, motion skips attaching its pan-session
+    // listener to the element entirely — only dragControls.start(e)
+    // from a handle elsewhere can begin a drag.
+    const onDragStart = vi.fn()
+    const { container, unmount } = render(() => {
+      const m = useMotion({ drag: true, dragListener: false, onDragStart })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+
+    // Synthetic drag on the element itself — without dragListener:false
+    // this would write to x/y MVs and fire onDragStart. With it, NONE
+    // of those should happen.
+    drag(el, { x: 5, y: 0 }, { x: 50, y: 30 })
+
+    expect(captured.writes).toEqual([])
+    expect(onDragStart).not.toHaveBeenCalled()
+    unmount()
+  })
+
   it("writes to x/y MVs when drag: true is set", () => {
     const { container, unmount } = render(() => {
       const m = useMotion({ drag: true })
