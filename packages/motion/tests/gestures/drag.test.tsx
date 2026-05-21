@@ -184,6 +184,52 @@ describe("drag — enable check", () => {
     unmount()
   })
 
+  it("sets a drag-friendly touch-action at render time so mobile browsers don't pre-cancel the gesture", () => {
+    // Regression: without an upfront touch-action, mobile browsers arbitrate
+    // the gesture as native scroll/zoom and fire pointercancel before
+    // motion's own handlePanStart writes touch-action. Result on touch
+    // devices: missed drags or panEnd dispatched with stale offset data
+    // (e.g. an immediate swipe-stack card dismiss on touch).
+    //
+    // axis "x" → pan-y (browser keeps vertical scroll free), "y" → pan-x,
+    // unspecified (drag: true) → none.
+    const cases: Array<[true | "x" | "y", string]> = [
+      [true, "none"],
+      ["x", "pan-y"],
+      ["y", "pan-x"],
+    ]
+    for (const [drag, expected] of cases) {
+      const { container, unmount } = render(() => {
+        const m = useMotion({ drag })
+        return <div {...m()} />
+      })
+      const el = container.firstChild as HTMLElement
+      expect(el.style.touchAction, `drag=${String(drag)}`).toBe(expected)
+      unmount()
+    }
+  })
+
+  it("does NOT set a touch-action default when drag is absent", () => {
+    const { container, unmount } = render(() => {
+      const m = useMotion({ animate: { opacity: 1 } })
+      return <div {...m()} />
+    })
+    const el = container.firstChild as HTMLElement
+    expect(el.style.touchAction).toBe("")
+    unmount()
+  })
+
+  it("user-supplied style.touch-action overrides motion's drag default", () => {
+    const { container, unmount } = render(() => {
+      const m = useMotion({ drag: "x" })
+      // User opts back into the browser's default scroll arbitration.
+      return <div {...m({ style: { "touch-action": "auto" } })} />
+    })
+    const el = container.firstChild as HTMLElement
+    expect(el.style.touchAction).toBe("auto")
+    unmount()
+  })
+
   it("dragListener:false skips motion's own pointer listener — element stays inert", () => {
     // Regression: a scrollable surface (drawer body, sheet, etc.) that
     // wants drag-to-close via a SEPARATE handle should not initiate drag

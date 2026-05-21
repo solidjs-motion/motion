@@ -309,9 +309,37 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
     return mergeProps(userProps ?? {}, {
       get style() {
         const cleaned = stripStyleEntriesOwnedByRegistry(userProps?.style)
-        if (renderedOnce) return cleaned
+
+        // Drag-friendly `touch-action` default for any drag-configured
+        // element. Without this, the mobile browser arbitrates the
+        // gesture as native scroll/zoom and may fire `pointercancel`
+        // before motion's own `touch-action` write (inside
+        // handlePanStart) can take effect — which would manifest as
+        // either a missed drag or a panEnd dispatched with stale
+        // offset data. Setting it at render time, before the browser
+        // ever sees a pointer event, closes that race.
+        //
+        // axis "x" → "pan-y" (browser may still scroll the page
+        // vertically), axis "y" → "pan-x", otherwise → "none".
+        //
+        // Goes FIRST in the spread order so user-supplied
+        // `style: { touchAction: "auto" }` overrides this default.
+        const dragOpts = getOpts().drag
+        const dragTouchAction = dragOpts
+          ? dragOpts === "x"
+            ? "pan-y"
+            : dragOpts === "y"
+              ? "pan-x"
+              : "none"
+          : undefined
+
+        const baseWithDefaults = dragTouchAction
+          ? { "touch-action": dragTouchAction, ...cleaned }
+          : cleaned
+
+        if (renderedOnce) return baseWithDefaults
         const composed = composeFirstPaintStyle(userProps?.style)
-        return composed ? { ...cleaned, ...composed } : cleaned
+        return composed ? { ...baseWithDefaults, ...composed } : baseWithDefaults
       },
       ref: mergeRefs(userProps?.ref, motionRef),
       ...(wroteFirstPaintStyle ? { "data-motion-hydrated": "" } : {}),

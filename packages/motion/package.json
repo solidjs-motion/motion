@@ -1,6 +1,6 @@
 {
   "name": "solidjs-motion",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "An animation library for SolidJS — port of motion/react patterns built on the framework-agnostic motion package",
   "type": "module",
   "main": "./dist/index.js",

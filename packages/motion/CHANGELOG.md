@@ -5,6 +5,32 @@ All notable changes to `solidjs-motion` / `@solidjs-motion/motion` are documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] — 2026-05-21
+
+### Fixed
+
+- **Drag now sets `touch-action` upfront on the element** when `drag` is
+  configured, not just inside `handlePanStart` after threshold cross.
+  Previously, on mobile, the browser would arbitrate the gesture as
+  native scroll/zoom and fire `pointercancel` before motion's own
+  touch-action write could take effect — manifesting as missed drags
+  or, when the user's `onDragEnd` made a threshold-based decision off
+  stale `info.offset`, an immediate dismiss-on-touch (visible in the
+  swipe-stack demo: every press fired a left-swipe).
+
+  Axis mapping mirrors motion-react:
+  - `drag="x"` → `touch-action: pan-y` (browser keeps vertical scroll)
+  - `drag="y"` → `touch-action: pan-x`
+  - `drag={true}` → `touch-action: none`
+
+  User-supplied `style.touch-action` still overrides via natural
+  spread precedence — e.g., `style={{ touchAction: "auto" }}` opts back
+  into the browser's default arbitration. Three regression tests added.
+
+  Removes the need for users to remember to set `touch-action: none` on
+  every draggable element — `<motion.div drag="x">` now Just Works on
+  touch devices.
+
 ## [0.1.4] — 2026-05-21
 
 ### Added
