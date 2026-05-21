@@ -133,6 +133,7 @@ function DrawerSurface(props: { onClose: () => void }) {
           transition={{ type: "spring", stiffness: 320, damping: 32 }}
           drag="x"
           dragControls={controls}
+          dragListener={false}
           dragConstraints={{ left: -DRAWER_WIDTH, right: 0 }}
           dragElastic={0}
           dragSnapToOrigin
