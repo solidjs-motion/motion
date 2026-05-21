@@ -242,7 +242,8 @@ export function createGestureStateMachine(
   // (Q4 — gesture inheritance through context). The first active state that
   // defines a key claims it; lower-priority states are skipped for that key.
   //
-  // Q5/C-lean exclusion: when `drag` is enabled, `x` and `y` are owned by
+  // Q5/C-lean exclusion: while drag is ACTIVE (pointer engaged), `x` and `y`
+  // are owned by
   // createDrag (it writes them to the VisualElement's MotionValues during
   // pointer phase). Filter them out of the winners map so motion's animate
   // (called from this effect) doesn't fight drag's writes. Other transform
@@ -257,7 +258,12 @@ export function createGestureStateMachine(
   // exit's translation reaches DOM until that happens.
   const winners = createMemo<Record<string, WinnerEntry>>(() => {
     const targets = stateTargets()
-    const dragEnabled = Boolean(getOpts().drag)
+    // Drag claims x/y only while the user is ACTIVELY dragging (pointer
+    // engaged → `active.whileDrag === true`). When drag is merely
+    // configured-but-idle, initial/animate/exit and other states get
+    // normal access to x/y — matching motion-react. Reading from `active`
+    // tracks the store; the winners memo re-runs when whileDrag flips.
+    const dragActive = active.whileDrag
     const out: Record<string, WinnerEntry> = {}
     for (const stateName of PRIORITY_HIGH_TO_LOW) {
       if (!isStateActive(stateName, active, parentVariantCtx)) continue
@@ -268,9 +274,9 @@ export function createGestureStateMachine(
         if (key === "transition") continue
         // Higher-priority state already won this key.
         if (key in out) continue
-        // x/y are drag-owned when drag is enabled (Q5/C-lean) — unless exit
-        // is currently active, in which case exit's translation wins.
-        if (!active.exit && dragEnabled && (key === "x" || key === "y")) continue
+        // x/y are drag-owned during active drag — unless exit is also
+        // active, in which case exit's translation wins.
+        if (!active.exit && dragActive && (key === "x" || key === "y")) continue
         out[key] = {
           value: (target as Record<string, unknown>)[key],
           transition: target.transition,
@@ -363,6 +369,11 @@ export function createGestureStateMachine(
       }
       for (const key in lastApplied) {
         if (key in next) continue
+        // x/y aren't "removed" when drag is active — drag is CLAIMING them.
+        // Falling back to initial here would dispatch animate(el, {x:-W})
+        // on pointerdown and snap the element back to its initial state
+        // before the user's first move could reach the DOM.
+        if (active.whileDrag && (key === "x" || key === "y")) continue
         // Removed-key fallback: own initial → motion default → null.
         const initialValue =
           initialTarget && key in (initialTarget as Record<string, unknown>)

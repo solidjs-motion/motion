@@ -729,27 +729,31 @@ describe("drag — whileDrag state composition", () => {
     unmount()
   })
 
-  it("filters x/y from animate target when drag is enabled (Q5/C-lean)", () => {
-    // animate target has x: 100, but drag owns x. The state machine's
-    // animate call should NOT contain x.
+  it("animate's x/y reach DOM when drag is idle (regression: drag-configured no longer steals x/y)", () => {
+    // Drag CONFIGURED but not active → animate's x/y must flow normally.
+    // This matches motion-react: drag and animate share the x/y MV and
+    // only the source of writes alternates by pointer state. The previous
+    // implementation filtered x/y from animate whenever drag was even
+    // configured, which broke initial → animate transitions on draggable
+    // elements (e.g. a slide-in drawer with drag-to-close).
     const { container, unmount } = render(() => {
       const m = useMotion({ animate: { x: 100, opacity: 1 }, drag: true })
       return <div {...m()} />
     })
     const el = container.firstChild as HTMLElement
 
-    // Verify motion's animate spy was called WITHOUT x in any call.
-    for (const call of animateSpy.mock.calls) {
-      const target = call[1] as Record<string, unknown> | undefined
-      if (target) expect(target.x).toBeUndefined()
-    }
-    // opacity should still flow through.
+    // animate's x=100 must appear in the spy's calls.
+    const xCall = animateSpy.mock.calls.find(
+      (c) => (c[1] as Record<string, unknown>)?.x === 100,
+    )
+    expect(xCall).toBeDefined()
+    // opacity still flows.
     const opacityCall = animateSpy.mock.calls.find(
       (c) => (c[1] as Record<string, unknown>)?.opacity === 1,
     )
     expect(opacityCall).toBeDefined()
     unmount()
-    // Suppress "el unused" lint — the test renders it.
+    // Suppress "el unused" lint — the test renders through it.
     void el
   })
 })

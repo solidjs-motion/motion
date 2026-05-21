@@ -78,6 +78,86 @@ function ensureVisualElement(el: HTMLElement): InstanceType<typeof HTMLVisualEle
 }
 
 /**
+ * Parse the visible translate from an element's transform — reads both
+ * `getComputedStyle(el).transform` (which real browsers normalize to
+ * matrix form) AND `el.style.transform` (which preserves the raw syntax
+ * motion-dom's writer emits, e.g. `translate3d(50px, 0px, 0)`). Used by
+ * drag's pan-start to sync the x/y MotionValues to what the user is
+ * actually seeing.
+ *
+ * Why both sources: motion's `animate(el, target)` interpolates style.
+ * transform via WAAPI but DOESN'T update the VE's MVs during the tween,
+ * so after `initial: {x:-300} → animate: {x:0}` the MV still holds -300.
+ * Reading the current transform recovers the truth. We prefer computed
+ * (post-animation, post-WAAPI-commit value) and fall back to inline
+ * (covers jsdom + cases where motion's writer wrote inline but the
+ * browser hasn't run a style-resolve pass yet).
+ *
+ * Supported syntaxes:
+ *   - `"none"` / empty → {0, 0}
+ *   - `matrix(a, b, c, d, tx, ty)`
+ *   - `matrix3d(..., tx, ty, ...)`
+ *   - `translateX(Npx)` / `translateY(Npx)` / `translate(tx, ty)`
+ *   - `translate3d(tx, ty, tz)`
+ *   - Any of the above mixed with other transform functions (regex-
+ *     based extraction picks just the translate components).
+ */
+function readVisibleTranslate(el: HTMLElement): { x: number; y: number } {
+  const fromString = (transform: string): { x: number; y: number } | null => {
+    if (!transform || transform === "none") return null
+
+    if (transform.startsWith("matrix3d(")) {
+      const values = transform.slice(9, -1).split(",")
+      const tx = Number.parseFloat(values[12] ?? "0")
+      const ty = Number.parseFloat(values[13] ?? "0")
+      if (!Number.isFinite(tx) && !Number.isFinite(ty)) return null
+      return { x: Number.isFinite(tx) ? tx : 0, y: Number.isFinite(ty) ? ty : 0 }
+    }
+    if (transform.startsWith("matrix(")) {
+      const values = transform.slice(7, -1).split(",")
+      const tx = Number.parseFloat(values[4] ?? "0")
+      const ty = Number.parseFloat(values[5] ?? "0")
+      if (!Number.isFinite(tx) && !Number.isFinite(ty)) return null
+      return { x: Number.isFinite(tx) ? tx : 0, y: Number.isFinite(ty) ? ty : 0 }
+    }
+
+    // motion-dom's writer emits the keyword form: `translate3d(...)`,
+    // `translateX(...)`, etc. — usually as the first segment of a
+    // composed transform like `translate3d(50px, 0px, 0) scale(1)`.
+    let x = 0
+    let y = 0
+    let found = false
+    const translate3d = transform.match(/translate3d\(\s*([-\d.]+)px\s*,\s*([-\d.]+)px/)
+    if (translate3d) {
+      x = Number.parseFloat(translate3d[1] ?? "0")
+      y = Number.parseFloat(translate3d[2] ?? "0")
+      found = true
+    } else {
+      const translate2d = transform.match(/translate\(\s*([-\d.]+)px\s*(?:,\s*([-\d.]+)px)?/)
+      if (translate2d) {
+        x = Number.parseFloat(translate2d[1] ?? "0")
+        y = Number.parseFloat(translate2d[2] ?? "0")
+        found = true
+      }
+      const translateX = transform.match(/translateX\(\s*([-\d.]+)px/)
+      if (translateX) {
+        x = Number.parseFloat(translateX[1] ?? "0")
+        found = true
+      }
+      const translateY = transform.match(/translateY\(\s*([-\d.]+)px/)
+      if (translateY) {
+        y = Number.parseFloat(translateY[1] ?? "0")
+        found = true
+      }
+    }
+    if (!found) return null
+    return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 }
+  }
+
+  return fromString(getComputedStyle(el).transform) ?? fromString(el.style.transform) ?? { x: 0, y: 0 }
+}
+
+/**
  * Compute the `touch-action` CSS value for an element being dragged.
  * Disabling touch-action prevents the browser from interpreting the gesture
  * as a scroll. Axis-locked drags leave the unused axis available for scroll
@@ -272,7 +352,7 @@ export function createDrag(
   // Stable handler references — they close over getOpts so reactive opts
   // are read at event time. Hoisted out of the createPan call so the
   // function-form options below doesn't re-allocate them per getOpts() call.
-  const handlePanStart = (event: PointerEvent, info: PanInfo) => {
+  const handlePanStart = (event: PointerEvent, info: PanInfo, mvIsAuthoritative = false) => {
     // The pan session always fires onPanStart once movement crosses the
     // threshold. Drag's enable check is here, not at the createPan-setup
     // site, so toggling `drag` off mid-life immediately stops drag
@@ -287,8 +367,44 @@ export function createDrag(
     const ve = ensureVisualElement(el)
     xMV = ve.getValue("x", 0) as MotionValue<number>
     yMV = ve.getValue("y", 0) as MotionValue<number>
-    dragStartX = xMV.get()
-    dragStartY = yMV.get()
+
+    // dragStart capture — two modes:
+    //
+    // (1) Default: sync the MV to the element's CURRENT visible translate
+    //     before capturing. motion's `animate(el, target)` interpolates
+    //     `style.transform` via WAAPI but DOESN'T update the
+    //     visualElement's x/y MVs in lockstep, so after an entrance
+    //     animation (e.g. `initial: {x:-300} → animate: {x:0}`) the MV
+    //     would still hold the start value. Reading the painted transform
+    //     recovers the truth and seeds dragStart correctly.
+    //
+    // (2) `mvIsAuthoritative=true` (e.g. dragControls.start with
+    //     snapToCursor): the caller wrote the MV synchronously RIGHT
+    //     before reaching us, but motion-dom's writer is frame-scheduled,
+    //     so `el.style.transform` may not reflect that write yet. Trust
+    //     the MV in this path — visible would be stale.
+    //
+    // Only the axis drag actually uses is touched — touching the locked
+    // axis would generate spurious MV writes that callers + tests notice.
+    const axis = getOpts().drag
+    if (mvIsAuthoritative) {
+      dragStartX = xMV.get()
+      dragStartY = yMV.get()
+    } else {
+      const visible = readVisibleTranslate(el)
+      if (axis !== "y") {
+        if (visible.x !== xMV.get()) xMV.set(visible.x)
+        dragStartX = visible.x
+      } else {
+        dragStartX = xMV.get()
+      }
+      if (axis !== "x") {
+        if (visible.y !== yMV.get()) yMV.set(visible.y)
+        dragStartY = visible.y
+      } else {
+        dragStartY = yMV.get()
+      }
+    }
 
     // Resolve constraints once per session. Reading layout rects mid-drag
     // would cost a forced reflow per pointermove; one read at drag-start
@@ -567,13 +683,18 @@ export function createDrag(
     // Fire handlePanStart with a synthesized initial PanInfo. This
     // initializes xMV/yMV/dragStartX/Y, resolves bounds, sets body styles,
     // captures pointer, activates whileDrag, and fires onDragStart.
+    //
+    // `mvIsAuthoritative=true` when the snap path just wrote the MVs
+    // above — handlePanStart should read FROM the MV (not from
+    // getComputedStyle) because motion-dom's writer is frame-scheduled
+    // and `el.style.transform` may not yet reflect the snap write.
     const initialInfo: PanInfo = {
       point: { x: event.clientX, y: event.clientY },
       delta: { x: 0, y: 0 },
       offset: { x: 0, y: 0 },
       velocity: { x: 0, y: 0 },
     }
-    handlePanStart(event, initialInfo)
+    handlePanStart(event, initialInfo, Boolean(options.snapToCursor))
 
     // Track the session locally — these would normally live inside
     // createPan's closure. Velocity samples use motion-dom's `time.now()`
