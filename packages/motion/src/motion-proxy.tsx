@@ -38,7 +38,82 @@ import { useMotion } from "./use-motion"
  * array — so adding a new option to types.ts without registering here
  * fails to compile with the missing key surfaced in the error.
  */
-export const MOTION_OPT_KEYS = [
+/**
+ * Union of every `MotionOptions` key the proxy splits off from element
+ * attributes. Hardcoded as a literal union — NOT derived from
+ * `typeof MOTION_OPT_KEYS[number]` — so JSR's "slow types" rule can
+ * resolve the public type without inferring it from a const.
+ *
+ * Two compile-time exhaustiveness directions guarantee consistency
+ * between this type and the runtime `MOTION_OPT_KEYS` array:
+ *
+ *   1. `_MissingMotionOptKeys` (below) verifies the union covers every
+ *      key in `keyof MotionOptions`.
+ *   2. The `satisfies` clause on `MOTION_OPT_KEYS` verifies every array
+ *      entry IS a `MotionOptKey` (typo-proof at the runtime layer).
+ *
+ * If `MotionOptions` grows a new key, both `_MissingMotionOptKeys`
+ * AND `splitProps` at runtime break — the type check surfaces the
+ * specific missing key by name.
+ */
+export type MotionOptKey =
+  // Variant slots
+  | "initial"
+  | "animate"
+  | "exit"
+  // Gesture targets
+  | "hover"
+  | "press"
+  | "focus"
+  | "inView"
+  | "inViewOptions"
+  // Drag config
+  | "drag"
+  | "dragConstraints"
+  | "dragElastic"
+  | "dragMomentum"
+  | "dragTransition"
+  | "dragSnapToOrigin"
+  | "dragControls"
+  | "whileDrag"
+  // Pan
+  | "panThreshold"
+  // Variants + transition
+  | "variants"
+  | "custom"
+  | "transition"
+  // Animation lifecycle
+  | "onAnimationStart"
+  | "onAnimationComplete"
+  | "onAnimationCancel"
+  | "onUpdate"
+  // Gesture lifecycle
+  | "onHoverStart"
+  | "onHoverEnd"
+  | "onPressStart"
+  | "onPress"
+  | "onPressCancel"
+  | "onFocus"
+  | "onBlur"
+  | "onPanStart"
+  | "onPan"
+  | "onPanEnd"
+  | "onViewportEnter"
+  | "onViewportLeave"
+  // Drag lifecycle
+  | "onDragStart"
+  | "onDrag"
+  | "onDragEnd"
+  | "onDragTransitionEnd"
+
+/**
+ * Frozen list of `MotionOptKey`s — fed to `splitProps` at every
+ * tag-component render to separate motion options from element
+ * attributes. The `satisfies` clause checks every entry against
+ * `MotionOptKey` at compile time so typos / drift between the union
+ * and the array surface as errors.
+ */
+export const MOTION_OPT_KEYS: readonly MotionOptKey[] = [
   // Variant slots
   "initial",
   "animate",
@@ -87,12 +162,12 @@ export const MOTION_OPT_KEYS = [
   "onDrag",
   "onDragEnd",
   "onDragTransitionEnd",
-] as const satisfies readonly (keyof MotionOptions)[]
+] as const satisfies readonly MotionOptKey[]
 
-// Compile-time exhaustiveness check. If a new MotionOptions key is added
-// without being registered above, TypeScript surfaces the missing key by
-// name in the error message at this line.
-type _MissingMotionOptKeys = Exclude<keyof MotionOptions, (typeof MOTION_OPT_KEYS)[number]>
+// Compile-time exhaustiveness check (union → keys direction). If a new
+// MotionOptions key is added without being registered in MotionOptKey,
+// TypeScript surfaces the missing key by name here.
+type _MissingMotionOptKeys = Exclude<keyof MotionOptions, MotionOptKey>
 // Variable prefixed with `_` so biome's noUnusedVariables exempts it —
 // the const exists purely so TypeScript evaluates its type and surfaces
 // the missing key when the constraint fails.

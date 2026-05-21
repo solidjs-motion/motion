@@ -1,4 +1,4 @@
-import { createContext, createMemo, type JSX, useContext } from "solid-js"
+import { type Context, createContext, createMemo, type JSX, useContext } from "solid-js"
 import type { MotionConfigContextValue, MotionConfigProps } from "./types"
 
 /**
@@ -11,7 +11,8 @@ const defaultMotionConfig: MotionConfigContextValue = {
   nonce: () => undefined,
 }
 
-export const MotionConfigContext = createContext<MotionConfigContextValue>(defaultMotionConfig)
+export const MotionConfigContext: Context<MotionConfigContextValue> =
+  createContext<MotionConfigContextValue>(defaultMotionConfig)
 
 export function useMotionConfig(): MotionConfigContextValue {
   return useContext(MotionConfigContext)

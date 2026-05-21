@@ -1,4 +1,4 @@
-import { createContext, useContext } from "solid-js"
+import { type Context, createContext, useContext } from "solid-js"
 import type {
   AnimateValue,
   MotionOptions,
@@ -20,7 +20,8 @@ const emptyVariantContext: VariantContextValue = {}
  * provide a value. Bare `useMotion` consumers can opt in via the `Provider`
  * returned alongside the getter.
  */
-export const VariantContext = createContext<VariantContextValue>(emptyVariantContext)
+export const VariantContext: Context<VariantContextValue> =
+  createContext<VariantContextValue>(emptyVariantContext)
 
 export function useVariantContext(): VariantContextValue {
   return useContext(VariantContext)

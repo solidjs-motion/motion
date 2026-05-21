@@ -1,4 +1,4 @@
-import { createContext, useContext } from "solid-js"
+import { type Context, createContext, useContext } from "solid-js"
 import type { PresenceContextValue } from "./types"
 
 /**
@@ -24,7 +24,8 @@ const noopPresenceContext: PresenceContextValue = {
   // the DOM by the time createMotion runs, so no defer is needed.
 }
 
-export const PresenceContext = createContext<PresenceContextValue>(noopPresenceContext)
+export const PresenceContext: Context<PresenceContextValue> =
+  createContext<PresenceContextValue>(noopPresenceContext)
 
 export function usePresenceContext(): PresenceContextValue {
   return useContext(PresenceContext)
