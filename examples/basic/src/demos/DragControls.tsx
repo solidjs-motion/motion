@@ -57,7 +57,8 @@ export default function DragControlsDemo() {
               height: "120px",
               "border-radius": "16px",
               background: "linear-gradient(135deg, #ff8a00, #e52e71)",
-              "touch-action": "none",
+              // `touch-action` is set automatically by useMotion when
+              // `drag` is configured — no need to repeat it here.
             },
           })}
         />

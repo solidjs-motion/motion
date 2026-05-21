@@ -97,7 +97,8 @@ export default function Drag() {
               "border-radius": "16px",
               background: "linear-gradient(135deg, #00e5ff, #2979ff)",
               cursor: "grab",
-              "touch-action": "none",
+              // `touch-action` is set automatically by useMotion when
+              // `drag` is configured — no need to repeat it here.
             },
           })}
         />
