@@ -12,6 +12,8 @@ coverage
 solid-motion-port-plan.md
 solid-motion-phase-notes.md
 
-# Nix/direnv local cache
+# Nix/direnv local cache + private env files
 .direnv/
 .envrc
+.envrc.local
+.envrc.private
