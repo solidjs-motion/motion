@@ -10,7 +10,6 @@ import {
   onCleanup,
   Switch,
 } from "solid-js"
-import { isServer } from "solid-js/web"
 import { PresenceContext } from "./presence-context"
 import type { MotionElement, PresenceContextValue } from "./types"
 
@@ -33,11 +32,11 @@ import type { MotionElement, PresenceContextValue } from "./types"
 //     `runExit` is registered (a non-motion child, or a motion child with no
 //     `exit` prop), `done()` fires immediately and the element disappears.
 //
-// SSR: pass-through. `isServer` short-circuits the transition-group wiring
-// because (a) refs don't exist server-side and (b) no state changes happen
-// during renderToString, so there's nothing for the coordinator to do.
-// Children render straight through; their initial style is emitted via the
-// existing `useMotion` SSR contract.
+// SSR: same JSX shape as client (Provider + PresenceCore + Switch/Match).
+// transition-group's helpers are SSR-safe — they pass children through when
+// no DOM refs have fired — so structural divergence (which would break
+// Solid's hydration marker alignment) is avoided. Each child's initial
+// style is still emitted via the existing `useMotion` SSR contract.
 //
 // Single-vs-list dispatch is decided at first resolution and stable for the
 // Presence instance's lifetime — switching mid-life would require torn-down
@@ -147,28 +146,18 @@ export type PresenceProps = {
  * </Presence>
  */
 export const Presence: Component<PresenceProps> = (props) => {
-  // SSR: there's nothing for transition-group to coordinate (no DOM
-  // changes happen during renderToString), so we render children as-is.
-  // BUT — `initial={false}` is meaningful at SSR time: useMotion's
-  // computeInitialStyle reads PresenceContext.initial and, when it's
-  // false, emits the ANIMATE target style instead of the initial.
-  // If we don't provide a server context, children see the no-op
-  // default (initial=undefined) and emit the wrong first-paint HTML.
-  // For `initial={false}` we provide a minimal server-side context;
-  // for `initial` undefined/true (the default), pass-through is correct.
-  if (isServer) {
-    if (props.initial === false) {
-      const serverCtx: PresenceContextValue = {
-        register: () => {},
-        unregister: () => {},
-        beforeUnmount: () => Promise.resolve(),
-        initial: () => false,
-      }
-      return <PresenceContext.Provider value={serverCtx}>{props.children}</PresenceContext.Provider>
-    }
-    return <>{props.children}</>
-  }
-
+  // SSR: render the SAME JSX shape as the client (Provider + PresenceCore +
+  // <Switch>+<Match>) so Solid's hydration markers align. The transition-
+  // group helpers ARE SSR-safe — they return the source elements unchanged
+  // when no DOM refs have fired (i.e. during renderToString) — so calling
+  // them server-side is harmless and avoids the structural divergence that
+  // would otherwise produce hydration mismatches.
+  //
+  // The only server-time wrinkle is `<Presence initial={false}>`:
+  // useMotion's first-paint composition reads `PresenceContext.initial`
+  // and, when false, emits the ANIMATE target style instead of the
+  // initial. We honor that by setting the signal's seed value below.
+  //
   // ---------- PresenceContext value supplied to descendants ----------
   const runExits = new Map<MotionElement, () => Promise<void>>()
   // Enter callbacks — symmetric to runExits. createMotion registers a
