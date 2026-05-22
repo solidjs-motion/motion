@@ -15,6 +15,8 @@ import {
   createMotionValue,
   createPan,
   type CreatePanOptions,
+  createScroll,
+  type CreateScrollOptions,
   type DragControls,
   type ElementProps,
   type MotionMergedProps,
@@ -497,5 +499,18 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
     expectTypeOf<Parameters<typeof createPan>[1]>().toEqualTypeOf<
       CreatePanOptions | Accessor<CreatePanOptions> | undefined
     >()
+  })
+
+  it("createScroll accepts options as static OR accessor form", () => {
+    // Optional parameter (no default object) — `undefined` arm is from the
+    // `?` modifier rather than a default.
+    expectTypeOf<Parameters<typeof createScroll>[0]>().toEqualTypeOf<
+      Accessor<CreateScrollOptions> | CreateScrollOptions | undefined
+    >()
+  })
+
+  it("CreateScrollOptions.container and .target are static Elements, not functions", () => {
+    expectTypeOf<CreateScrollOptions["container"]>().toEqualTypeOf<Element | null | undefined>()
+    expectTypeOf<CreateScrollOptions["target"]>().toEqualTypeOf<Element | null | undefined>()
   })
 })

@@ -61,7 +61,7 @@ describe("createScroll", () => {
   it("invokes motion's scroll() with the configured options", async () => {
     const container = document.createElement("div")
     const { dispose } = createRoot((dispose) => {
-      createScroll({ container: () => container, axis: "y" })
+      createScroll({ container, axis: "y" })
       return { dispose }
     })
     // createEffect's first iteration is deferred — flush before asserting
@@ -103,17 +103,20 @@ describe("createScroll", () => {
     expect(entry?.cleanup).toHaveBeenCalled()
   })
 
-  it("re-invokes motion's scroll() when the container accessor changes", async () => {
+  it("re-invokes motion's scroll() when the options accessor changes", async () => {
+    // Accessor-form options reactivity. Per-field accessors on container/
+    // target were dropped in 0.2.0; reactivity comes from wrapping the
+    // whole options object in an accessor.
     const [container, setContainer] = createSignal<HTMLElement | null>(null)
     const { dispose } = createRoot((dispose) => {
-      createScroll({ container: () => container() })
+      createScroll(() => ({ container: container() }))
       return { dispose }
     })
     await flush()
     expect(scrollSpy).toHaveBeenCalledTimes(1)
     const first = scrollHandlers[0]
-    // Swap to a real element — accessor changes, the effect re-runs (after
-    // a microtask), previous subscription is torn down.
+    // Swap to a real element — accessor returns new options, the effect
+    // re-runs (after a microtask), previous subscription is torn down.
     setContainer(document.createElement("div"))
     await flush()
     expect(scrollSpy).toHaveBeenCalledTimes(2)
