@@ -575,3 +575,77 @@ describe("createPan — cleanup", () => {
     document.body.removeChild(el)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Ref widening (Q1) — createPan accepts a static HTMLElement in addition to
+// an Accessor. Static refs are captured once; reassignment does NOT re-attach
+// the pointerdown listener. Use the accessor form for reactive refs.
+// ---------------------------------------------------------------------------
+
+describe("createPan — ref widening", () => {
+  it("accepts a static HTMLElement as the ref argument", () => {
+    const onPanStart = vi.fn()
+    const el = document.createElement("div")
+    document.body.appendChild(el)
+
+    const dispose = createRoot((d) => {
+      createPan(el, { onPanStart, threshold: 3 })
+      return d
+    })
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+
+    expect(onPanStart).toHaveBeenCalledOnce()
+    const info = onPanStart.mock.calls[0]?.[1] as PanInfo
+    expect(info.offset.x).toBeGreaterThanOrEqual(3)
+
+    dispose()
+    document.body.removeChild(el)
+  })
+
+  it("re-attaches pointerdown listener when the ref accessor's signal changes", () => {
+    // Accessor-form ref reactivity — when the ref signal switches to a
+    // different element, the createEffect re-runs: the old element's
+    // pointerdown listener is removed and the new element gets one. This
+    // is the canonical reason to pass an Accessor instead of a static
+    // Element. Static refs (the test above) capture once and don't track.
+    const onPanStart = vi.fn()
+    const elA = document.createElement("div")
+    const elB = document.createElement("div")
+    document.body.appendChild(elA)
+    document.body.appendChild(elB)
+
+    const [ref, setRef] = createSignal<HTMLElement>(elA)
+    const dispose = createRoot((d) => {
+      createPan(ref, { onPanStart, threshold: 3 })
+      return d
+    })
+
+    // Session on A — fires onPanStart.
+    fireEvent.pointerDown(elA, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 10, clientY: 0, isPrimary: true })
+    expect(onPanStart).toHaveBeenCalledOnce()
+    onPanStart.mockClear()
+
+    // Swap ref to B. createEffect re-runs, A's pointerdown listener is
+    // removed via iteration-scoped onCleanup, B gets a fresh one.
+    setRef(elB)
+
+    // Pointerdown on A is now ignored (listener was removed).
+    fireEvent.pointerDown(elA, { pointerId: 2, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 10, clientY: 0, isPrimary: true })
+    fireEvent.pointerUp(window, { pointerId: 2, clientX: 10, clientY: 0, isPrimary: true })
+    expect(onPanStart).not.toHaveBeenCalled()
+
+    // Pointerdown on B drives a new session.
+    fireEvent.pointerDown(elB, { pointerId: 3, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 3, clientX: 10, clientY: 0, isPrimary: true })
+    expect(onPanStart).toHaveBeenCalledOnce()
+
+    dispose()
+    document.body.removeChild(elA)
+    document.body.removeChild(elB)
+  })
+})

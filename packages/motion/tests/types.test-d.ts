@@ -13,6 +13,8 @@ import {
   type CreateInViewOptions,
   createMotion,
   createMotionValue,
+  createPan,
+  type CreatePanOptions,
   type DragControls,
   type ElementProps,
   type MotionMergedProps,
@@ -481,5 +483,19 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
 
   it("ViewportOptions.root is a static Element, no longer a function", () => {
     expectTypeOf<ViewportOptions["root"]>().toEqualTypeOf<Element | null | undefined>()
+  })
+
+  it("createPan accepts ref as Accessor OR static HTMLElement", () => {
+    expectTypeOf(createPan).parameter(0).toEqualTypeOf<
+      Accessor<HTMLElement | null | undefined> | HTMLElement | null | undefined
+    >()
+  })
+
+  it("createPan accepts options as static OR accessor form", () => {
+    // Parameter has a default (`= {}`) so use Parameters<…> to include the
+    // `undefined` arm from the default.
+    expectTypeOf<Parameters<typeof createPan>[1]>().toEqualTypeOf<
+      CreatePanOptions | Accessor<CreatePanOptions> | undefined
+    >()
   })
 })
