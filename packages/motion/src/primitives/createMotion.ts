@@ -1,5 +1,5 @@
 import { animate, type MotionValue } from "motion"
-import { createSignal, onCleanup, untrack } from "solid-js"
+import { type Accessor, createSignal, onCleanup, untrack } from "solid-js"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
@@ -166,9 +166,10 @@ export type CreateMotionConfig = {
  */
 export function createMotion(
   el: MotionElement,
-  getOpts: () => MotionOptions,
+  opts: MotionOptions | Accessor<MotionOptions>,
   config?: CreateMotionConfig,
 ): void {
+  const getOpts: () => MotionOptions = typeof opts === "function" ? opts : () => opts
   // Q4 follow-up: useMotion passes a shadowed (controlling-aware) context;
   // standalone callers fall back to the live VariantContext.
   const parentVariantCtx: VariantContextValue = config?.parentContext ?? useVariantContext()

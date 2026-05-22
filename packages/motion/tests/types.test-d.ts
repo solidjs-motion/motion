@@ -9,6 +9,7 @@ import { describe, expectTypeOf, it } from "vitest"
 import {
   type AnimateValue,
   type AnimationPlaybackControls,
+  createMotion,
   createMotionValue,
   type DragControls,
   type ElementProps,
@@ -445,3 +446,20 @@ describe("type errors (negative tests)", () => {
 
 // Helper: ensure ElementProps is exported & visible (the type alias itself).
 type _AssertElementPropsExported = ElementProps
+
+// ---------------------------------------------------------------------------
+// 0.2.0 API audit — type assertions for the consistency pass.
+// Tracks the Accessor<Options> | Options widening across primitives plus the
+// per-field-accessor flattening on ViewportOptions.root and DragConstraints.
+// Each step in `docs/plans/0.2.0-api-audit.md` §12 lands its assertions here.
+// ---------------------------------------------------------------------------
+
+describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
+  it("useMotion accepts both static and accessor option forms", () => {
+    expectTypeOf(useMotion).parameter(0).toEqualTypeOf<MotionOptions | Accessor<MotionOptions>>()
+  })
+
+  it("createMotion accepts both static and accessor option forms", () => {
+    expectTypeOf(createMotion).parameter(1).toEqualTypeOf<MotionOptions | Accessor<MotionOptions>>()
+  })
+})

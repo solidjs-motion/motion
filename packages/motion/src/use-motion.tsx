@@ -58,7 +58,7 @@ import { isControllingVariants, useVariantContext, VariantContext } from "./vari
  * For the common "JSX wrapper does propagation automatically" pattern, use
  * `<motion.div>` (Phase 4).
  */
-export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotionResult {
+export function useMotion(opts: MotionOptions | Accessor<MotionOptions>): UseMotionResult {
   const getOpts: () => MotionOptions = typeof opts === "function" ? opts : () => opts
 
   // ---------- Parent context (with controlling-variants shadowing) ----------
