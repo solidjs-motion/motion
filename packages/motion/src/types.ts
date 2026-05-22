@@ -179,8 +179,14 @@ export type ViewportOptions = {
    *   crossings, so `entry.intersectionRatio` stays stale.
    */
   amount?: "some" | "all" | number | number[]
-  /** Solid-style accessor returning the root element; defaults to viewport. */
-  root?: () => Element | null
+  /**
+   * Root element to scope the {@link IntersectionObserver} to. Defaults to
+   * the viewport. For reactivity, wrap the whole options object in an
+   * accessor — e.g. `createInView(el, () => ({ root: rootEl() }))` or
+   * `useMotion(() => ({ inViewOptions: { root: rootEl() } }))`. Plain
+   * field-level accessors were dropped in 0.2.0.
+   */
+  root?: Element | null
 }
 
 // ---------------------------------------------------------------------------

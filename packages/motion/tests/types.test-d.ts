@@ -9,6 +9,8 @@ import { describe, expectTypeOf, it } from "vitest"
 import {
   type AnimateValue,
   type AnimationPlaybackControls,
+  createInView,
+  type CreateInViewOptions,
   createMotion,
   createMotionValue,
   type DragControls,
@@ -461,5 +463,23 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
 
   it("createMotion accepts both static and accessor option forms", () => {
     expectTypeOf(createMotion).parameter(1).toEqualTypeOf<MotionOptions | Accessor<MotionOptions>>()
+  })
+
+  it("createInView accepts ref as Accessor OR static Element", () => {
+    expectTypeOf(createInView).parameter(0).toEqualTypeOf<
+      Accessor<Element | null | undefined> | Element | null | undefined
+    >()
+  })
+
+  it("createInView accepts options as static OR accessor form", () => {
+    // Parameter has a default (`= {}`) so its inferred type includes
+    // `undefined` — assert against Parameters<…> directly.
+    expectTypeOf<Parameters<typeof createInView>[1]>().toEqualTypeOf<
+      CreateInViewOptions | Accessor<CreateInViewOptions> | undefined
+    >()
+  })
+
+  it("ViewportOptions.root is a static Element, no longer a function", () => {
+    expectTypeOf<ViewportOptions["root"]>().toEqualTypeOf<Element | null | undefined>()
   })
 })
