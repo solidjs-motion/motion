@@ -5,6 +5,47 @@ All notable changes to `solidjs-motion` / `@solidjs-motion/motion` are documente
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] — 2026-05-22
+
+### Fixed
+
+- **`createScroll` no longer paints a fully-filled progress bar on
+  client-side route navigation.** motion-utils' `progress()` returns `1` as
+  its edge-case fallback when `scrollHeight === clientHeight` (no
+  scrollable content). On a `<Presence mode="wait">` page transition, the
+  new route's `createScroll` subscribes while the new content is still in
+  Solid's wait-mode holding pen (off-DOM) — so the document's scroll
+  dimensions reflect only the outgoing route. If the outgoing route is
+  non-scrollable, motion-dom's first dispatch arrives with
+  `progress === 1`, `current === 0`, and `scrollLength === 0`, and the
+  user sees a 100%-full bar until the next user scroll.
+
+  `createScroll` now suppresses that edge-case dispatch and waits for a
+  real measurement (non-zero `scrollLength` on either axis OR non-zero
+  `current`) before forwarding values to the MotionValues. The MVs stay
+  at their initial `0` until layout resolves, then update once.
+
+### Added
+
+- **`createScroll` accepts a `trackContentSize?: boolean` option, defaulting
+  to `true`.** motion-dom's per-frame dimension check is what fires the
+  listener again once the new route's content swaps into the live DOM,
+  naturally flipping the suppression gate above. The overhead is two
+  property reads per frame per container — negligible. Users who know
+  their scroll surface size never changes can opt out with
+  `trackContentSize: false`.
+
+### Internal
+
+- `makeAccessor` in `motion-value` switched from manual
+  `createSignal` + `mv.on("change", ...)` to Solid's `from()` primitive —
+  the standard pattern for adapting subscribe-shaped sources to Accessors.
+  Observationally identical; cuts ~6 lines per primitive.
+- `createInView` now carries a doc-header explainer for why it uses
+  `IntersectionObserver` directly instead of wrapping motion's `inView()`
+  (array thresholds and symmetric enter/leave reactivity, both of which
+  motion's wrapper doesn't surface).
+
 ## [0.1.6] — 2026-05-21
 
 ### Fixed

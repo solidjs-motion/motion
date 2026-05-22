@@ -1,5 +1,5 @@
 import { scroll as motionScroll } from "motion"
-import { createEffect, onCleanup } from "solid-js"
+import { batch, createEffect, onCleanup } from "solid-js"
 import type { MotionValueAccessor } from "../types"
 import { createMotionValue } from "./motion-value"
 
@@ -12,6 +12,7 @@ import { createMotionValue } from "./motion-value"
 type ScrollAxisInfo = {
   current: number
   progress: number
+  scrollLength: number
 }
 
 type MotionScrollInfo = {
@@ -31,6 +32,24 @@ export type CreateScrollOptions = {
   axis?: "x" | "y"
   /** Intersection offsets controlling when progress reaches 0/1. */
   offset?: ScrollOffset
+  /**
+   * Re-measure scroll dimensions every frame so progress stays correct when
+   * page content changes size without a "scroll" event firing. Defaults to
+   * `true`.
+   *
+   * The overhead is two property reads per frame per container — negligible
+   * in practice. Set to `false` only if you know the scroll surface's size
+   * never changes after subscription.
+   *
+   * Why default-on: motion-utils' `progress()` returns `1` as its edge-case
+   * fallback when `scrollHeight === clientHeight` (no scrollable content).
+   * On a client-side route transition, the new route's `createScroll` runs
+   * while the new content is still in a `<Presence mode="wait">` holding
+   * pen (off-DOM), so the document's scroll dimensions reflect only the
+   * outgoing route. Without dimension tracking, that bogus initial dispatch
+   * is the *only* signal until the user scrolls.
+   */
+  trackContentSize?: boolean
 }
 
 export type CreateScrollResult = {
@@ -66,16 +85,6 @@ export function createScroll(options?: CreateScrollOptions): CreateScrollResult 
   const scrollXProgress = createMotionValue(0)
   const scrollYProgress = createMotionValue(0)
 
-  // motion's scroll callback signature has two forms (OnScrollProgress and
-  // OnScrollWithInfo). With two parameters, info is passed.
-  const handler = (_progress: number, info?: MotionScrollInfo) => {
-    if (!info) return
-    scrollX.set(info.x.current)
-    scrollY.set(info.y.current)
-    scrollXProgress.set(info.x.progress)
-    scrollYProgress.set(info.y.progress)
-  }
-
   // createEffect — Solid-idiomatic for side-effect setup (attaching the
   // motion scroll subscription). First iteration runs in the next
   // microtask, which is harmless: scroll events can't fire before the
@@ -88,11 +97,54 @@ export function createScroll(options?: CreateScrollOptions): CreateScrollResult 
   createEffect(() => {
     const container = options?.container?.() ?? undefined
     const target = options?.target?.() ?? undefined
+    const trackContentSize = options?.trackContentSize ?? true
+
+    // Suppress motion-dom's "no scrollable content" edge-case dispatch.
+    //
+    // motion-utils' `progress(0, 0, 0)` returns `1` when `scrollHeight`
+    // equals `clientHeight`. On a Presence wait-mode route transition,
+    // the new route mounts in an off-DOM holding pen — at subscribe time
+    // `document.documentElement.scrollHeight` still reflects only the
+    // outgoing (often non-scrollable) route, so the very first handler
+    // call arrives with `scrollLength === 0` on both axes and a bogus
+    // `progress === 1`. Without suppression, that paints a fully-filled
+    // progress bar until the next user scroll.
+    //
+    // We hold the MVs at their initial 0 until motion-dom reports a real
+    // measurement — non-zero `scrollLength` on either axis OR non-zero
+    // `current`. With `trackContentSize` default-on, motion-dom's
+    // per-frame dimension check fires the listener again as soon as the
+    // new content lands in the live DOM, naturally flipping the gate.
+    let hasRealMeasurement = false
+
+    const handler = (_progress: number, info?: MotionScrollInfo): void => {
+      if (!info) return
+
+      if (
+        !hasRealMeasurement &&
+        info.x.scrollLength === 0 &&
+        info.y.scrollLength === 0 &&
+        info.x.current === 0 &&
+        info.y.current === 0
+      ) {
+        return
+      }
+      hasRealMeasurement = true
+
+      batch(() => {
+        scrollX.set(info.x.current)
+        scrollY.set(info.y.current)
+        scrollXProgress.set(info.x.progress)
+        scrollYProgress.set(info.y.progress)
+      })
+    }
+
     const cleanup = motionScroll(handler, {
       container: container as HTMLElement | undefined,
       target: target as HTMLElement | undefined,
       axis: options?.axis,
       offset: options?.offset,
+      trackContentSize,
     } as Parameters<typeof motionScroll>[1])
     onCleanup(cleanup)
   })

@@ -120,6 +120,93 @@ describe("createScroll", () => {
     expect(first?.cleanup).toHaveBeenCalled()
     dispose()
   })
+
+  // Regression: motion-utils' `progress(0, 0, 0)` returns 1 when there's no
+  // scrollable content (scrollHeight === clientHeight). On a Presence
+  // wait-mode route transition, the new route's createScroll subscribes
+  // while the new content is still in an off-DOM holding pen — at subscribe
+  // time the live DOM is the outgoing route, which may be non-scrollable.
+  // motion-dom then dispatches `progress === 1` immediately, painting a
+  // fully-filled progress bar until the user scrolls. createScroll must
+  // suppress this edge-case dispatch until a real measurement arrives.
+  it("suppresses the 'no scrollable content' edge-case dispatch", async () => {
+    const { r, dispose } = createRoot((dispose) => ({ r: createScroll(), dispose }))
+    await flush()
+    const entry = scrollHandlers[0]
+    expect(entry).toBeDefined()
+
+    // Edge-case dispatch: motion-dom's progress() fell through its
+    // toFromDifference === 0 branch, returning 1 with zero current and
+    // zero scrollLength on both axes.
+    entry?.handler(1, {
+      x: { current: 0, progress: 1, scrollLength: 0 },
+      y: { current: 0, progress: 1, scrollLength: 0 },
+    })
+    expect(r.scrollY.get()).toBe(0)
+    expect(r.scrollYProgress.get()).toBe(0)
+    expect(r.scrollX.get()).toBe(0)
+    expect(r.scrollXProgress.get()).toBe(0)
+
+    // Real measurement lands (e.g. the new route swapped into the live DOM
+    // and trackContentSize's per-frame dimension check refired). Gate
+    // flips; MVs update.
+    entry?.handler(0, {
+      x: { current: 0, progress: 0, scrollLength: 0 },
+      y: { current: 0, progress: 0, scrollLength: 4000 },
+    })
+    expect(r.scrollYProgress.get()).toBe(0)
+
+    // Subsequent edge-case dispatches no longer suppress — once we've
+    // observed real layout, we trust the engine.
+    entry?.handler(1, {
+      x: { current: 0, progress: 1, scrollLength: 0 },
+      y: { current: 0, progress: 1, scrollLength: 0 },
+    })
+    expect(r.scrollYProgress.get()).toBe(1)
+
+    dispose()
+  })
+
+  it("opens the gate when only `current` is non-zero", async () => {
+    const { r, dispose } = createRoot((dispose) => ({ r: createScroll(), dispose }))
+    await flush()
+    const entry = scrollHandlers[0]
+    expect(entry).toBeDefined()
+
+    // scrollLength can momentarily be 0 mid-transition while scrollTop is
+    // already non-zero (e.g. user scrolled, then content collapsed). The
+    // gate must consider `current` too, otherwise legitimate scrolls get
+    // silently dropped.
+    entry?.handler(0, {
+      x: { current: 0, progress: 0, scrollLength: 0 },
+      y: { current: 50, progress: 0, scrollLength: 0 },
+    })
+    expect(r.scrollY.get()).toBe(50)
+
+    dispose()
+  })
+
+  it("defaults trackContentSize to true", async () => {
+    const { dispose } = createRoot((dispose) => {
+      createScroll()
+      return { dispose }
+    })
+    await flush()
+    const opts = scrollSpy.mock.calls[0]?.[1]
+    expect((opts as Record<string, unknown>).trackContentSize).toBe(true)
+    dispose()
+  })
+
+  it("honors an explicit trackContentSize: false override", async () => {
+    const { dispose } = createRoot((dispose) => {
+      createScroll({ trackContentSize: false })
+      return { dispose }
+    })
+    await flush()
+    const opts = scrollSpy.mock.calls[0]?.[1]
+    expect((opts as Record<string, unknown>).trackContentSize).toBe(false)
+    dispose()
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import {
   type SpringOptions,
   springValue,
 } from "motion"
-import { type Accessor, createComputed, createSignal, onCleanup } from "solid-js"
+import { type Accessor, createComputed, createSignal, from, onCleanup } from "solid-js"
 import type { MotionValueAccessor } from "../types"
 
 // ---------------------------------------------------------------------------
@@ -28,16 +28,17 @@ type MotionValueEvent = "change" | "animationStart" | "animationComplete" | "ani
 // ---------------------------------------------------------------------------
 
 function makeAccessor<T>(mv: MotionValue<T>): MotionValueAccessor<T> {
-  // Solid signal bridge — kept in sync via `mv.on("change", ...)`.
-  const [signal, setSignal] = createSignal<T>(mv.get())
-  // Wrap in updater form so Setter accepts T regardless of its shape (T could
-  // include Function for callback-like motion values).
-  onCleanup(mv.on("change", (v) => setSignal(() => v)))
+  // Solid `from` bridge — seeds with `mv.get()` and re-syncs on every
+  // `change` event. The returned accessor is non-undefined because we
+  // call `set` synchronously inside the producer; the cast tightens the
+  // type so the rest of the hybrid (and consumers like `useMotion`) see
+  // `Accessor<T>` rather than `Accessor<T | undefined>`.
+  const signal = from<T>((set) => {
+    set(() => mv.get())
+    return mv.on("change", set)
+  }) as MotionValueAccessor<T>
 
-  // The callable: invoking returns the tracked signal value.
-  const fn = (() => signal()) as MotionValueAccessor<T>
-
-  return new Proxy(fn, {
+  return new Proxy(signal, {
     get(target, prop, receiver) {
       // Function intrinsics (call/apply/bind) stay on the function itself so
       // `fn.call(...)` etc. behave normally.

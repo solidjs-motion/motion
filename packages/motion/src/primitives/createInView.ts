@@ -10,6 +10,26 @@ import type { ViewportOptions } from "../types"
 // objects aren't animate-able, so a MotionValueAccessor would only add weight
 // (compare with createPan, where numeric fields ARE MVs because they're
 // animate-able and composable).
+//
+// Uses `IntersectionObserver` directly instead of wrapping motion's `inView()`
+// for two reasons:
+//
+//   1. motion's `inView` silently drops `amount: number[]`. Its threshold
+//      mapping is `typeof amount === "number" ? amount : thresholds[amount]`
+//      (with `thresholds = { some: 0, all: 1 }`), so an array falls into
+//      `thresholds[undefined]` and the observer ends up with no threshold.
+//      We need array thresholds for continuous `intersectionRatio` reads
+//      (single-threshold observers stay silent between crossings, leaving
+//      `entry.intersectionRatio` stale).
+//
+//   2. motion's `inView` is asymmetric and callback-only: it guards on
+//      `isIntersecting === Boolean(onEnd)` and only fires on the
+//      enter/leave transition, with `onEnd` lifecycle bound to whether
+//      `onStart` returned a function. That contract doesn't reactively
+//      surface every threshold crossing, and bridging it to a Solid signal
+//      ends up duplicating most of the IntersectionObserver bookkeeping
+//      anyway. Going direct is leaner and gives us the full motion-react
+//      `ViewportOptions` surface.
 // ---------------------------------------------------------------------------
 
 export type CreateInViewOptions = ViewportOptions & {

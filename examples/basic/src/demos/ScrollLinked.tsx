@@ -1,4 +1,4 @@
-import { createScroll, createTransform, useMotion } from "solidjs-motion"
+import { createScroll, createTransform, motion } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
 // ScrollLinked — createScroll → createTransform → MotionValue-driven width.
@@ -10,7 +10,7 @@ import { createScroll, createTransform, useMotion } from "solidjs-motion"
 export default function ScrollLinked() {
   const { scrollYProgress } = createScroll()
   const widthPct = createTransform(scrollYProgress, [0, 1], ["0%", "100%"])
-  const motion = useMotion({ animate: { width: widthPct } })
+
   return (
     <div>
       <div
@@ -24,7 +24,15 @@ export default function ScrollLinked() {
           background: "rgba(0,0,0,0.06)",
         }}
       >
-        <div {...motion({ style: { height: "100%", background: "tomato" } })} />
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          style={{
+            height: "100%",
+            background: "tomato",
+            width: widthPct,
+          }}
+        />
       </div>
       <p style={{ color: "var(--color-fg)", "margin-bottom": "2rem" }}>
         Scroll the page — the fixed bar at the top of the viewport tracks scrollYProgress from 0 to
