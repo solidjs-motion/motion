@@ -1,7 +1,9 @@
 import { animate, type MotionValue } from "motion"
 import { type Accessor, createSignal, onCleanup, untrack } from "solid-js"
+import { useLayoutGroupContext } from "../layout-group-context"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
+import { useProjectionContext } from "../projection-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
 import {
   formatProperty,
@@ -23,6 +25,7 @@ import type {
 import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
 import { createDrag } from "./createDrag"
 import { createGestures } from "./createGestures"
+import { createLayoutController } from "./createLayoutController"
 import { type ActiveStoreTuple, createGestureStateMachine } from "./gesture-state"
 import {
   createValueRegistry,
@@ -180,6 +183,12 @@ export function createMotion(
   const presence = usePresenceContext()
   const motionConfig = useMotionConfig()
   const systemReducedMotion = createReducedMotion()
+  // Layout contexts read unconditionally — same pattern as
+  // presence/motionConfig above (Q-option a from step 7 sign-off). The
+  // controller below consumes them only when `opts.layout` is truthy
+  // at construction; non-layout elements pay two `Map.get` calls.
+  const projectionContext = useProjectionContext()
+  const layoutGroupContext = useLayoutGroupContext()
 
   // ---------- Per-element value registry (lazy — Stage 4.5) ----------
   // Most elements never need a registry: they have no MV in style, no static
@@ -675,6 +684,32 @@ export function createMotion(
   // surface a dev warning here later if needed.
   if (el instanceof HTMLElement) {
     createDrag(el, getOpts, setActive)
+  }
+
+  // ---------- Layout (0.2.0 step 7 — basic FLIP) ----------
+  // Snapshot `opts.layout` at construction; reactive toggle-off is the
+  // Q8/risk #4 polish, deferred to its own step. The controller
+  // subscribes to layoutDependency + LayoutGroup.broadcast; RO(self) +
+  // parent MO triggers come in step 8. Bridging the controller into
+  // the registry-write path requires `bridgeActive = true` so the
+  // writer composes the layer's transform contribution — without this
+  // the writer stays on its no-op default and the FLIP visual never
+  // paints. Force activation by ensuring the registry exists and the
+  // writer recompiles when the layer's shape changes (via the
+  // controller's `refreshWriter` callback).
+  if (initialOpts.layout) {
+    ensureRegistry()
+    bridgeActive = true
+    refreshWriter()
+    createLayoutController(el, getOpts, {
+      registry: ensureRegistry(),
+      refreshWriter,
+      writeFromRegistry,
+      projectionContext,
+      layoutGroupContext,
+      motionConfig,
+      systemReducedMotion,
+    })
   }
 }
 
