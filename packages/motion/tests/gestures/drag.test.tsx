@@ -633,11 +633,15 @@ describe("drag — constraints", () => {
     // jsdom returns 0-rects by default; stub getBoundingClientRect on both.
     let containerEl!: HTMLDivElement
     const { container, unmount } = render(() => {
-      const m = useMotion({
+      // useMotion options wrapped in a function — accessor-form lets
+      // dragConstraints read `containerEl` fresh at drag-start, after the
+      // ref callback has populated it. Per-field accessor on
+      // dragConstraints was dropped in 0.2.0.
+      const m = useMotion(() => ({
         drag: true,
-        dragConstraints: () => containerEl,
+        dragConstraints: containerEl,
         dragElastic: 0,
-      })
+      }))
       return (
         <div ref={(r) => (containerEl = r)} style={{ width: "200px", height: "100px" }}>
           <div {...m()} />

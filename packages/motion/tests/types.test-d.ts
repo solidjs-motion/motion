@@ -17,6 +17,7 @@ import {
   type CreatePanOptions,
   createScroll,
   type CreateScrollOptions,
+  type DragConstraints,
   type DragControls,
   type ElementProps,
   type MotionMergedProps,
@@ -512,5 +513,14 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
   it("CreateScrollOptions.container and .target are static Elements, not functions", () => {
     expectTypeOf<CreateScrollOptions["container"]>().toEqualTypeOf<Element | null | undefined>()
     expectTypeOf<CreateScrollOptions["target"]>().toEqualTypeOf<Element | null | undefined>()
+  })
+
+  it("DragConstraints accepts only a numeric rect or a static HTMLElement", () => {
+    // The () => HTMLElement | null arm was dropped in 0.2.0. Reactivity
+    // comes from wrapping MotionOptions in an accessor.
+    expectTypeOf<DragConstraints>().toEqualTypeOf<
+      | { top?: number; left?: number; right?: number; bottom?: number }
+      | HTMLElement
+    >()
   })
 })

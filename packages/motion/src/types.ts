@@ -194,19 +194,20 @@ export type ViewportOptions = {
 // ---------------------------------------------------------------------------
 
 /**
- * Drag bounds (Q8). Three shapes:
+ * Drag bounds (Q8). Two shapes:
  *
  * - **Numeric** (`{ top, left, right, bottom }`): absolute MV-value bounds.
  *   Missing keys are unbounded on that side.
  * - **HTMLElement**: container the dragged element must stay inside. Bounds
  *   are computed at drag-start from the container's bounding rect.
- * - **`() => HTMLElement | null`**: Solid-style accessor for a reactive
- *   container ref. Called at drag-start.
+ *
+ * For a reactive container, wrap the surrounding `MotionOptions` in an
+ * accessor — e.g. `useMotion(() => ({ drag: true, dragConstraints: containerEl() }))`.
+ * Per-field accessors (`() => HTMLElement | null`) were dropped in 0.2.0.
  */
 export type DragConstraints =
   | { top?: number; left?: number; right?: number; bottom?: number }
   | HTMLElement
-  | (() => HTMLElement | null)
 
 export type DragOptions = {
   drag?: boolean | "x" | "y"
