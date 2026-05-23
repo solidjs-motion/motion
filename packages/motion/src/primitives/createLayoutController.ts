@@ -39,6 +39,69 @@ import type {
 import { mergeTransition } from "./createMotion"
 import type { LayoutAxis, ValueRegistry } from "./value-registry"
 
+// ---------------------------------------------------------------------------
+// Shared parent-MutationObserver cache
+//
+// Each layout element subscribes to mutations on its IMMEDIATE PARENT. With
+// N siblings (e.g., 1000-item list), naïvely allocating N observers on the
+// same parent is wasteful. This module-level WeakMap shares ONE observer
+// per parent; subscribers register callbacks that all fire on any matching
+// mutation, and the last unsubscriber disconnects the observer.
+//
+// Mutation filter (locked Q4 grill):
+//   - `childList: true` — sibling reorder / insert / delete.
+//   - `attributes: true` with `attributeFilter: ["style", "class"]` — parent
+//     restyles (e.g., `alignItems: open() ? "flex-start" : "flex-end"`) that
+//     reposition descendants without resizing them. RO(self) does not catch
+//     these because the descendant's own box dimensions don't change.
+//
+// False-positive notifications (parent mutated transform-only mid-FLIP, or
+// the descendant's local-coord rect is unchanged) de-dupe at the measurement
+// layer via `First === Last`.
+// ---------------------------------------------------------------------------
+
+type ParentMoEntry = {
+  observer: MutationObserver
+  subscribers: Set<() => void>
+}
+
+const parentMoCache = new WeakMap<Element, ParentMoEntry>()
+
+function subscribeParentMo(parent: Element, onChange: () => void): () => void {
+  let entry = parentMoCache.get(parent)
+  if (entry === undefined) {
+    const subscribers = new Set<() => void>()
+    const observer = new MutationObserver(() => {
+      // Each subscriber's onChange is the controller's
+      // scheduleMeasurement(), which is idempotent per frame; multiple-
+      // subscriber dispatch within a single MO firing is safe.
+      for (const sub of subscribers) sub()
+    })
+    observer.observe(parent, {
+      childList: true,
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    })
+    entry = { observer, subscribers }
+    parentMoCache.set(parent, entry)
+  }
+  const captured = entry
+  captured.subscribers.add(onChange)
+  return () => {
+    captured.subscribers.delete(onChange)
+    if (captured.subscribers.size === 0) {
+      captured.observer.disconnect()
+      // Only delete from the cache if this entry is still the current
+      // one. If a new subscriber registered after this entry hit zero
+      // (rare; would require a same-microtask re-subscribe), it would
+      // create a NEW entry — don't clobber it.
+      if (parentMoCache.get(parent) === captured) {
+        parentMoCache.delete(parent)
+      }
+    }
+  }
+}
+
 export type CreateLayoutControllerConfig = {
   /** Registry to install layout-layer MVs into. */
   registry: ValueRegistry
@@ -262,6 +325,26 @@ export function createLayoutController(
     layoutGroupContext.broadcast()
     scheduleMeasurement()
   })
+
+  // ResizeObserver(self) — fires when this element's box changes for any
+  // reason (own style write via Solid binding, class change, parent
+  // flex/grid reflow, font/image load, content reflow). One RO per
+  // layout element; cleanup disconnects on owner disposal.
+  const ro = new ResizeObserver(() => {
+    scheduleMeasurement()
+  })
+  ro.observe(el)
+  onCleanup(() => ro.disconnect())
+
+  // MutationObserver on the immediate parent — shared across sibling
+  // layout elements via the module-level WeakMap (see header). Parent is
+  // snapshotted at construction; re-parenting at runtime isn't supported
+  // in 0.2.0 (user remounts via key for that case).
+  const parentEl = el.parentElement
+  if (parentEl !== null) {
+    const unsubscribe = subscribeParentMo(parentEl, scheduleMeasurement)
+    onCleanup(unsubscribe)
+  }
 
   onCleanup(() => {
     live = false
