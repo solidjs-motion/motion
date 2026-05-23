@@ -18,6 +18,7 @@ export {
 } from "./presence"
 export { PresenceContext, usePresenceContext } from "./presence-context"
 // Imperative motion primitive (advanced — most users want useMotion instead).
+export { createAttributeSignal } from "./primitives/createAttributeSignal"
 export { createDragControls } from "./primitives/createDragControls"
 export {
   type CreateInViewOptions,
