@@ -3,6 +3,8 @@
 // Re-exports from the upstream motion engine.
 export { animate, inView, isMotionValue, motionValue, scroll, spring } from "motion"
 // Context layer.
+export { LayoutGroup } from "./layout-group"
+export { LayoutGroupContext, useLayoutGroupContext } from "./layout-group-context"
 export { MotionConfig, MotionConfigContext, useMotionConfig } from "./motion-config"
 // motion proxy (Phase 4) — indexable surface yielding cached, motion-aware
 // tag-components per HTML/SVG tag. `motion.create` (the HOC entry point)
