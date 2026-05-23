@@ -1,10 +1,19 @@
 import { mergeRefs } from "@solid-primitives/refs"
 import { isMotionValue, type MotionValue } from "motion"
-import { type Accessor, type Component, type JSX, mergeProps, onMount, untrack } from "solid-js"
+import {
+  type Accessor,
+  type Component,
+  createSignal,
+  type JSX,
+  mergeProps,
+  onMount,
+  untrack,
+} from "solid-js"
 import { createStore } from "solid-js/store"
 import { usePresenceContext } from "./presence-context"
 import { asVariantLabels, createMotion, resolveTarget } from "./primitives/createMotion"
 import type { GestureStateName } from "./primitives/gesture-state"
+import { ProjectionContext, useProjectionContext } from "./projection-context"
 import { snapshotValue, TRANSFORM_KEYS, targetToStyle } from "./style"
 import type {
   ElementProps,
@@ -12,6 +21,7 @@ import type {
   MotionMergedProps,
   MotionOptions,
   MotionStyle,
+  ProjectionContextValue,
   Target,
   Transition,
   UseMotionResult,
@@ -153,7 +163,15 @@ export function useMotion(opts: MotionOptions | Accessor<MotionOptions>): UseMot
   // this flag to skip its own applyStaticStyle pass — without the
   // styleMotionValues branch it would re-apply only the initialTarget half
   // and clobber the MV-snapshot half that's already in the inline style.
+  // `elSignal` is set by `motionRef` once Solid attaches the DOM element.
+  // The `m.Provider` projection-context value reads this lazily so
+  // descendants that consume the context before parent's ref fires fall
+  // back to the inherited projection parent; subsequent measurements
+  // (which run in `frame.read`, post-mount) see this element.
+  const [elSignal, setElSignal] = createSignal<MotionElement | undefined>(undefined)
+
   const motionRef = (el: MotionElement) => {
+    setElSignal(el)
     createMotion(el, getOpts, {
       initialAppliedBySSR:
         initialTarget !== null ||
@@ -373,8 +391,53 @@ export function useMotion(opts: MotionOptions | Accessor<MotionOptions>): UseMot
     transition: () => getOpts().transition,
   }
 
+  // ---------- Projection context value pushed via `m.Provider` ----------
+  // Locked in Q3 of the grill session: useMotion direct-use opts into
+  // projection ancestry by wrapping descendants in `<m.Provider>`; the
+  // proxy (Phase 4) auto-wraps so the common case requires no manual
+  // Provider. Without the wrap, descendant `layout` elements fall back
+  // to the inherited (implicit-root document.documentElement) projection
+  // parent — correct top-level behaviour, wrong nested behaviour.
+  //
+  // The chain-reset rule for `scrollAncestors` (locked Q-layoutScroll):
+  // `layout`/`layoutRoot` becomes the new projection parent — outer
+  // scrolls above it cancel for descendants, so the chain RESETS to
+  // either `[el]` (if also `layoutScroll`) or `[]`. A `layoutScroll`-only
+  // element extends the inherited chain without changing the projection
+  // parent.
+  //
+  // Accessors are recomputed on each call so descendants see live
+  // values when opts toggle.
+  const parentProjectionCtx: ProjectionContextValue = useProjectionContext()
+  const myProjectionCtx: ProjectionContextValue = {
+    parentEl: () => {
+      const opts = getOpts()
+      const el = elSignal()
+      if (el !== undefined && (opts.layout || opts.layoutRoot)) return el
+      return parentProjectionCtx.parentEl()
+    },
+    scrollAncestors: () => {
+      const opts = getOpts()
+      const el = elSignal()
+      const needsLayoutPush = Boolean(opts.layout || opts.layoutRoot)
+      const needsScrollPush = Boolean(opts.layoutScroll)
+      if (el === undefined || (!needsLayoutPush && !needsScrollPush)) {
+        return parentProjectionCtx.scrollAncestors()
+      }
+      if (needsLayoutPush) {
+        // RESET — outer scrolls above the new projection parent cancel out.
+        return needsScrollPush ? [el] : []
+      }
+      // layoutScroll-only: extend the inherited chain without changing
+      // projection parent.
+      return [el, ...parentProjectionCtx.scrollAncestors()]
+    },
+  }
+
   const Provider: Component<{ children: JSX.Element }> = (props) => (
-    <VariantContext.Provider value={myVariantCtx}>{props.children}</VariantContext.Provider>
+    <ProjectionContext.Provider value={myProjectionCtx}>
+      <VariantContext.Provider value={myVariantCtx}>{props.children}</VariantContext.Provider>
+    </ProjectionContext.Provider>
   )
 
   // Attach Provider to the callable function. Object.assign merges types
