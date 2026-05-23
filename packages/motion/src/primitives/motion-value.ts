@@ -8,7 +8,14 @@ import {
   type SpringOptions,
   springValue,
 } from "motion"
-import { type Accessor, createComputed, createSignal, from, onCleanup } from "solid-js"
+import {
+  type Accessor,
+  createComputed,
+  createSignal,
+  from,
+  onCleanup,
+  untrack,
+} from "solid-js"
 import type { MotionValueAccessor } from "../types"
 
 // ---------------------------------------------------------------------------
@@ -183,15 +190,46 @@ type TransformOptions = NonNullable<Parameters<typeof motionTransform>[2]>
  */
 export function createTransform<I extends number, O>(
   input: MotionValue<I> | Accessor<I>,
-  inputRange: I[],
-  outputRange: O[],
-  options?: TransformOptions,
+  inputRange: I[] | Accessor<I[]>,
+  outputRange: O[] | Accessor<O[]>,
+  options?: TransformOptions | Accessor<TransformOptions>,
 ): MotionValueAccessor<O> {
-  const mapper = motionTransform(inputRange, outputRange, options)
-  const mv = motionValue(mapper(readInputValue(input)))
-  onCleanup(() => mv.destroy())
-  subscribeInput(input, (v) => mv.set(mapper(v)))
-  return makeAccessor(mv)
+  const getInputRange: Accessor<I[]> =
+    typeof inputRange === "function" ? inputRange : () => inputRange
+  const getOutputRange: Accessor<O[]> =
+    typeof outputRange === "function" ? outputRange : () => outputRange
+  const getOpts: () => TransformOptions | undefined =
+    typeof options === "function" ? options : () => options
+
+  // Eager seed — untrack each getter so the calling component's reactive
+  // scope (if any) doesn't subscribe to range/opts signals here. The
+  // reactive subscription lives in the createComputed below.
+  const initialMapper = motionTransform(
+    untrack(getInputRange),
+    untrack(getOutputRange),
+    untrack(getOpts),
+  )
+  const out = motionValue(initialMapper(readInputValue(input)))
+  onCleanup(() => out.destroy())
+
+  // Rebuild mapper + reattach input subscription whenever any of the
+  // three reactive inputs change. subscribeInput is called inside
+  // createComputed, so its cleanup (whether via onCleanup for MV inputs
+  // or createComputed for accessor inputs) is iteration-scoped — the
+  // previous subscription tears down before the new mapper takes over.
+  //
+  // The eager readInputValue(input) MUST be wrapped in untrack: for an
+  // Accessor input, a naked read would subscribe the OUTER createComputed
+  // to `input`, causing the mapper to rebuild on every input tick instead
+  // of only on ranges/opts changes. Input tracking belongs to the inner
+  // subscribeInput, not the outer.
+  createComputed(() => {
+    const mapper = motionTransform(getInputRange(), getOutputRange(), getOpts())
+    out.set(mapper(untrack(() => readInputValue(input))))
+    subscribeInput(input, (v) => out.set(mapper(v)))
+  })
+
+  return makeAccessor(out)
 }
 
 // ---------------------------------------------------------------------------

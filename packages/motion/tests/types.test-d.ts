@@ -17,6 +17,7 @@ import {
   type CreatePanOptions,
   createScroll,
   type CreateScrollOptions,
+  createTransform,
   type DragConstraints,
   type DragControls,
   type ElementProps,
@@ -522,5 +523,24 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
       | { top?: number; left?: number; right?: number; bottom?: number }
       | HTMLElement
     >()
+  })
+
+  it("createTransform accepts inputRange/outputRange as static OR accessor", () => {
+    // Q4: ranges are widened to support reactive opts.
+    expectTypeOf<Parameters<typeof createTransform>[1]>().toEqualTypeOf<
+      number[] | Accessor<number[]>
+    >()
+    // Output range parameter uses the generic O — for the inferred-from-call
+    // case we check via a concrete instantiation.
+    const x = createMotionValue(0)
+    expectTypeOf(createTransform(x, [0, 1], [10, 20])).toMatchTypeOf<MotionValueAccessor<number>>()
+    // Accessor-form ranges compile.
+    expectTypeOf(
+      createTransform(
+        x,
+        () => [0, 1],
+        () => [10, 20],
+      ),
+    ).toMatchTypeOf<MotionValueAccessor<number>>()
   })
 })

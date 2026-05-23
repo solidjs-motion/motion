@@ -197,6 +197,70 @@ describe("createTransform", () => {
       dispose()
     })
   })
+
+  it("does not rebuild the mapper when only the input (Accessor) changes", () => {
+    // Q4 regression test for the inner `untrack` in createTransform's
+    // createComputed body. Without untrack, the outer computed subscribes
+    // to `input` via `readInputValue(input)`, and EVERY input tick rebuilds
+    // the mapper (and re-attaches the input subscription) — defeating the
+    // point of the inner subscribeInput. With untrack, mapper builds happen
+    // ONLY on range/opts changes.
+    inRoot((dispose) => {
+      const inputRangeFn = vi.fn(() => [0, 100])
+      const [outRange, setOutRange] = createSignal([0, 100])
+      const [x, setX] = createSignal(0)
+
+      createTransform(x, inputRangeFn, outRange)
+
+      const initialCalls = inputRangeFn.mock.calls.length
+      expect(initialCalls).toBeGreaterThanOrEqual(1) // construction reads
+
+      // Input changes — should NOT trigger getInputRange re-reads, because
+      // input tracking belongs to the inner subscribeInput, not the outer
+      // createComputed.
+      setX(25)
+      setX(50)
+      setX(75)
+      expect(inputRangeFn.mock.calls.length).toBe(initialCalls)
+
+      // Range change — SHOULD trigger exactly one rebuild.
+      setOutRange([0, 200])
+      expect(inputRangeFn.mock.calls.length).toBe(initialCalls + 1)
+
+      dispose()
+    })
+  })
+
+  it("rebuilds the mapper when ranges change, preserving output MV identity", () => {
+    // Range-swap output-identity test. The output MV identity must remain
+    // stable across range changes so consumer .on("change") subscriptions
+    // and useMotion target references keep working.
+    inRoot((dispose) => {
+      const x = createMotionValue(50)
+      const [outRange, setOutRange] = createSignal([0, 100])
+      const mapped = createTransform(x, [0, 100], outRange)
+
+      expect(mapped.get()).toBe(50)
+
+      // Subscribe BEFORE the range change to prove the subscription survives.
+      const observed: number[] = []
+      const unsub = mapped.on("change", (v) => observed.push(v))
+
+      setOutRange([0, 200])
+      // After range change, mapper rebuilt and out re-seeded with the new
+      // mapper applied to the current input.
+      expect(mapped.get()).toBe(100)
+
+      // Subsequent input changes flow through the new mapper.
+      x.set(25)
+      expect(mapped.get()).toBe(50) // 25 mapped through [0,100]→[0,200] = 50
+
+      expect(observed).toContain(100)
+      expect(observed).toContain(50)
+      unsub()
+      dispose()
+    })
+  })
 })
 
 describe("createSpring", () => {
