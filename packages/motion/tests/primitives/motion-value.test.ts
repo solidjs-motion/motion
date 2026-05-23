@@ -1,4 +1,4 @@
-import { animate, isMotionValue, motionValue } from "motion"
+import { animate, isMotionValue, motionValue, type SpringOptions } from "motion"
 import { createComputed, createRoot, createSignal } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
@@ -11,6 +11,7 @@ import {
   createVelocity,
   toSignal,
 } from "../../src/primitives/motion-value"
+
 
 // Run `fn` inside a tracked reactive root; return the root's dispose so tests
 // can verify onCleanup behavior. Mirrors Solid's recommended test pattern.
@@ -216,6 +217,78 @@ describe("createSpring", () => {
       const smooth = createSpring(x)
       expect(isMotionValue(smooth)).toBe(true)
       expect(smooth.get()).toBe(5)
+      dispose()
+    })
+  })
+
+  it("preserves the output MV identity (and its subscriptions) across opts changes", () => {
+    // Accessor-form options reactivity. The output MV identity must remain
+    // stable across opts changes so consumer subscriptions via .on("change")
+    // survive — otherwise stashed handlers silently break. We don't depend
+    // on real spring physics here; the contract is that the SAME underlying
+    // MV is returned across the lifetime of the call. Driving it with
+    // `.set(...)` exercises the subscription path without needing RAF.
+    //
+    // Solid quirk: signal writes must happen INSIDE the createRoot scope for
+    // the inner createComputed to re-run synchronously. Out-of-root writes
+    // update the signal's stored value but don't fire registered listeners.
+    inRoot((dispose) => {
+      const x = createMotionValue(0)
+      const [opts, setOpts] = createSignal<SpringOptions>({ stiffness: 100, damping: 20 })
+      const smooth = createSpring(x, opts)
+
+      const observed: number[] = []
+      const unsub = smooth.on("change", (v) => observed.push(v))
+
+      // Drive the output via the MV's `.set` (simulates a spring tick).
+      smooth.set(50)
+      expect(observed).toEqual([50])
+
+      // Retune. If `out` had been rebuilt by createComputed, our listener
+      // would be orphaned on the OLD MV and the next set would miss it.
+      setOpts({ stiffness: 50, damping: 30 })
+
+      // Drive again post-retune.
+      smooth.set(75)
+      expect(observed).toEqual([50, 75])
+
+      unsub()
+      dispose()
+    })
+  })
+
+  it("preserves visual position when options change mid-flight", () => {
+    // Position continuity across retune (Q3/Option B). A naive impl that
+    // wires the new spring directly onto `bridge` writes `out.set(spring.get())`
+    // at the start of each createComputed iteration. The new spring's
+    // position is `bridge.get()` (the current target), so `out` teleports
+    // to the target — a visible visual jump precisely when the user retunes
+    // for UX reasons. The tempSource pattern captures `out.get()` before
+    // recreating, so the new spring starts at the current visual position.
+    //
+    // jsdom's RAF doesn't drive motion-dom's spring frame loop reliably in
+    // unit tests, so we simulate mid-flight by manually setting the output
+    // MV to a value between source-start (0) and target (100). The contract
+    // we're asserting is purely structural: the output MV's value at the
+    // moment opts change must not be stomped by `spring.get()`.
+    inRoot((dispose) => {
+      const x = createMotionValue(0)
+      const [opts, setOpts] = createSignal<SpringOptions>({ stiffness: 100, damping: 20 })
+      const smooth = createSpring(x, opts)
+
+      // Drive bridge toward target and place `out` at a mid-flight value.
+      x.set(100)
+      smooth.set(50) // simulate "spring is currently at 50, target is 100"
+      expect(smooth.get()).toBe(50)
+
+      // Retune. createComputed re-runs synchronously inside the root.
+      setOpts({ stiffness: 50, damping: 30 })
+
+      // Position continuity. NOT a jump to bridge.get() (= 100) or back to 0.
+      // The tempSource pattern starts the new spring from `out.get()` and
+      // immediately wires it toward `bridge`, so the visual stays at 50.
+      expect(Math.abs(smooth.get() - 50)).toBeLessThan(1)
+
       dispose()
     })
   })

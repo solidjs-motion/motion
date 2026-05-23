@@ -208,20 +208,67 @@ export function createTransform<I extends number, O>(
  */
 export function createSpring(
   source: MotionValue<number> | Accessor<number>,
-  options?: SpringOptions,
+  options?: SpringOptions | Accessor<SpringOptions>,
 ): MotionValueAccessor<number> {
+  const getOpts: () => SpringOptions | undefined =
+    typeof options === "function" ? options : () => options
+
+  // ---- Stable bridge MV ----
+  // Mirrors the source. For an MV source it IS the source (do NOT destroy
+  // on cleanup — that would tear down the caller's MV). For an Accessor
+  // source we own an intermediate MV driven by the signal.
+  let bridge: MotionValue<number>
   if (isMotionValue(source)) {
-    const mv = springValue(source as MotionValue<number>, options)
-    onCleanup(() => mv.destroy())
-    return makeAccessor(mv)
+    bridge = source as MotionValue<number>
+  } else {
+    bridge = motionValue((source as Accessor<number>)())
+    onCleanup(() => bridge.destroy())
+    createComputed(() => bridge.set((source as Accessor<number>)()))
   }
-  // Accessor input — bridge through an intermediate MotionValue that mirrors it.
-  const bridge = motionValue((source as Accessor<number>)())
-  onCleanup(() => bridge.destroy())
-  createComputed(() => bridge.set((source as Accessor<number>)()))
-  const mv = springValue(bridge, options)
-  onCleanup(() => mv.destroy())
-  return makeAccessor(mv)
+
+  // ---- Stable output MV ----
+  // Identity MUST survive opts changes so existing `.on("change")` listeners
+  // and `useMotion({ animate: { x: spring } })` references keep working.
+  const out = motionValue(bridge.get())
+  onCleanup(() => out.destroy())
+
+  // ---- Per-iteration spring + tempSource (preserve-position pattern) ----
+  // Naive rewrite would create the spring directly on `bridge`. Because
+  // springValue's internal position is initialized from its source's
+  // CURRENT value, doing so makes the new spring start at `bridge.get()` —
+  // which visually SNAPS `out` from its mid-flight value to the input
+  // value the moment the user retunes. The whole point of reactive opts is
+  // the spring REACTING, not teleporting.
+  //
+  // Fix: per iteration, build a `tempSource` MV initialized at the current
+  // visual position (`out.get()`). The new spring starts there; we then
+  // immediately set tempSource to `bridge.get()` so the spring has work to
+  // do. A subscription on `bridge` keeps tempSource tracking the live
+  // target for the rest of this iteration's lifetime.
+  //
+  // Velocity still resets to 0 — motion-dom's springValue has no public
+  // API for seeding initial velocity. Documented limitation.
+  createComputed(() => {
+    const opts = getOpts()
+    const startPos = out.get()
+
+    const tempSource = motionValue(startPos)
+    onCleanup(() => tempSource.destroy())
+    const spring = springValue(tempSource, opts)
+    onCleanup(() => spring.destroy())
+
+    // Spring drives out.
+    onCleanup(spring.on("change", (v) => out.set(v)))
+
+    // Kick the spring toward the live target.
+    tempSource.set(bridge.get())
+
+    // Pipe future bridge changes into tempSource so the spring keeps
+    // chasing as the user updates the source.
+    onCleanup(bridge.on("change", (v) => tempSource.set(v)))
+  })
+
+  return makeAccessor(out)
 }
 
 // ---------------------------------------------------------------------------
