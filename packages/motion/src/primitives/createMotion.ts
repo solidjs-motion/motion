@@ -24,7 +24,11 @@ import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
 import { createDrag } from "./createDrag"
 import { createGestures } from "./createGestures"
 import { type ActiveStoreTuple, createGestureStateMachine } from "./gesture-state"
-import { createValueRegistry, type ValueRegistry } from "./value-registry"
+import {
+  createValueRegistry,
+  foldLayoutLayerIntoTarget,
+  type ValueRegistry,
+} from "./value-registry"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -295,6 +299,14 @@ export function createMotion(
     for (const [k, mv] of valueRegistry.entries()) {
       target[k] = mv.get()
     }
+    // Layout's second-layer fold (ADR 0006). When `layoutLayer` is
+    // populated, mutate `target` to compose layer values into the
+    // user-facing axes BEFORE `applyStaticStyle` calls `targetToStyle`.
+    // `targetToStyle` stays SSR-pure — reserved layer MVs are never
+    // populated server-side.
+    if (valueRegistry.hasLayoutLayer) {
+      foldLayoutLayerIntoTarget(target, valueRegistry.layoutLayer)
+    }
     if (Object.keys(target).length === 0) return
     applyStaticStyle(el, target as Target)
   }
@@ -333,11 +345,15 @@ export function createMotion(
 
   const refreshWriter = (): void => {
     const size = valueRegistry?.size ?? 0
-    if (size === 0) {
+    const hasLayer = valueRegistry?.hasLayoutLayer ?? false
+    if (size === 0 && !hasLayer) {
       writer = noop
       return
     }
-    if (size === 1) {
+    // When the layout layer is active we can't use the single-key
+    // specialized closure — its emission path bypasses the layer fold.
+    // Fall through to multiKeyWriter so the fold runs.
+    if (size === 1 && !hasLayer) {
       writer = compileSingleKeyWriter()
       return
     }
