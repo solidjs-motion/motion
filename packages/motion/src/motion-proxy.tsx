@@ -106,6 +106,17 @@ export type MotionOptKey =
   | "onDrag"
   | "onDragEnd"
   | "onDragTransitionEnd"
+  // Layout
+  | "layout"
+  | "layoutId"
+  | "layoutDependency"
+  | "layoutScroll"
+  | "layoutRoot"
+  | "layoutAnchor"
+  | "layoutTransition"
+  // Layout lifecycle
+  | "onLayoutAnimationStart"
+  | "onLayoutAnimationComplete"
 
 /**
  * Frozen list of `MotionOptKey`s — fed to `splitProps` at every
@@ -164,6 +175,17 @@ export const MOTION_OPT_KEYS: readonly MotionOptKey[] = [
   "onDrag",
   "onDragEnd",
   "onDragTransitionEnd",
+  // Layout
+  "layout",
+  "layoutId",
+  "layoutDependency",
+  "layoutScroll",
+  "layoutRoot",
+  "layoutAnchor",
+  "layoutTransition",
+  // Layout lifecycle
+  "onLayoutAnimationStart",
+  "onLayoutAnimationComplete",
 ] as const satisfies readonly MotionOptKey[]
 
 // Compile-time exhaustiveness check (union → keys direction). If a new

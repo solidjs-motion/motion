@@ -277,6 +277,12 @@ export type MotionCallbacks = {
   onDrag?: (e: PointerEvent, info: PanInfo) => void
   onDragEnd?: (e: PointerEvent, info: PanInfo) => void
   onDragTransitionEnd?: () => void
+
+  // Layout lifecycle (0.2.0)
+  /** Fires when a layout animation starts on this element. */
+  onLayoutAnimationStart?: () => void
+  /** Fires when a layout animation completes (or is cancelled). */
+  onLayoutAnimationComplete?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +334,85 @@ export type MotionOptions = MotionCallbacks &
 
     /** Value passed to function variants. */
     custom?: unknown
+
+    // ---- Layout animations (0.2.0) ----
+
+    /**
+     * Auto-animate when a Solid render changes the element's measured
+     * bounding rect (FLIP). Boolean shorthand for `true` animates both
+     * position and size. Strings narrow the animation:
+     *
+     * - `"position"` — translate only; size changes are instant.
+     * - `"size"` — scale only; position changes are instant.
+     * - `"preserve-aspect"` — translate + uniform scale; maintains the
+     *   rect's aspect ratio across the FLIP. The uniform scale is
+     *   `Math.min(inverseScaleX, inverseScaleY)` — the element starts
+     *   tucked within its source footprint, then grows or shifts to
+     *   fill the target.
+     */
+    layout?: boolean | "position" | "size" | "preserve-aspect"
+
+    /**
+     * Shared-element identity. Two motion elements with the same
+     * `layoutId` (in the same `<LayoutGroup>` scope) match across
+     * mount/unmount; the entering element FLIPs from the donor's last
+     * position. Runs in parallel with the donor's `exit` animation
+     * when both are active under `<Presence>`.
+     */
+    layoutId?: string
+
+    /**
+     * Reactive trigger for layout re-measurement. Use when the cause
+     * of the layout change isn't visible to the automatic triggers
+     * (`ResizeObserver(self)`, `MutationObserver` on the immediate
+     * parent's `style` / `class` / `childList`). Accessor form only —
+     * a static value would never change, so a static dependency is
+     * silently broken; the type forces the function form to surface
+     * the reactivity contract.
+     *
+     * @example
+     * <motion.div layout layoutDependency={() => items().length} />
+     */
+    layoutDependency?: Accessor<unknown>
+
+    /**
+     * Declare THIS element as a scrollable container for the purposes
+     * of descendants' layout animations. Descendants compensate their
+     * measured rects for this element's `scrollLeft` / `scrollTop`, so
+     * user scrolling doesn't pollute layout deltas. The scroll-ancestors
+     * chain RESETS at each `layout`/`layoutRoot` push — outer scrolls
+     * above a new projection parent already cancel for descendants.
+     */
+    layoutScroll?: boolean
+
+    /**
+     * Declare THIS element as the projection root for descendants'
+     * layout animations, overriding the nearest `layout` ancestor.
+     * Use for fixed-positioned or absolute elements whose visual
+     * position differs from their layout-flow position.
+     */
+    layoutRoot?: boolean
+
+    /**
+     * Parent-relative origin point for the layout animation. Each
+     * component in 0..1. Default `{ x: 0, y: 0 }` (top-left, standard
+     * FLIP). `{ x: 0.5, y: 0.5 }` pivots the layout animation from the
+     * projection parent's center; `{ x: 1, y: 1 }` from the
+     * bottom-right.
+     */
+    layoutAnchor?: { x: number; y: number }
+
+    /**
+     * Transition override specifically for layout animations.
+     * Resolution chain: `layoutTransition` (most specific) →
+     * `transition` (on this element) → `<MotionConfig>.transition`
+     * (least specific). When reduced-motion is active, the existing
+     * `mergeTransition` helper applies a final `{ duration: 0 }`
+     * override; the FLIP runs in 0ms and lifecycle callbacks fire
+     * normally. Applies to both `layout`-driven FLIPs and
+     * `layoutId`-driven shared transitions.
+     */
+    layoutTransition?: Transition
   }
 
 // ---------------------------------------------------------------------------
@@ -556,4 +641,114 @@ export type MotionConfigProps = {
   transition?: Transition
   nonce?: string
   children: JSX.Element
+}
+
+// ---------------------------------------------------------------------------
+// Layout animations (0.2.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * An entry deposited in the layout coordinator by a donor `layoutId`
+ * element at owner-disposal time (synchronous with the `<Show>` / `<For>`
+ * flip — BEFORE any exit animation runs). The consumer reads it during
+ * its mount setup to derive its FLIP "First" rect. See ADR 0007 and
+ * Plan §6.
+ */
+export type LayoutEntry = {
+  /**
+   * Donor's DOM element. The consumer checks `el.isConnected` to decide
+   * whether to prefer a live `getBoundingClientRect()` (Presence
+   * keep-alive case — donor still in DOM during exit) over the stored
+   * {@link rect}.
+   */
+  el: Element
+  /** Donor's bounding rect captured synchronously at owner disposal — pre-exit. */
+  rect: DOMRect
+  /** Donor's projection parent's bounding rect at donation time. */
+  projectionParentRect: DOMRect
+}
+
+/**
+ * Per-`<LayoutGroup>` coordinator brokering `layoutId` handoff between
+ * donor (unmounting) and consumer (mounting) motion elements. A
+ * module-level singleton serves as the implicit root coordinator for
+ * `layoutId` elements not wrapped in an explicit `<LayoutGroup>`. The
+ * runtime implementation lives in `layout-coordinator.ts`.
+ */
+export type LayoutCoordinator = {
+  /**
+   * Deposit a donor's entry for `layoutId`. Schedules an idempotent
+   * per-coordinator RAF cleanup on first donation so unclaimed entries
+   * expire by the next paint; cross-paint handoffs are expected to use
+   * `<Presence>` to keep the donor's DOM element alive.
+   */
+  donate: (layoutId: string, entry: LayoutEntry) => void
+  /**
+   * Atomically retrieve and remove the entry for `layoutId`, returning
+   * `null` if no match exists.
+   */
+  consume: (layoutId: string) => LayoutEntry | null
+}
+
+/**
+ * Props for `<LayoutGroup>`. Fragment-only component (no DOM wrapper).
+ * See Plan §3.3 and Q15 of the design grill.
+ */
+export type LayoutGroupProps = {
+  /**
+   * Reactive trigger for re-measurement of all `layout` descendants.
+   * When this accessor's value changes, the group's broadcast counter
+   * bumps and every descendant `layout` element schedules a measurement
+   * pass. Use when an ancestor's class/style change drives the layout
+   * shift and individual descendants can't see it via the automatic
+   * triggers.
+   *
+   * Accessor form only — same rationale as `MotionOptions.layoutDependency`.
+   */
+  dependency?: Accessor<unknown>
+  children: JSX.Element
+}
+
+/**
+ * Context value carrying projection ancestry for layout animations.
+ * Pushed by `<motion.X layout>`, `<motion.X layoutRoot>`, and
+ * `<motion.X layoutScroll>` via `m.Provider` (auto-wrapped by the
+ * proxy, opt-in for `useMotion` direct-use). See ADR 0007.
+ */
+export type ProjectionContextValue = {
+  /**
+   * The element to measure against for projection-parent-local
+   * coordinates. Defaults to `document.documentElement` (top-level
+   * projection parent — gives scroll-stable document-relative
+   * coordinates without a separate scroll-compensation pass).
+   */
+  parentEl: Accessor<Element>
+  /**
+   * `layoutScroll` ancestors that are BETWEEN the consuming element
+   * and its projection parent (inclusive of projection parent if it's
+   * itself `layoutScroll`). The chain RESETS at each new projection
+   * parent pushed by `layout`/`layoutRoot` — outer scrolls above the
+   * new reference frame already cancel out for descendants and would
+   * over-compensate if carried through.
+   */
+  scrollAncestors: Accessor<Element[]>
+}
+
+/**
+ * Context value provided by `<LayoutGroup>`. Carries the per-group
+ * coordinator for `layoutId` handoff and a broadcast counter that
+ * descendant `layout` elements subscribe to for re-measurement. See
+ * Plan §3.3.
+ */
+export type LayoutGroupContextValue = {
+  /** Per-group coordinator for `layoutId` donate/consume. */
+  coordinator: LayoutCoordinator
+  /**
+   * Monotonically-increasing counter. Bumps on every `dependency`
+   * change (via the LayoutGroup's internal `createComputed`).
+   * Descendants subscribe via `createEffect(() => { broadcast();
+   * scheduleMeasurement() })`. The implicit-root default value
+   * is `() => 0` (constant — never re-fires).
+   */
+  broadcast: Accessor<number>
 }
