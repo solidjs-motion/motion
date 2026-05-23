@@ -55,24 +55,36 @@ lives to keep the language tight.
   back to identity.
 - **layout writer** — the contribution this feature makes to the value
   registry's transform writer. Implemented as a SECOND LAYER in the
-  existing registry: layout reserves keys (`_layoutX`, `_layoutY`,
-  `_layoutScaleX`, `_layoutScaleY`) that participate in the writer's
-  compile alongside the user-facing keys (`x`, `y`, `scaleX`, `scaleY`).
-  The writer composes them in a fixed order (additive for translate,
-  multiplicative for scale). One contributor per layer; no multi-source
-  contention because layout itself only ever has one active source per
-  element at a time (see ADR for the analysis). Pending ADR 0006.
+  existing registry: the registry gains a typed `layoutLayer` sub-record
+  (`x`/`y`/`scaleX`/`scaleY`, each holding a `MotionValue<number>`).
+  When present, the writer folds each axis into the corresponding
+  user-facing key's effective value (`effectiveX = x + layoutLayer.x`,
+  `effectiveScaleX = scaleX * layoutLayer.scaleX`) BEFORE the existing
+  `TRANSFORM_ORDER` walk emits the CSS transform functions. No new
+  emission shape, no new string keys in the registry map. One
+  contributor per layer; no multi-source contention because layout
+  itself only ever has one active source per element at a time. The
+  axis names `_layoutX`/`_layoutY`/`_layoutScaleX`/`_layoutScaleY` are
+  documentary only — they appear in ADR text and code comments, not as
+  live string keys. See ADR 0006.
 - **measurement trigger** — the signal that tells `createMotion` "the
   layout for this element may have changed; schedule a re-measure on the
   next `frame.read` pass." Solid does not propagate top-down on parent
   re-renders the way React does, so trigger sources have to be wired
-  explicitly. We combine: style-write interception in our own writer
-  pipeline, `ResizeObserver(self)`, `MutationObserver(parent, { childList })`,
+  explicitly. We combine: `ResizeObserver(self)`, a single
+  `MutationObserver` on the immediate parent with
+  `{ childList: true, attributes: true, attributeFilter: ["style", "class"] }`
+  (catches sibling reorder/insert/delete AND parent restyles like
+  `alignItems` flips that reposition descendants without resizing them),
   `<LayoutGroup dependency={signal}>` broadcast through context, and the
-  per-element `layoutDependency` prop. The deep-ancestor-restyle case
-  (grandparent's class change shifts our position without resizing us)
-  has no automatic detection and requires the user to wrap that ancestor
-  in `<LayoutGroup>` with a `dependency` — documented gap.
+  per-element `layoutDependency` prop. False-positive measurements
+  (parent attribute mutated but our rect is unchanged) de-dupe
+  cheaply via `First === Last` — no animation fires; the measurement
+  work was a single `getBoundingClientRect`. The deep-ancestor-restyle
+  case (grandparent's class change shifts our position via cascade
+  without mutating our immediate parent's attributes) has no automatic
+  detection and requires the user to wrap that ancestor in
+  `<LayoutGroup>` with a `dependency` — documented gap.
 - **layout dependency** — the signal whose change indicates "re-measure
   is appropriate." Plumbed via `LayoutGroup`'s `dependency` prop
   (broadcasts to all `layout` descendants through context) or the motion
@@ -169,9 +181,22 @@ resolved by precedence (most-specific wins):
 **Reactivity convention for layout deps:**
 
 `layoutDependency` (per-element) and `dependency` (on LayoutGroup) are
-both typed as `Accessor<unknown>` — explicit-function-form only,
-intentionally stricter than the audit's `Accessor<T> | T` pattern.
-Users always pass a function:
+typed as `Accessor<unknown>` — there is no static-value form, and
+this is the only `MotionOptions` property with that constraint.
+Other layout props (`layoutAnchor`, `layoutTransition`) follow the
+standard `MotionOptions` pattern of static typing, with reactivity
+coming from the outer `useMotion(() => opts)` function-form
+signature.
+
+Reason `layoutDependency` is the exception: a dependency that doesn't
+change has no semantics. Without the `Accessor` constraint, a user
+could write `<motion.div layoutDependency={5} />` — type-checks, runs
+silently, never fires a re-measure. With the `Accessor` constraint,
+that line fails type-check; the user is forced to either write
+`() => 5` (which still does nothing but is at least obviously
+intentional) or `() => items().length` (the real reactive form).
+`layoutAnchor: { x: 0.5, y: 0.5 }` has no equivalent footgun — a
+fixed anchor is a meaningful value — so it stays static-typed.
 
 ```tsx
 <motion.div layout layoutDependency={() => items().length} />

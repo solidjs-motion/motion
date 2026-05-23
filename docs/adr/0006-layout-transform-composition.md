@@ -28,29 +28,51 @@ registry's one-MV-per-key contract is preserved.
 
 ## Load-bearing details
 
-- **Reserved-key naming.** Leading underscore marks them as internal.
-  Users cannot pass `_layoutX` through animate/style/etc.; the writer
-  rejects it. The names exist solely as compile-time integration points
-  between the layout module and the registry's writer.
+- **Reserved-axis naming is documentary, not a runtime string key.**
+  The names `_layoutX`, `_layoutY`, `_layoutScaleX`, `_layoutScaleY`
+  exist for ADRs, code comments, and commit messages. At runtime there
+  is no `Map`-keyed `"_layoutX"` lookup; the registry exposes a typed
+  `layoutLayer?: { x?: MotionValue<number>; y?: MotionValue<number>;
+  scaleX?: MotionValue<number>; scaleY?: MotionValue<number> }`
+  sub-record, written via an internal-only `setLayoutValue(axis, mv)`
+  and read via dotted access at fold time. There is no public path
+  that takes `_layoutX` as a string — the "writer rejects user writes
+  to reserved keys" concern collapses to "the layer has no public
+  string-keyed write API at all."
 
-- **Composition order in the compiled transform string.** Layout
-  translates apply LAST (outermost in CSS terms), matching motion-react's
-  behaviour where rotation and scale happen first and layout-translate
-  positions the visually-completed element. Concrete string shape
-  (subject to empirical match against motion-react during implementation):
+- **Composition happens at the value layer, not as a separate
+  transform-function emission.** The existing writer (`targetToStyle`
+  in [`style.ts`](../../packages/motion/src/style.ts)) walks
+  `TRANSFORM_ORDER` and emits one CSS transform function per
+  user-facing key — `translateX(x) translateY(y) translateZ(z)
+  scale(scale) rotate(rotate) ...`. Layout does NOT introduce a new
+  emission shape (`translate3d`, `scale3d`). Instead, before the writer
+  reads `x`, the registry's writer for layout-active elements folds the
+  reserved-key contribution into the user-facing key's effective
+  value:
 
   ```
-  translate(_layoutX, _layoutY) translate(x, y) rotate(...) scale(scaleX, scaleY) scale(_layoutScaleX, _layoutScaleY)
+  effectiveX = userX + _layoutX
+  effectiveY = userY + _layoutY
+  effectiveScaleX = userScaleX * _layoutScaleX
+  effectiveScaleY = userScaleY * _layoutScaleY
   ```
 
-  The exact order is locked at the writer's compile site; users never see
-  it. The commitment is "fixed, intentional, and matches motion-react where
-  measurable."
+  The writer then emits `translateX(effectiveX) translateY(effectiveY)
+  ... scaleX(effectiveScaleX) scaleY(effectiveScaleY) ...` via the same
+  per-function walk it already runs. `targetToStyle` stays pure and SSR-
+  safe (reserved keys are never registered during SSR), and the existing
+  composition order is unchanged. The commitment is "fixed, intentional,
+  and matches motion-react where measurable" — that's a commitment to
+  the visual result, not to a particular CSS-function selection;
+  browsers compose `translateX(a)` + position-time fold of `a + b`
+  identically to `translate3d`-style emission for this use case.
 
-- **Composition is layered, not multi-contributor.** Layout writes ONE MV
-  per reserved key; the writer reads ONE MV per reserved key. No
-  per-key aggregation list, no composition-rule table. The math is
-  hardcoded in the compile: translates add (`x + _layoutX`), scales
+- **Composition is layered, not multi-contributor.** Layout contributes
+  ONE MV per reserved axis; the writer reads ONE MV per reserved axis
+  and folds it into the corresponding user-facing axis at fold time.
+  No per-key aggregation list, no composition-rule table. The math is
+  hardcoded in the fold: translates add (`x + _layoutX`), scales
   multiply (`scaleX * _layoutScaleX`).
 
 - **One layout contributor per element.** Across every layout feature

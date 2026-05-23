@@ -40,6 +40,26 @@ scroll-stable without needing a separate scroll-compensation pass.
   parent. Context propagates through non-motion components and arbitrary
   DOM depth naturally — no DOM traversal needed at measurement time.
 
+- **Context push site: `m.Provider`, identically to `VariantContext`.**
+  The `<motion.X>` proxy auto-wraps children in `m.Provider` (per
+  ADR 0004), so the proxy path pushes both `VariantContext` and
+  `ProjectionContext` automatically. The `useMotion` direct-use path
+  is opt-in by the user — descendants must be wrapped in `<m.Provider>`
+  to inherit projection ancestry (same convention as variant
+  inheritance). A user who calls `useMotion({ layout: true })` without
+  wrapping descendants in `<m.Provider>` will have descendant `layout`
+  elements silently fall back to `document.documentElement` as their
+  projection parent (correct top-level behaviour, wrong nested
+  behaviour). In dev builds, `createMotion` emits a one-shot
+  `console.warn` on first measurement when a layout-active descendant
+  resolves its projection parent to anything other than this element,
+  surfacing the missed-Provider footgun loudly the first time it
+  matters. Trade-off rationale: matches the existing
+  `VariantContext`/`m.Provider` opt-in convention so users learn the
+  rule once; the proxy auto-wrap covers the common case; the dev
+  warning catches the direct-use misconfiguration without enforcing a
+  runtime rejection.
+
 - **Local-coord math.** For an element with rect `E` and projection
   parent with rect `P`:
 
@@ -73,19 +93,31 @@ scroll-stable without needing a separate scroll-compensation pass.
   Projection ancestry and `layoutId` scoping are **orthogonal**.
 
 - **`layoutScroll` adds compensation, not a new projection rule.**
-  When a `layoutScroll` ancestor scrolls, a descendant's measured rect
-  shifts due to scroll without any "real" layout change. To keep this
-  out of the FLIP delta, descendants whose projection parent IS or IS
-  INSIDE a `layoutScroll` ancestor add the scroll offset back to their
-  local-coord math:
+  When a scroll container scrolls, descendants' viewport-relative
+  rects shift even though no real layout change happened. To keep
+  this out of FLIP deltas, descendants add the container's
+  `scrollLeft`/`scrollTop` back into their local-coord math:
 
   ```
   local.x = E.x - P.x + scrollContainer.scrollLeft
   local.y = E.y - P.y + scrollContainer.scrollTop
   ```
 
-  The `layoutScroll` ancestor provides a second Solid context value
-  carrying its scroll offset; descendants consume both contexts.
+  **The chain-membership rule is precise: only `layoutScroll`
+  ancestors that are BETWEEN the element and its projection parent
+  (inclusive of projection parent if it's itself `layoutScroll`)
+  contribute compensation.** `layoutScroll` ancestors ABOVE the
+  projection parent do not contribute — they shift both the element
+  and the projection parent equally, so their effect cancels at the
+  `E.x - P.x` step.
+
+  Mechanically, this is enforced by the context push logic
+  ([plan §7.2](../plans/0.2.0-layout-animations.md#72-who-pushes-context)):
+  when an element pushes a NEW projection parent (`layout` or
+  `layoutRoot`), the scroll-ancestors chain RESETS — outer
+  `layoutScroll` ancestors drop off the chain at that point. Within
+  a single projection-parent's subtree, `layoutScroll`-only elements
+  extend the chain without changing the projection parent.
 
 - **`layoutAnchor` adjusts the local-coord origin, not the projection
   parent.** The anchor `{ x, y }` (each in 0..1) shifts the local origin
