@@ -50,7 +50,18 @@ serialized into SSR HTML so the first paint is flicker-free.
 
 ### 1. Reactive options
 
-Pass a function to `useMotion` to track Solid signals inside the target.
+Every primitive that takes an options bag accepts EITHER a static object OR a Solid
+`Accessor<Options>` — i.e. a `() => Options` function. The accessor form lets you
+read signals inside the options without per-field accessor boilerplate. This is
+the canonical reactive escape hatch across the public API:
+
+- `useMotion(opts | () => opts)`
+- `createMotion(el, opts | () => opts)`
+- `createScroll(opts | () => opts)`
+- `createInView(ref, opts | () => opts)`
+- `createPan(ref, opts | () => opts)`
+- `createSpring(source, opts | () => opts)`
+- `createTransform(input, range | () => range, output | () => output, opts?)`
 
 ```tsx
 import { useMotion } from "solidjs-motion"
@@ -66,6 +77,28 @@ export function Toggle() {
     <button onClick={() => setOpen((p) => !p)} {...motion()}>
       ↑
     </button>
+  )
+}
+```
+
+Same pattern for a scroll-linked progress bar with a swappable container:
+
+```tsx
+import { createScroll, createTransform, motion } from "solidjs-motion"
+import { createSignal } from "solid-js"
+
+export function ProgressIn(props: { children: any }) {
+  const [el, setEl] = createSignal<HTMLElement>()
+  // Whole options wrapped in an accessor — swapping `el` re-attaches the
+  // scroll subscription. Per-field accessors on `container`/`target` were
+  // removed in 0.2.0; this is the supported reactive form.
+  const { scrollYProgress } = createScroll(() => ({ container: el() }))
+  const width = createTransform(scrollYProgress, [0, 1], ["0%", "100%"])
+  return (
+    <div ref={setEl} style={{ overflow: "auto", height: "300px" }}>
+      <motion.div class="progress" style={{ width }} />
+      {props.children}
+    </div>
   )
 }
 ```
@@ -296,7 +329,11 @@ export function Notifications(props: { items: () => string[] }) {
 
 ### 11. Drag with constraints
 
-`dragConstraints` accepts numeric bounds or a parent ref. `dragElastic` controls overshoot.
+`dragConstraints` accepts either a numeric rect (`{ top, left, right, bottom }`) or a
+container `HTMLElement`. For a reactive container, wrap the surrounding `MotionOptions`
+in an accessor (e.g. `useMotion(() => ({ drag: true, dragConstraints: containerEl() }))`)
+— the per-field `() => HTMLElement` form was removed in 0.2.0. `dragElastic` controls
+overshoot.
 
 ```tsx
 import { motion } from "solidjs-motion"
@@ -343,8 +380,8 @@ export function App() {
 
 **Canonical hook + imperative primitive**
 
-- `useMotion(opts | () => opts)` — the public API. Returns a callable `motion(userProps?)` that merges with motion's ref/style/data attributes, plus a `motion.Provider` for opt-in variant context propagation.
-- `createMotion(el, getOpts)` — the imperative primitive `useMotion` wraps, for advanced use (drag controls, custom directives).
+- `useMotion(opts | Accessor<opts>)` — the public API. Returns a callable `motion(userProps?)` that merges with motion's ref/style/data attributes, plus a `motion.Provider` for opt-in variant context propagation.
+- `createMotion(el, opts | Accessor<opts>)` — the imperative primitive `useMotion` wraps, for advanced use (drag controls, custom directives).
 
 **MotionValue family** (every value is a callable `MotionValueAccessor<T> = MotionValue<T> & (() => T)`)
 
@@ -370,7 +407,7 @@ export function App() {
 
 **Drag**
 
-- `drag: true | "x" | "y"` axis lock, `dragConstraints` (numeric or container ref), `dragElastic`, `dragMomentum`, `dragSnapToOrigin`, `dragTransition`, `whileDrag` for sibling-axis visual state.
+- `drag: true | "x" | "y"` axis lock, `dragConstraints` (numeric rect or container `HTMLElement`), `dragElastic`, `dragMomentum`, `dragSnapToOrigin`, `dragTransition`, `whileDrag` for sibling-axis visual state.
 - `createPan(ref, opts?)` — standalone pan-session primitive. Returns `{ isPanning, point, delta, offset, velocity }` with MotionValueAccessors at the numeric leaves.
 - `createDragControls()` — drag-handle pattern. One element captures the pointer, another moves.
 
