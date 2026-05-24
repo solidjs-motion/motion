@@ -174,9 +174,21 @@ export function createLayoutController(
     if (!parentEl) return undefined
     const E = el.getBoundingClientRect()
     const P = parentEl.getBoundingClientRect()
+    let localX = E.left - P.left
+    let localY = E.top - P.top
+    // Compensate for `layoutScroll` ancestors between this element and
+    // its projection parent. The chain (built in `m.Provider` per the
+    // locked Q-layoutScroll chain-reset rule) only includes scrollers
+    // whose offsets WOULD shift this element's `E - P` math —
+    // ancestors above the projection parent already cancel via the
+    // `E - P` subtraction and are not in the chain. See ADR 0007.
+    for (const scroller of projectionContext.scrollAncestors()) {
+      localX += scroller.scrollLeft
+      localY += scroller.scrollTop
+    }
     return {
-      x: E.left - P.left,
-      y: E.top - P.top,
+      x: localX,
+      y: localY,
       width: E.width,
       height: E.height,
     }
