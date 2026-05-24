@@ -686,21 +686,52 @@ export function createMotion(
     createDrag(el, getOpts, setActive)
   }
 
-  // ---------- Layout (0.2.0 step 7 — basic FLIP) ----------
-  // Snapshot `opts.layout` at construction; reactive toggle-off is the
-  // Q8/risk #4 polish, deferred to its own step. The controller
-  // subscribes to layoutDependency + LayoutGroup.broadcast; RO(self) +
-  // parent MO triggers come in step 8. Bridging the controller into
-  // the registry-write path requires `bridgeActive = true` so the
-  // writer composes the layer's transform contribution — without this
-  // the writer stays on its no-op default and the FLIP visual never
-  // paints. Force activation by ensuring the registry exists and the
-  // writer recompiles when the layer's shape changes (via the
-  // controller's `refreshWriter` callback).
-  if (initialOpts.layout) {
+  // ---------- Layout (0.2.0 — controller + layoutId handoff) ----------
+  // Snapshot `opts.layout` / `opts.layoutId` at construction; reactive
+  // toggle-off is the Q8/risk #4 polish, deferred to its own step.
+  // Bridging the controller into the registry-write path requires
+  // `bridgeActive = true` so the writer composes the layer's transform
+  // contribution — without this the writer stays on its no-op default
+  // and the FLIP visual never paints. Force activation by ensuring the
+  // registry exists and the writer recompiles when the layer's shape
+  // changes (via the controller's `refreshWriter` callback).
+  if (initialOpts.layout || initialOpts.layoutId !== undefined) {
     ensureRegistry()
     bridgeActive = true
     refreshWriter()
+
+    // layoutId consume — if this element donates/receives a shared-
+    // element transition, ask the coordinator for the donor's entry.
+    // The coordinator is the LayoutGroup's per-group instance (when
+    // wrapped) or `rootLayoutCoordinator` (the implicit-root default).
+    // See ADR 0007 and Plan §6.
+    const layoutIdAtMount = initialOpts.layoutId
+    let initialFirst: { x: number; y: number; width: number; height: number } | undefined
+    if (layoutIdAtMount !== undefined) {
+      const entry = layoutGroupContext.coordinator.consume(layoutIdAtMount)
+      if (entry !== null) {
+        // Prefer the donor's LIVE rect when its element is still in
+        // the DOM (Presence keep-alive); fall back to the stored
+        // pre-exit rect otherwise. See Plan §6.6.
+        const donorRect = entry.el.isConnected ? entry.el.getBoundingClientRect() : entry.rect
+        // Convert donor's viewport-relative rect to consumer's
+        // projection-local coords. Donor's projection parent may
+        // differ from consumer's; we use the consumer's CURRENT
+        // projection parent rect for the conversion. Scroll-ancestor
+        // compensation and layoutAnchor handling for the handoff are
+        // deferred to later polish (the basic same-tick case in step
+        // 14 covers the no-scroll, no-anchor common case).
+        const consumerProjParent = projectionContext.parentEl()
+        const P = consumerProjParent.getBoundingClientRect()
+        initialFirst = {
+          x: donorRect.left - P.left,
+          y: donorRect.top - P.top,
+          width: donorRect.width,
+          height: donorRect.height,
+        }
+      }
+    }
+
     createLayoutController(el, getOpts, {
       registry: ensureRegistry(),
       refreshWriter,
@@ -709,7 +740,35 @@ export function createMotion(
       layoutGroupContext,
       motionConfig,
       systemReducedMotion,
+      initialFirst,
     })
+
+    // layoutId donate — at owner-dispose time, capture this element's
+    // rect + projection-parent rect and deposit them in the
+    // coordinator. The locked timing (Q5): `onCleanup` runs
+    // synchronously when Solid disposes the owner, BEFORE any exit
+    // animation. Inside `<Presence>` the element stays in the DOM
+    // (transition-group keep-alive), so `el.getBoundingClientRect()`
+    // returns the donor's pre-exit rect at this moment.
+    //
+    // Registered AFTER `createLayoutController` (which registers its
+    // own onCleanup) so donate fires FIRST in LIFO order — captures
+    // the rect before the controller clears the layer.
+    if (layoutIdAtMount !== undefined) {
+      onCleanup(() => {
+        // Re-read layoutId via untrack — in case it's reactive and
+        // changed since mount. Skip donation when there's no id
+        // (e.g., flipped to undefined by the time of unmount).
+        const liveLayoutId = untrack(getOpts).layoutId ?? layoutIdAtMount
+        if (liveLayoutId === undefined) return
+        const projParent = projectionContext.parentEl()
+        layoutGroupContext.coordinator.donate(liveLayoutId, {
+          el,
+          rect: el.getBoundingClientRect(),
+          projectionParentRect: projParent.getBoundingClientRect(),
+        })
+      })
+    }
   }
 }
 

@@ -126,6 +126,14 @@ export type CreateLayoutControllerConfig = {
   motionConfig: MotionConfigContextValue
   /** System-pref accessor (`prefers-reduced-motion: reduce`). */
   systemReducedMotion: Accessor<boolean>
+  /**
+   * Pre-set First rect (the layoutId handoff case). When provided,
+   * the controller's initial measurement computes a DELTA from this
+   * value rather than establishing baseline — the first FLIP fires
+   * immediately, animating from the donor's position to the
+   * consumer's natural position.
+   */
+  initialFirst?: { x: number; y: number; width: number; height: number }
 }
 
 /** Projection-parent-local rect (ADR 0007). */
@@ -150,13 +158,15 @@ export function createLayoutController(
     layoutGroupContext,
     motionConfig,
     systemReducedMotion,
+    initialFirst,
   } = config
 
-  // First-rect cache. Undefined until the baseline measurement runs.
-  // After each successful FLIP, `first` is updated to the post-FLIP
-  // `last` so subsequent triggers measure against the most recent
-  // settled position.
-  let first: LocalRect | undefined
+  // First-rect cache. Undefined until the baseline measurement runs,
+  // unless `config.initialFirst` is provided (layoutId handoff): then
+  // it's seeded with the donor's rect at construction so the first
+  // measurement computes a DELTA — FLIP fires from donor's position
+  // to consumer's natural position.
+  let first: LocalRect | undefined = initialFirst
   let measurementScheduled = false
   // Liveness flag — set false on owner cleanup. Frame-scheduled
   // callbacks check this before touching the registry; lets us drop
@@ -243,7 +253,11 @@ export function createLayoutController(
     }
 
     const opts = untrack(getOpts)
-    const mode = opts.layout
+    // `layoutId` implies `layout: true` for mode resolution — a
+    // shared-element transition is always a position + size FLIP
+    // (matches motion-react). Users who want a narrower mode can set
+    // `layout: "position"` etc. explicitly alongside `layoutId`.
+    const mode = opts.layout ?? (opts.layoutId !== undefined ? true : undefined)
     if (!mode) {
       first = last
       return
