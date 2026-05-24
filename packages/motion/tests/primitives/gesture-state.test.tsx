@@ -200,12 +200,12 @@ describe("gesture state machine — per-key handoff (Q3b)", () => {
   })
 
   it("falls a key to null (computed-style read) when no initial AND no motion default", () => {
-    // backgroundColor has no entry in TRANSFORM_DEFAULTS. With no initial
+    // background-color has no entry in TRANSFORM_DEFAULTS. With no initial
     // override, the fallback is null — motion's animate() reads from
     // getComputedStyle at animation start.
     const { setActive, dispose } = makeStateMachine({
       animate: { x: 0 },
-      hover: { backgroundColor: "red" },
+      hover: { "background-color": "red" },
     })
     animateSpy.mockClear()
 
@@ -213,7 +213,7 @@ describe("gesture state machine — per-key handoff (Q3b)", () => {
     setActive("whileHover", false)
 
     const lastCall = animateSpy.mock.calls[animateSpy.mock.calls.length - 1]
-    expect(lastCall?.[1]).toMatchObject({ backgroundColor: null })
+    expect(lastCall?.[1]).toMatchObject({ "background-color": null })
     dispose()
   })
 })

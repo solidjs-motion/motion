@@ -1,3 +1,4 @@
+import type * as csstype from "csstype"
 import type {
   AnimationPlaybackControls,
   MotionValue,
@@ -92,16 +93,49 @@ export type DragControls = {
 
 type Numeric = number | MotionValue<number> | Accessor<number>
 type Stringish = string | MotionValue<string> | Accessor<string>
-type AnyValue = Numeric | Stringish
 
 /** A property value or an array of values (keyframe sequence). */
 export type Keyframes<T> = T | T[]
 
 // ---------------------------------------------------------------------------
-// Target — strict transform shorthand + index signature for arbitrary CSS.
-// Plain values, MotionValues, and Accessors all accepted. A `transition` key
-// can also be present for per-target transition overrides.
+// Target — every CSS property animatable by motion, plus motion-specific
+// transform shorthands. Plain values, MotionValues, and Accessors all
+// accepted. A `transition` key can also be present for per-target
+// transition overrides.
+//
+// CSS property KEYS come from csstype's camelCase `Properties` interface —
+// the same source Solid uses for JSX types — so users get IDE autocomplete
+// for every standard, vendor-prefixed, and SVG CSS property. Each property's
+// VALUE type is widened to `Keyframes<Numeric | Stringish>` so motion's
+// runtime can accept numbers (auto-suffix px/deg), strings (colors,
+// gradients, CSS keywords), MotionValues, and Solid Accessors uniformly.
+//
+// Properties with stricter motion semantics — `opacity` and `zIndex` only
+// accept numbers, transforms have shorthand keys — are declared explicitly
+// and excluded from the CSS-property map via `Omit` to avoid the wider
+// `Numeric | Stringish` weakening them.
 // ---------------------------------------------------------------------------
+
+/**
+ * Every standard / vendor-prefixed / SVG CSS property name from csstype,
+ * widened so motion's animate() accepts our union of value types.
+ *
+ * Drives IDE autocomplete inside `initial` / `animate` / `hover` / etc.
+ * Without this, the Target's old open `[key: string]` index signature
+ * accepted everything at the type level but TypeScript had nothing to
+ * SUGGEST — users wouldn't know `background-color` or `box-shadow` were
+ * supported until they typed the full key.
+ *
+ * Hyphen-case to match Solid's `style` prop convention (which uses
+ * csstype's PropertiesHyphen). A user writing
+ * `style: { "background-color": "red" }` naturally extends the same
+ * casing to `animate: { "background-color": "blue" }`. Motion's runtime
+ * accepts hyphen-case directly; camelCase keys would need additional
+ * normalization to interoperate with Solid's style binding cleanly.
+ */
+type CssMotionProperties = {
+  [K in keyof csstype.PropertiesHyphen]?: Keyframes<Numeric | Stringish>
+}
 
 export type Target = {
   // Translate shorthand (px when number)
@@ -128,19 +162,23 @@ export type Target = {
 
   // Transform-related but not shorthand
   transformPerspective?: Keyframes<Numeric>
-  transformOrigin?: Stringish
 
-  // Common CSS with narrowed types
+  // Common CSS with narrowed types (numeric-only). Hyphen-case keys to
+  // match Solid's style convention. `opacity` is spelled the same way
+  // in both camel and hyphen casing; `z-index` is the hyphen form.
   opacity?: Keyframes<Numeric>
-  zIndex?: Keyframes<Numeric>
+  "z-index"?: Keyframes<Numeric>
 
   // Per-target transition override (Q3 sub-3)
   transition?: Transition
-
-  // Catch-all for arbitrary CSS (incl. CSS variables like "--foo").
-  // Index signature must accept every named property above, plus Transition.
-  [key: string]: Keyframes<AnyValue> | Transition | undefined
-}
+} & Omit<CssMotionProperties, "opacity" | "z-index" | "transition"> & {
+    // CSS custom properties (e.g. `--my-color: "red"`). The csstype map
+    // doesn't include these — they're free-form per design — so we add
+    // a template-literal index signature scoped to the `--` prefix to
+    // keep autocomplete usable (the OLD `[key: string]: ...` swallowed
+    // EVERY string key, defeating discoverability).
+    [key: `--${string}`]: Keyframes<Numeric | Stringish> | undefined
+  }
 
 // ---------------------------------------------------------------------------
 // Variants

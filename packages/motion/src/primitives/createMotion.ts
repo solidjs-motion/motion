@@ -162,13 +162,12 @@ function applyStaticStyle(el: MotionElement, target: Target): void {
   for (const key in style) {
     const value = (style as Record<string, string | number | undefined>)[key]
     if (value === undefined) continue
-    if (key.startsWith("--")) {
-      el.style.setProperty(key, String(value))
-    } else {
-      // ElementCSSInlineStyle.style is indexable for camelCase property names.
-      // Available on both HTMLElement and SVGElement (Phase 4 SVG support).
-      ;(el.style as unknown as Record<string, string | number>)[key] = value
-    }
+    // `setProperty` handles every CSS property name uniformly — hyphen-case
+    // standard properties, vendor prefixes (`-webkit-...`), CSS custom
+    // properties (`--foo`), AND `transform`. Direct `el.style[key] =`
+    // assignment is camelCase-only at the DOM level, which would silently
+    // drop writes for hyphen-case Target keys.
+    el.style.setProperty(key, String(value))
   }
 }
 
@@ -417,17 +416,15 @@ export function createMotion(
         }
       }
     }
-    if (key.startsWith("--")) {
-      return () => {
-        const v = snapshotValue(mv.get())
-        if (v !== undefined) el.style.setProperty(key, String(v))
-      }
-    }
+    // `setProperty` is used uniformly for every key (CSS custom property,
+    // hyphen-case standard property, or `transform`). Direct
+    // `el.style[key] =` would only work for camelCase keys and silently
+    // drop hyphen-case writes.
     return () => {
       const v = snapshotValue(mv.get())
       if (v === undefined) return
       const formatted = formatProperty(key, v)
-      ;(el.style as unknown as Record<string, string | number>)[key] = formatted
+      el.style.setProperty(key, String(formatted))
     }
   }
 

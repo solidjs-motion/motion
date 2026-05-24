@@ -14,8 +14,8 @@ describe("targetToStyle", () => {
     })
 
     it("emits color strings verbatim", () => {
-      expect(targetToStyle({ backgroundColor: "red", color: "#fff" })).toEqual({
-        backgroundColor: "red",
+      expect(targetToStyle({ "background-color": "red", color: "#fff" })).toEqual({
+        "background-color": "red",
         color: "#fff",
       })
     })
@@ -74,9 +74,9 @@ describe("targetToStyle", () => {
       })
     })
 
-    it("treats transformOrigin as a regular CSS property, not a transform function", () => {
-      expect(targetToStyle({ transformOrigin: "top left" })).toEqual({
-        transformOrigin: "top left",
+    it("treats transform-origin as a regular CSS property, not a transform function", () => {
+      expect(targetToStyle({ "transform-origin": "top left" })).toEqual({
+        "transform-origin": "top left",
       })
     })
   })
@@ -87,20 +87,20 @@ describe("targetToStyle", () => {
         width: 100,
         height: 200,
         padding: 16,
-        marginTop: 8,
-        borderRadius: 4,
+        "margin-top": 8,
+        "border-radius": 4,
         gap: 12,
-        fontSize: 14,
+        "font-size": 14,
         top: 0,
       })
       expect(result).toEqual({
         width: "100px",
         height: "200px",
         padding: "16px",
-        marginTop: "8px",
-        borderRadius: "4px",
+        "margin-top": "8px",
+        "border-radius": "4px",
         gap: "12px",
-        fontSize: "14px",
+        "font-size": "14px",
         top: "0px",
       })
     })
@@ -112,19 +112,19 @@ describe("targetToStyle", () => {
       })
     })
 
-    it("does not auto-unit dimensionless properties (opacity, zIndex, scale)", () => {
-      expect(targetToStyle({ opacity: 0.5, zIndex: 10 })).toEqual({
+    it("does not auto-unit dimensionless properties (opacity, z-index, scale)", () => {
+      expect(targetToStyle({ opacity: 0.5, "z-index": 10 })).toEqual({
         opacity: 0.5,
-        zIndex: 10,
+        "z-index": 10,
       })
     })
 
-    it("emits lineHeight dimensionless always (Q5 sub-2 simplification)", () => {
-      expect(targetToStyle({ lineHeight: 1.5 })).toEqual({ lineHeight: 1.5 })
+    it("emits line-height dimensionless always (Q5 sub-2 simplification)", () => {
+      expect(targetToStyle({ "line-height": 1.5 })).toEqual({ "line-height": 1.5 })
     })
 
     it("does not auto-unit unknown CSS properties (number passes through)", () => {
-      expect(targetToStyle({ flexGrow: 1, order: 2 })).toEqual({ flexGrow: 1, order: 2 })
+      expect(targetToStyle({ "flex-grow": 1, order: 2 })).toEqual({ "flex-grow": 1, order: 2 })
     })
   })
 
@@ -243,7 +243,7 @@ describe("targetToStyle", () => {
         { width: 100, opacity: [0, 1] },
         { width: "100px", opacity: 0 },
       ],
-      ["color string", { backgroundColor: "red" }, { backgroundColor: "red" }],
+      ["color string", { "background-color": "red" }, { "background-color": "red" }],
       [
         "css var string",
         { "--accent": "#f0f", padding: 8 },

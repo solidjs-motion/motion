@@ -177,10 +177,10 @@ describe("Target", () => {
     expectTypeOf(target).toExtend<Target>()
   })
 
-  it("accepts arbitrary CSS properties via index signature", () => {
+  it("accepts hyphen-case CSS properties via csstype map", () => {
     const target: Target = {
-      backgroundColor: "red",
-      borderRadius: 4,
+      "background-color": "red",
+      "border-radius": 4,
       width: "50%",
     }
     expectTypeOf(target).toExtend<Target>()
