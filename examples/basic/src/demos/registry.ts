@@ -342,4 +342,45 @@ export const demos: DemoEntry[] = [
     source: rawSource(() => import("./SierpinskiTriangle.tsx?raw")),
     filename: "SierpinskiTriangle.tsx",
   },
+  // ---- Layout animations (0.2.0) ----
+  {
+    path: "/layout-toggle",
+    title: "Layout (toggle)",
+    blurb:
+      "Single motion.div whose width/height swaps via signal — `layout` FLIPs from the old rect to the new one via ResizeObserver(self).",
+    phase: 4,
+    component: lazy(() => import("./LayoutToggle")),
+    source: rawSource(() => import("./LayoutToggle.tsx?raw")),
+    filename: "LayoutToggle.tsx",
+  },
+  {
+    path: "/layout-list",
+    title: "Layout (list)",
+    blurb:
+      "<For> list with add / remove / shuffle. Survivors animate to new slots via parent-MutationObserver triggers; inserted items baseline.",
+    phase: 4,
+    component: lazy(() => import("./LayoutList")),
+    source: rawSource(() => import("./LayoutList.tsx?raw")),
+    filename: "LayoutList.tsx",
+  },
+  {
+    path: "/layout-id-handoff",
+    title: "Shared element (layoutId)",
+    blurb:
+      "Thumbnail ↔ hero share `layoutId='card'`. Donor's onCleanup donates rect; consumer's createMotion FLIPs from there. Wrapped in Presence — exit + FLIP run in parallel.",
+    phase: 4,
+    component: lazy(() => import("./LayoutIdHandoff")),
+    source: rawSource(() => import("./LayoutIdHandoff.tsx?raw")),
+    filename: "LayoutIdHandoff.tsx",
+  },
+  {
+    path: "/layout-group-namespace",
+    title: "LayoutGroup scoping",
+    blurb:
+      "Two tab strips, each with its own <LayoutGroup>. Same layoutId in each doesn't cross-match — the indicator stays put when the other strip's tab changes.",
+    phase: 4,
+    component: lazy(() => import("./LayoutGroupNamespace")),
+    source: rawSource(() => import("./LayoutGroupNamespace.tsx?raw")),
+    filename: "LayoutGroupNamespace.tsx",
+  },
 ]
