@@ -184,8 +184,28 @@ export function createLayoutController(
     if (!parentEl) return undefined
     const E = el.getBoundingClientRect()
     const P = parentEl.getBoundingClientRect()
-    let localX = E.left - P.left
-    let localY = E.top - P.top
+    // Subtract our OWN layer transform to recover the LAYOUT rect
+    // (pre-our-transform). Browser's `getBoundingClientRect` reports
+    // the rendered (transformed) box — without this subtraction,
+    // a re-measurement triggered by RO firing AFTER we wrote a layer
+    // transform would read the transformed bcr and compute a delta
+    // against itself, producing a feedback loop (each measurement
+    // ratchets the layer toward infinity). Subtracting recovers the
+    // invariant layout rect so `First === Last` de-dupes spurious
+    // re-measurements during our own animation.
+    //
+    // Parent's transform (if parent is also layout-active) cancels
+    // automatically via `E - P` math: both rects shift equally in
+    // viewport coords when an ancestor transform applies, so the
+    // difference is parent-relative LAYOUT.
+    const layerX = layerMVs.x?.get() ?? 0
+    const layerY = layerMVs.y?.get() ?? 0
+    const layerScaleX = layerMVs.scaleX?.get() ?? 1
+    const layerScaleY = layerMVs.scaleY?.get() ?? 1
+    let localX = E.left - P.left - layerX
+    let localY = E.top - P.top - layerY
+    const localWidth = layerScaleX === 0 ? E.width : E.width / layerScaleX
+    const localHeight = layerScaleY === 0 ? E.height : E.height / layerScaleY
     // Compensate for `layoutScroll` ancestors between this element and
     // its projection parent. The chain (built in `m.Provider` per the
     // locked Q-layoutScroll chain-reset rule) only includes scrollers
@@ -212,8 +232,8 @@ export function createLayoutController(
     return {
       x: localX,
       y: localY,
-      width: E.width,
-      height: E.height,
+      width: localWidth,
+      height: localHeight,
     }
   }
 
