@@ -16,6 +16,7 @@ import type {
   AnimateValue,
   MotionElement,
   MotionOptions,
+  ProjectionContextValue,
   Target,
   Transition,
   VariantContextValue,
@@ -160,6 +161,24 @@ export type CreateMotionConfig = {
    * `snapshotValue` reduction before passing them in.
    */
   styleStaticTransforms?: Map<string, number | string>
+  /**
+   * The motion proxy threads its captured OUTER projection context
+   * here so the element measures against its true parent context.
+   *
+   * Why this can't be `useProjectionContext()` inside createMotion: the
+   * motion proxy renders the underlying DOM element INSIDE the element's
+   * OWN `m.Provider`, so when the ref fires the owner-chain lookup
+   * finds the element's own myProjectionCtx — which (for layout-active
+   * elements) returns the element itself as projection parent. Result:
+   * the controller measures against itself, `E - P = 0` on every
+   * measurement, no FLIP fires.
+   *
+   * Direct createMotion / useMotion callers (without the proxy) don't
+   * pass this and fall back to the live `useProjectionContext()`,
+   * which is correct because they place `<m.Provider>` MANUALLY around
+   * descendants — the live context at ref-fire IS the parent context.
+   */
+  parentProjectionContext?: ProjectionContextValue
 }
 
 /**
@@ -187,7 +206,11 @@ export function createMotion(
   // presence/motionConfig above (Q-option a from step 7 sign-off). The
   // controller below consumes them only when `opts.layout` is truthy
   // at construction; non-layout elements pay two `Map.get` calls.
-  const projectionContext = useProjectionContext()
+  // When the motion proxy is the caller, it passes the OUTER projection
+  // context (captured before m.Provider wraps the element). Direct
+  // callers fall back to `useProjectionContext()` — correct because
+  // they place `<m.Provider>` manually around descendants.
+  const projectionContext = config?.parentProjectionContext ?? useProjectionContext()
   const layoutGroupContext = useLayoutGroupContext()
 
   // ---------- Per-element value registry (lazy — Stage 4.5) ----------
@@ -701,26 +724,30 @@ export function createMotion(
     refreshWriter()
 
     // layoutId consume — if this element donates/receives a shared-
-    // element transition, ask the coordinator for the donor's entry.
-    // The coordinator is the LayoutGroup's per-group instance (when
-    // wrapped) or `rootLayoutCoordinator` (the implicit-root default).
+    // element transition, find the previous holder of this id and FLIP
+    // from its rect. Two sources, checked in order:
+    //
+    //   1. A LIVE sibling already mounted under the same layoutId
+    //      (`findLive`). This is the common case under `<Presence>`
+    //      keep-alive (donor still in DOM, awaiting exit) and under
+    //      same-tick `<Show>`/route swaps where the consumer mounts
+    //      BEFORE the donor's `onCleanup` fires. We read the donor's
+    //      CURRENT `getBoundingClientRect()` — the visually-accurate
+    //      "First" — and use it as the consumer's first rect.
+    //
+    //   2. A queued `donate(...)` entry (`consume`), populated by the
+    //      previous holder's onCleanup. This handles the case where
+    //      the donor has already detached from the DOM by the time
+    //      the consumer mounts (no Presence, cross-tick handoff).
+    //
     // See ADR 0007 and Plan §6.
     const layoutIdAtMount = initialOpts.layoutId
     let initialFirst: { x: number; y: number; width: number; height: number } | undefined
     if (layoutIdAtMount !== undefined) {
-      const entry = layoutGroupContext.coordinator.consume(layoutIdAtMount)
-      if (entry !== null) {
-        // Prefer the donor's LIVE rect when its element is still in
-        // the DOM (Presence keep-alive); fall back to the stored
-        // pre-exit rect otherwise. See Plan §6.6.
-        const donorRect = entry.el.isConnected ? entry.el.getBoundingClientRect() : entry.rect
-        // Convert donor's viewport-relative rect to consumer's
-        // projection-local coords. Donor's projection parent may
-        // differ from consumer's; we use the consumer's CURRENT
-        // projection parent rect for the conversion. Scroll-ancestor
-        // compensation and layoutAnchor handling for the handoff are
-        // deferred to later polish (the basic same-tick case in step
-        // 14 covers the no-scroll, no-anchor common case).
+      // Track A path: look for a still-mounted sibling under this id.
+      const liveDonor = layoutGroupContext.coordinator.findLive(layoutIdAtMount, el)
+      if (liveDonor !== null) {
+        const donorRect = liveDonor.getBoundingClientRect()
         const consumerProjParent = projectionContext.parentEl()
         const P = consumerProjParent.getBoundingClientRect()
         initialFirst = {
@@ -729,7 +756,28 @@ export function createMotion(
           width: donorRect.width,
           height: donorRect.height,
         }
+      } else {
+        // Fall back to the donate queue (cross-tick handoff path).
+        const entry = layoutGroupContext.coordinator.consume(layoutIdAtMount)
+        if (entry !== null) {
+          const donorRect = entry.el.isConnected ? entry.el.getBoundingClientRect() : entry.rect
+          const consumerProjParent = projectionContext.parentEl()
+          const P = consumerProjParent.getBoundingClientRect()
+          initialFirst = {
+            x: donorRect.left - P.left,
+            y: donorRect.top - P.top,
+            width: donorRect.width,
+            height: donorRect.height,
+          }
+        }
       }
+
+      // Register THIS element under the layoutId so a future consumer
+      // can find it via `findLive`. Done AFTER the lookup above so we
+      // don't find ourselves (defensive — `findLive` already excludes
+      // `self`, but registering after also keeps the registry's
+      // intent clear).
+      layoutGroupContext.coordinator.register(layoutIdAtMount, el)
     }
 
     createLayoutController(el, getOpts, {
@@ -761,11 +809,21 @@ export function createMotion(
         // (e.g., flipped to undefined by the time of unmount).
         const liveLayoutId = untrack(getOpts).layoutId ?? layoutIdAtMount
         if (liveLayoutId === undefined) return
+
+        // Unregister from the live registry FIRST. Without this, a
+        // same-tick consumer's `findLive` could return THIS element
+        // even though it's about to be removed — leading the consumer
+        // to FLIP from its own pre-unmount position rather than from
+        // a meaningful donor.
+        layoutGroupContext.coordinator.unregister(liveLayoutId, el)
+
         const projParent = projectionContext.parentEl()
+        const rect = el.getBoundingClientRect()
+        const projRect = projParent.getBoundingClientRect()
         layoutGroupContext.coordinator.donate(liveLayoutId, {
           el,
-          rect: el.getBoundingClientRect(),
-          projectionParentRect: projParent.getBoundingClientRect(),
+          rect,
+          projectionParentRect: projRect,
         })
       })
     }

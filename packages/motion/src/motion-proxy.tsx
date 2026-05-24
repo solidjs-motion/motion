@@ -1,6 +1,7 @@
 import { mergeRefs } from "@solid-primitives/refs"
 import { type Component, type JSX, mergeProps, onMount, splitProps } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { useProjectionContext } from "./projection-context"
 import type { ElementProps, MotionElement, MotionOptions, MotionStyle } from "./types"
 import { useMotion } from "./use-motion"
 
@@ -264,7 +265,24 @@ function makeMotionTag(tag: string): AnyComponent {
 
   const Tag: Component<ElementProps & MotionOptions> = (props) => {
     const [motionOpts, rest] = splitProps(props, MOTION_OPT_KEYS)
-    const m = useMotion(() => motionOpts)
+    // Capture the OUTER projection context here — BEFORE useMotion
+    // builds m.Provider. The element itself (the rendered Dynamic
+    // below) ends up INSIDE m.Provider in the JSX tree, so its
+    // createMotion ref-fire would walk the owner chain and find the
+    // element's OWN myProjectionCtx — which (for layout-active
+    // elements) returns the element itself as projection parent,
+    // causing measurements against self (`E - P = 0`, no FLIP).
+    //
+    // m.Provider's context push is for DESCENDANTS only. By capturing
+    // the OUTER context here and threading it into useMotion → createMotion,
+    // the element measures against its true parent context regardless
+    // of where it lands in the JSX tree.
+    //
+    // Direct useMotion callers (Pattern 2 in use-motion.tsx) don't
+    // hit this path — they get the live context at ref-fire, which is
+    // correct because the user controls m.Provider placement manually.
+    const outerProjectionCtx = useProjectionContext()
+    const m = useMotion(() => motionOpts, { parentProjectionContext: outerProjectionCtx })
     return (
       <m.Provider>
         <Dynamic component={tag} {...m(rest as ElementProps)} />
@@ -307,7 +325,15 @@ function motionCreate<P extends Record<string, any>>(
       props as unknown as Record<string, unknown>,
       MOTION_OPT_KEYS,
     )
-    const m = useMotion(() => motionOpts as MotionOptions)
+    // Capture OUTER projection context BEFORE useMotion runs and
+    // builds m.Provider — see the JSDoc on `makeMotionTag` for why
+    // the proxy needs to thread this through instead of letting
+    // createMotion read live context (which would resolve to m.Provider's
+    // self-pushed myProjectionCtx).
+    const outerProjectionCtx = useProjectionContext()
+    const m = useMotion(() => motionOpts as MotionOptions, {
+      parentProjectionContext: outerProjectionCtx,
+    })
 
     // Dev-mode wrap-validity check (Q7 in the design grill / future ADR
     // 0004): the wrapped Component must forward props.ref to a DOM

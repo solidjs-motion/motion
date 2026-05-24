@@ -26,7 +26,7 @@
 
 import { animate, type MotionValue, motionValue } from "motion"
 import { frame } from "motion-dom"
-import { type Accessor, createEffect, onCleanup, untrack } from "solid-js"
+import { type Accessor, createEffect, onCleanup, onMount, untrack } from "solid-js"
 import { shouldReduceMotion } from "../reduced-motion"
 import type {
   LayoutGroupContextValue,
@@ -179,6 +179,17 @@ export function createLayoutController(
   // interruption — locked Q8 semantics).
   const layerMVs: Partial<Record<LayoutAxis, MotionValue<number>>> = {}
 
+  // Layer-MV change-subscription disposers. We track them manually
+  // (rather than via Solid's `onCleanup`) because layer MVs are
+  // created from inside `applyFlip` — which runs inside a `frame.read`
+  // callback, OUTSIDE any Solid reactive owner. An `onCleanup` call
+  // from there silently leaks (Solid warns "cleanups created outside
+  // a createRoot or render will never be run"). The controller's
+  // main `onCleanup` (registered at the bottom of this function in a
+  // proper reactive owner) walks this list to disconnect every
+  // subscription.
+  const layerUnsubscribers: Array<() => void> = []
+
   function measureLocal(): LocalRect | undefined {
     const parentEl = projectionContext.parentEl()
     if (!parentEl) return undefined
@@ -251,6 +262,16 @@ export function createLayoutController(
     const last = measureLocal()
     if (!last) return
 
+    // Skip degenerate measurements where the element has zero size.
+    // This happens during client-side navigation: the route's
+    // component mounts and `createMotion` runs in the ref BEFORE the
+    // browser has laid out the new DOM, so `getBoundingClientRect()`
+    // returns the zero rect. Caching `(0, 0, 0, 0)` as baseline
+    // produces wrong inverse-scale (`first.width / last.width = 0`)
+    // on the NEXT measurement, collapsing the element to zero size
+    // or producing wild translates. Wait for a real layout pass.
+    if (last.width === 0 && last.height === 0) return
+
     // Baseline-establishing pass. No animation fires; subsequent
     // measurements compare to this snapshot.
     if (first === undefined) {
@@ -267,7 +288,30 @@ export function createLayoutController(
     const inverseScaleY = last.height === 0 ? 1 : first.height / last.height
 
     // First===Last de-dupe. Trigger fired but no actual movement.
-    if (deltaX === 0 && deltaY === 0 && inverseScaleX === 1 && inverseScaleY === 1) {
+    // Tolerance — NOT exact equality — because intermediate measurements
+    // taken DURING an active FLIP animation receive sub-pixel error from
+    // two sources:
+    //
+    //   1. `getBoundingClientRect()` is sub-pixel precise. When we divide
+    //      `E.width / layerScaleX` to recover the layout width, IEEE-754
+    //      rounding leaves us a few ULPs short of the original — never
+    //      exactly first.width.
+    //   2. The animate() driver writes interpolated scale values that
+    //      aren't multiplicative inverses of the layer-subtract math.
+    //
+    // Without tolerance, every mid-animation RO/MO trigger fires a NEW
+    // applyFlip whose `mv.set(...)` call interrupts the in-flight tween,
+    // visually jumping the element. With 0.01 (1/100 of a pixel), real
+    // layout changes (≥ 1 pixel typically) still trigger a re-FLIP while
+    // floating-point noise during a running animation is filtered out.
+    const POSITION_EPSILON = 0.01
+    const SCALE_EPSILON = 0.0001
+    if (
+      Math.abs(deltaX) < POSITION_EPSILON &&
+      Math.abs(deltaY) < POSITION_EPSILON &&
+      Math.abs(inverseScaleX - 1) < SCALE_EPSILON &&
+      Math.abs(inverseScaleY - 1) < SCALE_EPSILON
+    ) {
       first = last
       return
     }
@@ -370,12 +414,8 @@ export function createLayoutController(
     registry.setLayoutValue(axis, mv)
     // Subscribe the writer to this layer MV so `set()` calls and
     // `animate()`-driven updates flow through the same recompose path
-    // as user-facing style MVs. `onCleanup` ties the unsubscribe to
-    // the surrounding owner.
-    onCleanup(mv.on("change", writeFromRegistry))
-    // Layer-shape change → recompile writer so the multi-key fold path
-    // runs (single-key fast path bypasses the fold; see refreshWriter
-    // in createMotion).
+    // as user-facing style MVs.
+    layerUnsubscribers.push(mv.on("change", writeFromRegistry))
     refreshWriter()
     return mv
   }
@@ -391,6 +431,26 @@ export function createLayoutController(
     // the public type doesn't expose `.then` so narrow via cast.
     return controls as unknown as PromiseLike<unknown>
   }
+
+  // Force `transform-origin: 0 0` on the layout-active element.
+  // Default CSS is `50% 50%` (center), which shifts the bcr's
+  // top-left by `(width × (scaleX − 1)) / 2` whenever scale ≠ 1.
+  // Our `measureLocal` layer-subtract assumes the bcr.left includes
+  // ONLY the translate — not a center-origin scale shift — so without
+  // forcing the origin to 0 0 the math undercounts by half the
+  // scale-induced shift, producing a feedback loop in re-measurements.
+  //
+  // Users who want a different visual pivot use `layoutAnchor`, which
+  // operates at the LOCAL-COORD layer (locked Q-anchor in the grill)
+  // rather than via CSS transform-origin. This setting is purely an
+  // internal correctness fix; the user-facing layout API doesn't
+  // depend on it.
+  //
+  // We snapshot the user's transformOrigin so we can restore it on
+  // controller disposal (e.g., if the user passes a custom one via
+  // style; though style.transformOrigin isn't a Motion-tracked key).
+  const userTransformOrigin = el.style.transformOrigin
+  el.style.transformOrigin = "0 0"
 
   // ---------- Trigger subscriptions ----------
   // Each createEffect's first iteration provides the baseline-
@@ -426,18 +486,39 @@ export function createLayoutController(
   onCleanup(() => ro.disconnect())
 
   // MutationObserver on the immediate parent — shared across sibling
-  // layout elements via the module-level WeakMap (see header). Parent is
-  // snapshotted at construction; re-parenting at runtime isn't supported
-  // in 0.2.0 (user remounts via key for that case).
-  const parentEl = el.parentElement
-  if (parentEl !== null) {
-    const unsubscribe = subscribeParentMo(parentEl, scheduleMeasurement)
-    onCleanup(unsubscribe)
-  }
+  // layout elements via the module-level WeakMap (see header).
+  //
+  // The parent is captured LAZILY via `onMount` rather than at controller
+  // construction time. Solid's `<For>` reconciliation creates new items'
+  // DOM nodes BEFORE inserting them into the parent — so the ref fires
+  // (and createMotion runs) with `el.parentElement === null` for any
+  // item that mounts mid-list. Skipping the MO subscription in that
+  // case means later layout shifts on siblings never trigger this
+  // element's re-measurement → no FLIP for newly-added items when
+  // subsequent operations rearrange the list.
+  //
+  // `onMount` fires after Solid has attached the element to the DOM, so
+  // `el.parentElement` is the real UL/parent by then.
+  onMount(() => {
+    const parentEl = el.parentElement
+    if (parentEl !== null) {
+      const unsubscribe = subscribeParentMo(parentEl, scheduleMeasurement)
+      onCleanup(unsubscribe)
+    }
+  })
 
   onCleanup(() => {
     live = false
+    // Disconnect every layer-MV change subscription registered from
+    // `ensureLayerMV` (which couldn't use `onCleanup` itself because
+    // it runs inside frame.read — outside any reactive owner).
+    for (const unsubscribe of layerUnsubscribers) unsubscribe()
+    layerUnsubscribers.length = 0
     registry.clearLayoutLayer()
     refreshWriter()
+    // Restore the user's original transform-origin (overridden at
+    // construction to make our layer-subtract math correct under
+    // arbitrary scale values).
+    el.style.transformOrigin = userTransformOrigin
   })
 }

@@ -688,6 +688,27 @@ export type LayoutCoordinator = {
    * `null` if no match exists.
    */
   consume: (layoutId: string) => LayoutEntry | null
+  /**
+   * Register a currently-mounted layout-active element under `layoutId`.
+   * Called by `createMotion` at mount. The live registry is queried by
+   * `findLive` to handle the Presence/concurrent-mount case where a
+   * new consumer mounts BEFORE the old donor's `onCleanup` fires.
+   */
+  register: (layoutId: string, el: Element) => void
+  /**
+   * Remove a previously-registered live element. Called at owner
+   * cleanup (before `donate`).
+   */
+  unregister: (layoutId: string, el: Element) => void
+  /**
+   * Find any other live element with this `layoutId` excluding `self`.
+   * Returns the first such element, or null. The consumer reads
+   * `getBoundingClientRect()` on the returned element to derive its
+   * starting position — the most accurate source when the previous
+   * holder of the id is still in the DOM (Presence keep-alive, or
+   * concurrent mount/unmount via `<Show>`).
+   */
+  findLive: (layoutId: string, self: Element) => Element | null
 }
 
 /**

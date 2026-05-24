@@ -68,7 +68,39 @@ import { isControllingVariants, useVariantContext, VariantContext } from "./vari
  * For the common "JSX wrapper does propagation automatically" pattern, use
  * `<motion.div>` (Phase 4).
  */
-export function useMotion(opts: MotionOptions | Accessor<MotionOptions>): UseMotionResult {
+/**
+ * Optional internal config for `useMotion`. Used by the motion proxy
+ * to thread the captured OUTER projection context (the one above
+ * m.Provider in the JSX tree) to createMotion. See the JSDoc on the
+ * `parentProjectionContext` field below for the architectural reason.
+ *
+ * Not part of the public API — direct useMotion users don't pass this.
+ */
+export type UseMotionInternalConfig = {
+  /**
+   * Captured outer projection context. When provided, the element's
+   * createMotion uses this for measurement instead of calling
+   * `useProjectionContext()` at ref-fire time.
+   *
+   * Why this matters: the motion proxy wraps the rendered element in
+   * `m.Provider`, so the element's ref fires INSIDE its own
+   * myProjectionCtx — which (for layout-active elements) returns the
+   * element itself as projection parent. Without this config, the
+   * controller measures against itself: every `E - P` evaluates to 0,
+   * no FLIP fires. The proxy captures the OUTER context above m.Provider
+   * (where the parent's context still lives) and passes it here.
+   *
+   * Direct useMotion callers don't pass this — they place
+   * `<m.Provider>` MANUALLY in JSX, so the live context at ref-fire IS
+   * the correct parent context.
+   */
+  parentProjectionContext?: ProjectionContextValue
+}
+
+export function useMotion(
+  opts: MotionOptions | Accessor<MotionOptions>,
+  config?: UseMotionInternalConfig,
+): UseMotionResult {
   const getOpts: () => MotionOptions = typeof opts === "function" ? opts : () => opts
 
   // ---------- Parent context (with controlling-variants shadowing) ----------
@@ -179,6 +211,7 @@ export function useMotion(opts: MotionOptions | Accessor<MotionOptions>): UseMot
         styleStaticTransforms !== undefined,
       activeStore,
       parentContext: parentVariantCtx,
+      parentProjectionContext: config?.parentProjectionContext,
       styleMotionValues,
       styleStaticTransforms,
     })

@@ -42,6 +42,16 @@ export function createLayoutCoordinator(): LayoutCoordinator {
   const staleKeys = new Set<string>()
   let cleanupScheduled = false
 
+  // Live-node registry: every layout-active element currently mounted
+  // under each `layoutId`. Distinct from the `entries` donate queue —
+  // the queue captures the donor's rect at unmount time (Presence
+  // exit), but when `<Show>` swaps in a new consumer BEFORE the old
+  // donor's `onCleanup` fires (the common case under Presence
+  // keep-alive), the queue is empty at consume time. The consumer
+  // instead looks up a live sibling here and reads its CURRENT
+  // bcr — the most accurate "first" available.
+  const liveNodes = new Map<string, Set<Element>>()
+
   function scheduleCleanup(): void {
     if (cleanupScheduled) return
     cleanupScheduled = true
@@ -73,6 +83,28 @@ export function createLayoutCoordinator(): LayoutCoordinator {
         staleKeys.delete(layoutId)
       }
       return entry
+    },
+    register(layoutId, el) {
+      let set = liveNodes.get(layoutId)
+      if (set === undefined) {
+        set = new Set()
+        liveNodes.set(layoutId, set)
+      }
+      set.add(el)
+    },
+    unregister(layoutId, el) {
+      const set = liveNodes.get(layoutId)
+      if (set === undefined) return
+      set.delete(el)
+      if (set.size === 0) liveNodes.delete(layoutId)
+    },
+    findLive(layoutId, self) {
+      const set = liveNodes.get(layoutId)
+      if (set === undefined) return null
+      for (const candidate of set) {
+        if (candidate !== self) return candidate
+      }
+      return null
     },
   }
 }
