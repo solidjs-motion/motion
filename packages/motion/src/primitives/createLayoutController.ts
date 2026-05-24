@@ -301,21 +301,44 @@ export function createLayoutController(
     // handles its own read/write phasing internally for the actual
     // DOM mutations — calling it from outside a frame step is the
     // canonical pattern (cf. framer-motion's layout module).
+    //
+    // Collect each axis's animate-controls so we can aggregate them
+    // for the FLIP-level `onLayoutAnimationComplete` lifecycle
+    // callback. Each motion animate returns a thenable that resolves
+    // when its tween (or cancellation) settles; `Promise.all` waits
+    // for the FLIP to fully settle before firing the user's
+    // onComplete.
+    const controls: PromiseLike<unknown>[] = []
     if (animatePos && (deltaX !== 0 || deltaY !== 0)) {
       const xMV = ensureLayerMV("x", 0)
       const yMV = ensureLayerMV("y", 0)
       xMV.set(deltaX)
       yMV.set(deltaY)
-      runAnimation(xMV, 0, transition)
-      runAnimation(yMV, 0, transition)
+      controls.push(runAnimation(xMV, 0, transition))
+      controls.push(runAnimation(yMV, 0, transition))
     }
     if (animateSize && (sx !== 1 || sy !== 1)) {
       const sxMV = ensureLayerMV("scaleX", 1)
       const syMV = ensureLayerMV("scaleY", 1)
       sxMV.set(sx)
       syMV.set(sy)
-      runAnimation(sxMV, 1, transition)
-      runAnimation(syMV, 1, transition)
+      controls.push(runAnimation(sxMV, 1, transition))
+      controls.push(runAnimation(syMV, 1, transition))
+    }
+
+    if (controls.length > 0) {
+      // Fire onStart synchronously — the FLIP has just dispatched
+      // (the inverse has been set; the tween is queued to animate
+      // toward identity). Captured `opts` is the snapshot the
+      // current measurement is acting on; subsequent opts changes
+      // affect the NEXT FLIP, not this one.
+      opts.onLayoutAnimationStart?.()
+      Promise.all(controls).then(() => {
+        // Live gate prevents firing after owner disposal — the
+        // Promise.all itself can't be cancelled, but the callback
+        // can be skipped.
+        if (live) opts.onLayoutAnimationComplete?.()
+      })
     }
   }
 
@@ -337,9 +360,16 @@ export function createLayoutController(
     return mv
   }
 
-  function runAnimation(mv: MotionValue<number>, target: number, transition: Transition): void {
+  function runAnimation(
+    mv: MotionValue<number>,
+    target: number,
+    transition: Transition,
+  ): PromiseLike<unknown> {
     // biome-ignore lint/suspicious/noExplicitAny: motion's animate has an overloaded shape; the MV+number form is the runtime path we want.
-    animate(mv as any, target, transition as any)
+    const controls = animate(mv as any, target, transition as any)
+    // motion's `AnimationPlaybackControls` is thenable at runtime;
+    // the public type doesn't expose `.then` so narrow via cast.
+    return controls as unknown as PromiseLike<unknown>
   }
 
   // ---------- Trigger subscriptions ----------
