@@ -97,6 +97,62 @@ export function mergeTransition(
 }
 
 /**
+ * Library default transition for layout animations.
+ *
+ * Layout FLIPs have different physics needs than animate/gesture
+ * targets. A `transition: { type: "spring", stiffness: 300, damping: 30 }`
+ * tuned for a hover effect overshoots ~55% when applied to layout —
+ * items visibly fly past their target slot before settling. Conversely,
+ * a stiff `damping: 60` spring tuned for layout feels lifeless on
+ * gesture-driven targets.
+ *
+ * Modern motion's spring `duration` + `bounce` API lets us specify a
+ * smooth no-bounce spring in user-friendly terms: ~450ms perceptual
+ * duration, zero overshoot. Critically damped, lands at rest exactly
+ * on first crossing. This is what motion/react's layout system uses
+ * under the hood for its "snappy but not bouncy" default.
+ *
+ * Users override this per-element via `layoutTransition` (or workspace-
+ * wide via `<MotionConfig transition>`).
+ */
+export const LAYOUT_DEFAULT_TRANSITION: Transition = {
+  type: "spring",
+  duration: 0.45,
+  bounce: 0,
+} as Transition
+
+/**
+ * Resolve the transition for a layout FLIP.
+ *
+ * Priority chain (lowest → highest):
+ *   1. {@link LAYOUT_DEFAULT_TRANSITION} — library floor
+ *   2. `motionConfig.transition()` — workspace-wide default (via
+ *      `<MotionConfig>`); applies to layout too for consistency
+ *   3. `opts.layoutTransition` — per-element layout-specific override
+ *
+ * Notably, the regular per-element `opts.transition` is **NOT** in the
+ * chain. That prop is for animate/gesture targets; if it flowed into
+ * layout, a user-tuned spring for hover/animate would silently override
+ * the layout default and produce surprising overshoot. Users who DO
+ * want their transition prop to apply uniformly use the workspace-wide
+ * `<MotionConfig transition>` instead.
+ *
+ * Reduced motion: returns `{ duration: 0 }` (Q11 sub-4 semantics).
+ */
+export function mergeLayoutTransition(
+  configDefault: Transition | undefined,
+  perTargetTransition: Transition | undefined,
+  reduced: boolean,
+): Transition {
+  if (reduced) return { duration: 0 } as Transition
+  return {
+    ...LAYOUT_DEFAULT_TRANSITION,
+    ...(configDefault ?? {}),
+    ...(perTargetTransition ?? {}),
+  } as Transition
+}
+
+/**
  * Apply a static target to an element's inline style before paint. Used on
  * mount when no SSR style was emitted. The ref callback fires before the
  * browser yields, so this avoids a frame of flicker.

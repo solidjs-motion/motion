@@ -36,7 +36,7 @@ import type {
   ProjectionContextValue,
   Transition,
 } from "../types"
-import { mergeTransition } from "./createMotion"
+import { mergeLayoutTransition } from "./createMotion"
 import type { LayoutAxis, ValueRegistry } from "./value-registry"
 
 // ---------------------------------------------------------------------------
@@ -353,9 +353,11 @@ export function createLayoutController(
     }
 
     const reduced = shouldReduceMotion(motionConfig.reducedMotion(), systemReducedMotion())
-    const transition = mergeTransition(
+    // Layout transitions deliberately exclude the per-element `transition`
+    // prop. See `mergeLayoutTransition` JSDoc for the rationale (a spring
+    // tuned for hover/animate overshoots when applied to layout FLIPs).
+    const transition = mergeLayoutTransition(
       motionConfig.transition(),
-      opts.transition,
       opts.layoutTransition,
       reduced,
     )
