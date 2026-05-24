@@ -186,6 +186,19 @@ export function createLayoutController(
       localX += scroller.scrollLeft
       localY += scroller.scrollTop
     }
+    // `layoutAnchor` (per-element): shifts the local-coord origin to a
+    // fraction of the projection parent's box. Default `{x: 0, y: 0}`
+    // keeps the top-left origin (standard FLIP). For a non-resizing
+    // projection parent the offset is constant across measurements
+    // and cancels in deltas — no observable effect. For a resizing
+    // projection parent the offset DIFFERS between first/last,
+    // capturing the pivot's motion as the parent grows/shrinks. See
+    // ADR 0007 §7.3.
+    const anchor = untrack(getOpts).layoutAnchor
+    if (anchor !== undefined) {
+      localX -= P.width * anchor.x
+      localY -= P.height * anchor.y
+    }
     return {
       x: localX,
       y: localY,
