@@ -105,7 +105,11 @@ describe("layout: layoutId basic handoff", () => {
       const m = useMotion(() => ({ layoutId: "card" }))
       return <div data-testid="b" {...m()} />
     }
-    const { container } = render(() => <Show when={show()}>{() => <B />}</Show>)
+    const { container } = render(() => (
+      <Show when={show()}>
+        <B />
+      </Show>
+    ))
     setShow(true)
     const b = container.querySelector<HTMLElement>("[data-testid='b']") as HTMLElement
     stubRect(b, { x: 500, y: 500, width: 100, height: 100 })
