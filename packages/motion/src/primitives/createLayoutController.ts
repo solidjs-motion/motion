@@ -102,6 +102,50 @@ function subscribeParentMo(parent: Element, onChange: () => void): () => void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Ancestor-translate extraction.
+//
+// `getBoundingClientRect()` reports the RENDERED position, which includes
+// every ancestor's transform. For our projection math, ancestors ABOVE
+// the projection parent cancel via `E - P` — but ancestors BETWEEN the
+// element and the projection parent affect only E. We walk up the chain
+// and accumulate translate components from each ancestor's `transform`
+// matrix to subtract from the bcr.
+//
+// Pure-translate only. Scale/rotate on ancestors is a known limitation.
+// ---------------------------------------------------------------------------
+function getAncestorTranslate(
+  el: Element,
+  stopAt: Element | null,
+): { tx: number; ty: number } {
+  let tx = 0
+  let ty = 0
+  let cur: Element | null = el.parentElement
+  while (cur !== null && cur !== stopAt) {
+    if (cur instanceof HTMLElement || cur instanceof SVGElement) {
+      const transform = getComputedStyle(cur).transform
+      if (transform && transform !== "none") {
+        const match = transform.match(/matrix(?:3d)?\(([^)]+)\)/)
+        const inside = match?.[1]
+        if (inside !== undefined) {
+          const values = inside.split(",").map((s) => Number.parseFloat(s.trim()))
+          if (values.length === 6) {
+            // `matrix(a, b, c, d, tx, ty)` — 2D affine.
+            tx += values[4] ?? 0
+            ty += values[5] ?? 0
+          } else if (values.length === 16) {
+            // `matrix3d(...)` — translate components at indices 12, 13.
+            tx += values[12] ?? 0
+            ty += values[13] ?? 0
+          }
+        }
+      }
+    }
+    cur = cur.parentElement
+  }
+  return { tx, ty }
+}
+
 export type CreateLayoutControllerConfig = {
   /** Registry to install layout-layer MVs into. */
   registry: ValueRegistry
@@ -213,8 +257,24 @@ export function createLayoutController(
     const layerY = layerMVs.y?.get() ?? 0
     const layerScaleX = layerMVs.scaleX?.get() ?? 1
     const layerScaleY = layerMVs.scaleY?.get() ?? 1
-    let localX = E.left - P.left - layerX
-    let localY = E.top - P.top - layerY
+    // Subtract any translate transforms on ANCESTORS between this
+    // element and the projection parent. Browser's bcr reports the
+    // RENDERED position, which includes every ancestor's transform.
+    // Ancestors ABOVE the projection parent affect both E and P
+    // equally and cancel via `E - P` — but ancestors BETWEEN the
+    // element and the projection parent affect only E. Without
+    // subtraction, an ancestor mid-animation (e.g., a route-enter
+    // wrapper animating `y: 8 → y: 0`) shifts every measurement by
+    // the current animation frame's value; baseline captures the
+    // mid-animation offset and subsequent user-triggered FLIPs
+    // animate from that stale offset.
+    //
+    // Pure-translate handling only — scale/rotate on ancestors is
+    // a known limitation. Layout demos and motion-react's typical
+    // patterns translate-animate ancestors but rarely scale them.
+    const { tx: ancestorTx, ty: ancestorTy } = getAncestorTranslate(el, parentEl)
+    let localX = E.left - P.left - layerX - ancestorTx
+    let localY = E.top - P.top - layerY - ancestorTy
     const localWidth = layerScaleX === 0 ? E.width : E.width / layerScaleX
     const localHeight = layerScaleY === 0 ? E.height : E.height / layerScaleY
     // Compensate for `layoutScroll` ancestors between this element and
