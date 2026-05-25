@@ -80,6 +80,7 @@ function TabStrip(props: { label: string; active: number; setActive: (i: number)
                 {props.active === i() && (
                   <motion.div
                     layoutId="indicator"
+                    data-testid={`${props.label}/indicator/${i()}`}
                     transition={{ type: "spring", stiffness: 350, damping: 30 }}
                     style={{
                       position: "absolute",

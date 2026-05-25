@@ -62,6 +62,7 @@ export default function LayoutList() {
         </button>
       </div>
       <motion.ul
+        data-testid="list/ul"
         style={{
           "list-style": "none",
           padding: "0.75rem",
@@ -78,7 +79,7 @@ export default function LayoutList() {
           {(item) => (
             <motion.li
               layout
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              data-testid={`list/li/${item.id}`}
               style={{
                 padding: "0.5rem 0.75rem",
                 background: "var(--color-elevated)",

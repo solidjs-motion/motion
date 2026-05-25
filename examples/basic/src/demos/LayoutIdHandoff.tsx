@@ -1,5 +1,12 @@
 import { createSignal, Show } from "solid-js"
-import { motion, Presence } from "solidjs-motion"
+import {
+  createSpring,
+  createTemplate,
+  createTransform,
+  motion,
+  Presence,
+  type Transition,
+} from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
 // LayoutIdHandoff — shared-element transition between two motion elements
@@ -15,8 +22,22 @@ import { motion, Presence } from "solidjs-motion"
 // cross-cancellation (locked Q5/§6.5 semantics).
 // ---------------------------------------------------------------------------
 
+const DEFAULT_TRANSITION = {
+  stiffness: 220,
+  damping: 28,
+} satisfies Transition
+
 export default function LayoutIdHandoff() {
-  const [expanded, setExpanded] = createSignal(false)
+  const [expanded, setExpanded] = createSignal(0)
+  const [isAnimating, setIsAnimating] = createSignal(false)
+
+  const t = createSpring(expanded, DEFAULT_TRANSITION)
+
+  const firstStop = createTransform(t, [0, 1], ["#2c5364", "#ee0979"])
+  const lastStop = createTransform(t, [0, 1], ["#0f2027", "#ff6a00"])
+
+  const backgroundGradient = createTemplate`linear-gradient(135deg, ${firstStop}, ${lastStop})`
+
   return (
     <div>
       <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
@@ -27,8 +48,9 @@ export default function LayoutIdHandoff() {
       <button
         type="button"
         class="demo-button"
-        onClick={() => setExpanded((p) => !p)}
+        onClick={() => setExpanded((p) => (p === 0 ? 1 : 0))}
         style={{ "margin-bottom": "1.5rem" }}
+        disabled={isAnimating()}
       >
         {expanded() ? "shrink" : "expand"}
       </button>
@@ -39,18 +61,20 @@ export default function LayoutIdHandoff() {
             fallback={
               <motion.div
                 layoutId="card"
-                exit={{ opacity: 0 }}
-                transition={{ type: "spring", stiffness: 220, damping: 28 }}
+                data-testid="card/thumb"
+                transition={{ type: "spring", ...DEFAULT_TRANSITION }}
+                onLayoutAnimationStart={() => setIsAnimating(true)}
+                onLayoutAnimationComplete={() => setIsAnimating(false)}
                 style={{
                   width: "100px",
                   height: "100px",
                   "border-radius": "12px",
-                  background: "linear-gradient(135deg, #2c5364, #0f2027)",
                   color: "white",
                   "font-weight": 600,
                   display: "grid",
                   "place-items": "center",
                   cursor: "pointer",
+                  background: backgroundGradient,
                 }}
               >
                 thumb
@@ -59,19 +83,21 @@ export default function LayoutIdHandoff() {
           >
             <motion.div
               layoutId="card"
-              exit={{ opacity: 0 }}
-              transition={{ type: "spring", stiffness: 220, damping: 28 }}
+              data-testid="card/hero"
+              transition={{ type: "spring", ...DEFAULT_TRANSITION }}
+              onLayoutAnimationStart={() => setIsAnimating(true)}
+              onLayoutAnimationComplete={() => setIsAnimating(false)}
               style={{
                 width: "320px",
                 height: "220px",
                 "border-radius": "12px",
-                background: "linear-gradient(135deg, #ee0979, #ff6a00)",
                 color: "white",
                 "font-weight": 600,
                 "font-size": "1.5rem",
                 display: "grid",
                 "place-items": "center",
                 cursor: "pointer",
+                background: backgroundGradient,
               }}
             >
               hero

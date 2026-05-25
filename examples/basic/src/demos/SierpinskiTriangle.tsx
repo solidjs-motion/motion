@@ -1,38 +1,44 @@
-import { createSignal, type JSX, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, type JSX, onCleanup, Show } from "solid-js"
 import { isServer } from "solid-js/web"
-import { createMotionValue, motion } from "solidjs-motion"
+import { createMotionValue, LayoutGroup, motion } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
 // SierpinskiTriangle — a port of Ryan Carniato's classic Solid stress demo
-// (ryansolid/solid-sierpinski-triangle-demo), reframed to exercise the
-// MV-in-style fan-out path.
+// (ryansolid/solid-sierpinski-triangle-demo), now reframed to exercise the
+// LAYOUT-animation path at scale.
 //
-// Two stress axes running over the same recursive tree:
+// Three stress axes layered on the same recursive tree:
 //
-//   1. **Continuous transform via MV-in-style.** Every Dot is a
-//      `<motion.div style={{ scale: rootMV }}>` subscribing to ONE shared
-//      MotionValue. A single rAF loop sets the MV to a sine wave (±10%,
-//      ~1.5 Hz) — driving thousands of subscription notifies per frame.
-//      Each notify hits the writer's single-key fast path (no target-object
-//      allocation, no TRANSFORM_ORDER walk) and writes
-//      `el.style.transform = "scale(<v>)"`. This is the motion-side path.
+//   1. **Layout FLIP at fan-out.** Every dot is a `<motion.div layout>`
+//      inside a `<LayoutGroup dependency={shuffleTick}>`. A timer fires
+//      every 2.5 s, Fisher-Yates shuffles a permutation that maps each
+//      dot's stable identity to a leaf-position, and bumps `shuffleTick`.
+//      The LayoutGroup broadcast re-fires every descendant's measurement;
+//      each dot computes its delta and animates from its old slot to its
+//      new one. At depth 5 that's 243 simultaneous translate animations;
+//      at depth 7, 2,187.
 //
-//   2. **Static text via Solid signal.** Every Dot also renders the
-//      `seconds()` signal as its label. The signal updates once per second;
-//      Solid's per-text-node fine-grained reactivity means each Dot's text
-//      child re-evaluates independently. ~6,500 reactive bindings firing on
-//      a 1 Hz signal — a separate stress axis on top of the visual one.
+//   2. **Continuous transform via MV-in-style.** Every Dot still subscribes
+//      to a shared `scale: rootMV` driven by a sine pulse — the original
+//      stress axis, kept here because the value-registry fold composes
+//      user transforms with the layout layer. Each dot scales AND
+//      translates simultaneously during a shuffle.
+//
+//   3. **Static text via Solid signal.** Every Dot also renders the
+//      `seconds()` signal as its label. ~6,500 reactive bindings firing on
+//      a 1 Hz signal — separate stress axis on top of the visual one.
 //
 // Slider 4–9 lets you sweep through the difficulty curve:
-//   4 →    81 dots (trivial)
+//   4 →    81 dots
+//   5 →   243 dots (default — smooth shuffles on most setups)
 //   6 →   729 dots
-//   7 → 2,187 dots (default — smooth on most setups)
-//   8 → 6,561 dots (matches the original demo's stress level)
-//   9 → 19,683 dots (browser-dependent — at this density the compositor
-//                    becomes the bottleneck even with cheap JS coordination)
+//   7 → 2,187 dots (shuffles are visibly heavy but still complete)
+//   8 → 6,561 dots
+//   9 → 19,683 dots (compositor + layout machinery saturated — useful
+//                    failure mode for profiling, not for smooth demo)
 //
-// The FPS counter is the visual proof. Smooth at the chosen depth = the
-// per-element JS + DOM-write overhead is well under a 16.7 ms frame.
+// The FPS counter is the visual proof. Smooth shuffles at the chosen
+// depth means N FLIPs / s × per-FLIP cost stays under the frame budget.
 // ---------------------------------------------------------------------------
 
 const CONTAINER_W = 700
@@ -46,32 +52,61 @@ const CONTAINER_H = 600
  */
 const TRIANGLE_S_INIT = CONTAINER_H * 0.45
 
-type ScaleMV = ReturnType<typeof createMotionValue<number>>
+type Leaf = { x: number; y: number }
 
 /**
- * Map depth → leaf dot diameter (px) and font size (px).
- *
- * Sizing is anchored to the actual leaf-triangle edge length: each Triangle
- * recursion halves `s`, so the smallest triangle's edge is
- * `TRIANGLE_S_INIT / 2 ** depth`. Adjacent leaf-dots are at most ~s apart
- * (horizontal siblings) and at least ~s/2 apart (top/bottom siblings).
- *
- * A dot diameter of ~1.2 × leafSize makes adjacent dots touch lightly —
- * matches the canonical Sierpinski silhouette where the negative-space
- * triangles define the structure. We floor at 3px so the highest depths
- * stay visible as colored pixels rather than vanishing.
+ * Compute the leaf-position list for a Sierpinski tree of the given depth.
+ * Same recursion as the previous Triangle component, but flattened to an
+ * array so we can address each leaf by index for shuffling. Order is
+ * top-down, left-to-right (the recursive walk's natural emit order).
+ */
+function computeLeafPositions(depth: number): Leaf[] {
+  const out: Leaf[] = []
+  function walk(x: number, y: number, s: number, d: number): void {
+    if (d === 0) {
+      out.push({ x, y })
+      return
+    }
+    const ns = s / 2
+    walk(x, y - ns / 2, ns, d - 1)
+    walk(x - ns, y + ns / 2, ns, d - 1)
+    walk(x + ns, y + ns / 2, ns, d - 1)
+  }
+  walk(CONTAINER_W / 2, CONTAINER_H * 0.55, TRIANGLE_S_INIT, depth)
+  return out
+}
+
+/**
+ * Map depth → leaf dot diameter (px) and font size (px). Same anchor as
+ * the previous version — dot ≈ 1.2 × leaf-edge, font ≈ 0.55 × dot, 3 px
+ * floor so the highest depths stay visible.
  */
 function sizingForDepth(depth: number): { dot: number; font: number; showText: boolean } {
   const leafSize = TRIANGLE_S_INIT / 2 ** depth
   const dot = Math.max(3, Math.round(leafSize * 1.2))
   const font = Math.round(dot * 0.55)
-  // Numbers only render when the dot is big enough to fit a 2-digit string.
   return { dot, font, showText: dot >= 18 }
 }
 
+/**
+ * Fisher-Yates in-place shuffle. Mutates the input array and returns it
+ * for ergonomic use in setSignal callbacks. Pure when called on a fresh
+ * copy.
+ */
+function shuffleInPlace<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const tmp = arr[i] as T
+    arr[i] = arr[j] as T
+    arr[j] = tmp
+  }
+  return arr
+}
+
+type ScaleMV = ReturnType<typeof createMotionValue<number>>
+
 function Dot(props: {
-  x: number
-  y: number
+  pos: () => Leaf
   size: number
   fontSize: number
   showText: boolean
@@ -80,10 +115,11 @@ function Dot(props: {
 }): JSX.Element {
   return (
     <motion.div
+      layout
       style={{
         position: "absolute",
-        left: `${props.x - props.size / 2}px`,
-        top: `${props.y - props.size / 2}px`,
+        left: `${props.pos().x - props.size / 2}px`,
+        top: `${props.pos().y - props.size / 2}px`,
         width: `${props.size}px`,
         height: `${props.size}px`,
         "border-radius": "50%",
@@ -95,15 +131,9 @@ function Dot(props: {
         display: "flex",
         "align-items": "center",
         "justify-content": "center",
-        // NB: `will-change: transform` was tried here and is COUNTER-
-        // PRODUCTIVE at this scale. Browsers cap composited-layer count
-        // (~1000-2000 typical); with 6,500+ dots the hint forces too many
-        // layers, exhausts GPU memory, and falls back to CPU for the
-        // overflow — net slower than letting the browser auto-decide.
-        // No cast needed — Stage 5's `MotionStyle` type widens `scale` (and
-        // every other transform shortcut + CSS property) to accept
-        // MotionValue. captureStyleEntries scrapes it into the registry at
-        // mount and the writer fires per change.
+        // Same MV-in-style fan-out as before. The writer composes this
+        // with the layout layer's translate when a FLIP is in flight,
+        // so the dot continues pulsing during the shuffle animation.
         scale: props.scale,
       }}
     >
@@ -112,85 +142,36 @@ function Dot(props: {
   )
 }
 
-function Triangle(props: {
-  x: number
-  y: number
-  s: number
-  depth: number
-  scale: ScaleMV
-  seconds: () => number
-  dotSize: number
-  fontSize: number
-  showText: boolean
-}): JSX.Element {
-  if (props.depth === 0) {
-    return (
-      <Dot
-        x={props.x}
-        y={props.y}
-        size={props.dotSize}
-        fontSize={props.fontSize}
-        showText={props.showText}
-        scale={props.scale}
-        seconds={props.seconds}
-      />
-    )
-  }
-  const s = props.s / 2
-  return (
-    <>
-      <Triangle
-        x={props.x}
-        y={props.y - s / 2}
-        s={s}
-        depth={props.depth - 1}
-        scale={props.scale}
-        seconds={props.seconds}
-        dotSize={props.dotSize}
-        fontSize={props.fontSize}
-        showText={props.showText}
-      />
-      <Triangle
-        x={props.x - s}
-        y={props.y + s / 2}
-        s={s}
-        depth={props.depth - 1}
-        scale={props.scale}
-        seconds={props.seconds}
-        dotSize={props.dotSize}
-        fontSize={props.fontSize}
-        showText={props.showText}
-      />
-      <Triangle
-        x={props.x + s}
-        y={props.y + s / 2}
-        s={s}
-        depth={props.depth - 1}
-        scale={props.scale}
-        seconds={props.seconds}
-        dotSize={props.dotSize}
-        fontSize={props.fontSize}
-        showText={props.showText}
-      />
-    </>
-  )
-}
-
 export default function SierpinskiTriangle(): JSX.Element {
-  const [depth, setDepth] = createSignal(7)
+  const [depth, setDepth] = createSignal(5)
   const [fps, setFps] = createSignal(60)
   const [seconds, setSeconds] = createSignal(0)
+  const [shuffleEnabled, setShuffleEnabled] = createSignal(true)
   const scale = createMotionValue(1)
 
-  // Single rAF loop drives the scale animation + FPS counter + seconds
-  // counter. Anchoring all three avoids three independent rAF callbacks
-  // competing for the frame.
-  //
-  // Guarded behind `isServer` so SolidStart's static prerender (which
-  // executes the component body during `renderToString`) doesn't crash
-  // on the undefined `requestAnimationFrame` / `performance` globals.
-  // The animation is purely visual — there's nothing to render
-  // server-side. Hydration restarts it on the client.
+  // The fixed slot positions for the current depth — recomputed when the
+  // depth changes (which also reseeds the permutation below).
+  const positions = createMemo(() => computeLeafPositions(depth()))
+
+  // permutation[i] = the slot index occupied by dot identity `i`.
+  // Initialized to the identity permutation (each dot at its natural
+  // slot) so the first paint is a fully-formed Sierpinski.
+  const [permutation, setPermutation] = createSignal<number[]>([])
+  createEffect(() => {
+    const n = positions().length
+    setPermutation(Array.from({ length: n }, (_, i) => i))
+  })
+
+  // `shuffleTick` drives the LayoutGroup's `dependency` accessor — each
+  // increment broadcasts to every layout-active descendant, triggering a
+  // re-measurement and a FLIP from old to new slot. Bumped on shuffle.
+  const [shuffleTick, setShuffleTick] = createSignal(0)
+  const dependency = () => shuffleTick()
+
+  // Single rAF loop drives the scale MV + FPS counter + seconds counter.
+  // Anchoring all three avoids three independent rAF callbacks competing
+  // for the frame. Guarded behind `isServer` so SSR doesn't crash on the
+  // undefined `requestAnimationFrame` / `performance` globals.
   if (!isServer) {
     const start = performance.now()
     let frames = 0
@@ -198,11 +179,12 @@ export default function SierpinskiTriangle(): JSX.Element {
     let lastSecondsUpdate = start
     let raf = 0
     const tick = (now: number): void => {
-      // Pulse the shared scale MV between 0.1 and 1.0 — a dramatic shrink
-      // that makes the per-element transform write visually obvious. Math:
-      //   midpoint = (1.0 + 0.1) / 2 = 0.55
-      //   amplitude = (1.0 - 0.1) / 2 = 0.45
-      scale.set(0.55 + Math.sin((now - start) / 240) * 0.45)
+      // Pulse the shared scale MV between 0.6 and 1.0 — high baseline
+      // keeps the dots clearly visible even at low depths while still
+      // giving an obvious breathing motion.
+      //   midpoint  = (1.0 + 0.6) / 2 = 0.8
+      //   amplitude = (1.0 - 0.6) / 2 = 0.2
+      scale.set(0.8 + Math.sin((now - start) / 240) * 0.2)
       frames++
       if (now - lastFpsUpdate >= 1000) {
         setFps(Math.round((frames * 1000) / (now - lastFpsUpdate)))
@@ -219,13 +201,36 @@ export default function SierpinskiTriangle(): JSX.Element {
     onCleanup(() => cancelAnimationFrame(raf))
   }
 
+  // Shuffle timer. Fires every 2.5 s while enabled. Each tick:
+  //   1. Fisher-Yates shuffles the permutation
+  //   2. Increments shuffleTick → LayoutGroup broadcast → every dot
+  //      re-measures and FLIPs from its old slot to its new one.
+  // 2.5 s spacing comfortably exceeds the default ~450 ms layout
+  // transition so animations settle between shuffles.
+  if (!isServer) {
+    let timerId: ReturnType<typeof setInterval> | undefined
+    createEffect(() => {
+      if (timerId !== undefined) clearInterval(timerId)
+      if (!shuffleEnabled()) return
+      timerId = setInterval(() => {
+        setPermutation((prev) => shuffleInPlace([...prev]))
+        setShuffleTick((n) => n + 1)
+      }, 2500)
+    })
+    onCleanup(() => {
+      if (timerId !== undefined) clearInterval(timerId)
+    })
+  }
+
   return (
     <div>
       <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
-        Every dot is a <code>&lt;motion.div&gt;</code> with{" "}
-        <code>style=&#123;&#123; scale: sharedMV &#125;&#125;</code> subscribing to one shared{" "}
-        <code>createMotionValue</code> driven by a sine pulse. Each dot also renders the seconds
-        signal — Solid's fine-grained text reactivity at scale. The FPS counter is the proof.
+        Every dot is a <code>&lt;motion.div layout&gt;</code> inside a{" "}
+        <code>&lt;LayoutGroup dependency=&#123;shuffleTick&#125;&gt;</code>. A timer Fisher-Yates
+        shuffles the dot-to-slot mapping every 2.5 s and bumps the dependency; the broadcast
+        re-fires every descendant's measurement and each dot FLIPs from its old slot to its new one.
+        Layered on top of the original stress demo's per-dot scale-pulse (shared MotionValue) and
+        seconds-counter (Solid fine-grained text reactivity).
       </p>
       <div
         style={{
@@ -250,6 +255,24 @@ export default function SierpinskiTriangle(): JSX.Element {
             {depth()} ({(3 ** depth()).toLocaleString()})
           </code>
         </label>
+        <label style={{ display: "flex", gap: "0.5rem", "align-items": "center" }}>
+          <input
+            type="checkbox"
+            checked={shuffleEnabled()}
+            onChange={(e) => setShuffleEnabled(e.currentTarget.checked)}
+          />
+          <span>Shuffle every 2.5s</span>
+        </label>
+        <button
+          type="button"
+          class="demo-button"
+          onClick={() => {
+            setPermutation((prev) => shuffleInPlace([...prev]))
+            setShuffleTick((n) => n + 1)
+          }}
+        >
+          Shuffle now
+        </button>
         <code
           style={{
             "margin-left": "auto",
@@ -278,25 +301,29 @@ export default function SierpinskiTriangle(): JSX.Element {
           overflow: "hidden",
         }}
       >
-        {/* `Show keyed` re-mounts the entire triangle whenever depth changes.
-            Without `keyed`, the component instance would persist and the
-            recursive if-else inside Triangle wouldn't re-evaluate (Solid
-            components don't re-run on prop change). */}
+        {/* `Show keyed` remounts the entire dot set on depth change. Going
+            from depth 5 → 6 triples the dot count, so identities and slot
+            positions are fundamentally different — a full remount is the
+            correct shape rather than trying to re-key partial overlap. */}
         <Show keyed when={depth()}>
           {(d) => {
             const sizing = sizingForDepth(d)
             return (
-              <Triangle
-                x={CONTAINER_W / 2}
-                y={CONTAINER_H * 0.55}
-                s={CONTAINER_H * 0.45}
-                depth={d}
-                scale={scale}
-                seconds={seconds}
-                dotSize={sizing.dot}
-                fontSize={sizing.font}
-                showText={sizing.showText}
-              />
+              <LayoutGroup dependency={dependency}>
+                {positions().map((_, i) => (
+                  <Dot
+                    pos={() => {
+                      const slotIdx = permutation()[i] ?? i
+                      return positions()[slotIdx] ?? positions()[i] ?? { x: 0, y: 0 }
+                    }}
+                    size={sizing.dot}
+                    fontSize={sizing.font}
+                    showText={sizing.showText}
+                    scale={scale}
+                    seconds={seconds}
+                  />
+                ))}
+              </LayoutGroup>
             )
           }}
         </Show>
