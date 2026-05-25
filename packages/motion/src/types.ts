@@ -281,10 +281,11 @@ export type DragOptions = {
 }
 
 // ---------------------------------------------------------------------------
-// Reorder options. The primitive `createReorder` accepts `ReorderOptions`
-// for group-level configuration (axis, primarily) and the per-item
-// `itemProps(value, options?)` callable accepts `ReorderItemOptions` for
-// the handle / dragListener composition. See
+// Reorder options. The primitive `createReorder` accepts `ReorderOptions` for
+// group-level configuration (axis, cancel-on-external-reorder). Per-item
+// drag-handle composition (`dragListener`, `dragControls`) is configured
+// directly on each item's MotionOptions — those fields already live on
+// `DragOptions` and don't need a separate type. See
 // docs/plans/0.2.0-reorder.md and ADR 0008.
 // ---------------------------------------------------------------------------
 
@@ -297,24 +298,20 @@ export type ReorderOptions = {
    * Default: `"y"`.
    */
   axis?: "x" | "y"
-}
-
-export type ReorderItemOptions = {
   /**
-   * When `false`, the item does NOT install a whole-item pointer
-   * listener. Pair with `dragControls` to wire drag initiation to a
-   * custom handle element. Same semantics as `DragOptions.dragListener`.
+   * Cancel an in-progress drag when `values` is mutated from outside the
+   * primitive (e.g. a remove button, server push, or programmatic sort).
+   * When `false` (default), the primitive re-measures and continues unless
+   * the dragged item itself disappears from the array.
    *
-   * Default: `true`.
+   * Detection is via reference-identity check against the primitive's
+   * own writes — any `setValues` call from outside the primitive (where
+   * the resulting array is not the one the primitive just produced
+   * itself) is treated as external.
+   *
+   * Default: `false`.
    */
-  dragListener?: boolean
-  /**
-   * Drag-initiation handle. Composes with `createDragControls()`. The
-   * handle's `onPointerDown` calls `controls.start(event)` to start
-   * the drag; same wire-up as the standalone drag primitive's
-   * `dragControls`.
-   */
-  dragControls?: DragControls
+  cancelOnExternalReorder?: boolean
 }
 
 // ---------------------------------------------------------------------------
