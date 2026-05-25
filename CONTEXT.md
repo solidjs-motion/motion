@@ -218,3 +218,131 @@ fixed anchor is a meaningful value — so it stays static-typed.
 `createAttributeSignal(ref, attrs?): Accessor<number>` — Solid-bridge
 for non-Solid-source ancestor changes. Composes with `layoutDependency`
 or `LayoutGroup.dependency`.
+
+## Reorder (0.2.0 work-in-progress)
+
+Reorder is a layout-feature consumer rather than a new layout primitive
+— it builds on `layout` (for the sibling FLIP cascade) and `drag` (for
+the active item's pointer-driven motion). It ships in the same 0.2.0
+release alongside the layout primitives but lives in its own plan +
+ADR; see [docs/plans/0.2.0-reorder.md](docs/plans/0.2.0-reorder.md) and
+[docs/adr/0008-reorder-primitive-and-components.md](docs/adr/0008-reorder-primitive-and-components.md).
+
+- **Reorder** — drag-driven list reordering. As the user drags an item
+  along a configured axis, sibling items FLIP into the vacated slot via
+  the layout primitive; the dragged item's own layout FLIP is suppressed
+  for the duration of the drag. The controlled `values` array is
+  updated live as the dragged item's center crosses each sibling's
+  center — `onReorder` fires per swap.
+- **`createReorder`** — the primitive hook. Takes `Accessor<T[]>` values
+  source + `Setter<T[]>` setter + optional reactive options. Returns
+  `{ groupProps, itemProps }` for the user to spread on their own
+  container + item elements. Composes with explicit `<For>` (and with
+  `<Presence>` when items need exit animations).
+- **`<Reorder.Group>` / `<Reorder.Item>`** — JSX-level wrapper
+  components around `createReorder`. Group defaults to `<ul>` and
+  internally wraps children in `<LayoutGroup>` (scopes any `layoutId`
+  matches inside the list); Item defaults to `<li>` and auto-applies
+  `layout: true` + `drag: <axis>` so the user only specifies `value`
+  and children. Both accept `as` for tag overriding. Children are a
+  user-provided `<For>` (so empty states, `<Presence>` wrapping, and
+  `Index`-vs-`For` choice all work normally).
+- **value (Reorder.Item prop)** — the per-item identity passed by the
+  user to bind a JSX node to an array slot. Same reference-identity
+  rule that Solid's `<For>` uses. Duplicate values within the array
+  produce undefined behavior; documented constraint.
+- **center-cross detection** — the rule that fires `onReorder`. As the
+  dragged item moves along the configured axis, when its center along
+  the axis passes a sibling's center the two swap in `values`. Multiple
+  crossings per pointermove frame are processed in order (so a fast
+  drag past several items reorders correctly). No debounce / minimum-
+  displacement threshold; sub-pixel jitter de-dupes naturally because
+  the dragged item starts coincident with its own slot's center.
+- **drag-suppressed layout** — the mechanism that prevents a dragged
+  item's `layout` FLIP from firing during the drag. Without it, every
+  reorder of `values` would cause the dragged item's controller to
+  detect a slot change and animate to the new slot — fighting the
+  pointer-driven `drag` transform that should own the item's visual
+  position. The existing gesture-state-machine flag `whileDrag` is the
+  gate; when true on a layout-active element, its `createLayoutController`
+  skips the measurement/FLIP path for that element only. Sibling
+  controllers are unaffected and FLIP normally.
+- **drag handle (Reorder)** — optional opt-in to drag initiation from
+  a specific child node rather than the whole item. Composes with the
+  existing `createDragControls` primitive: the user creates a
+  `DragControls`, passes it on `<Reorder.Item dragControls={controls}
+  dragListener={false}>`, and calls `controls.start(event)` from the
+  handle's `onPointerDown`. Same shape as motion-react's
+  `useDragControls`.
+- **`createReorderKeyboard`** — deferred primitive for keyboard-driven
+  reorder (Space-to-grab + arrow keys + Escape-to-cancel). Drag-only is
+  v1's parity surface; keyboard support documented as a follow-up
+  release item. Will be additive (no changes to `createReorder`'s
+  signature when added).
+
+### Public API surface (Reorder, 0.2.0)
+
+**`createReorder` primitive:**
+
+```ts
+function createReorder<T>(
+  values: Accessor<T[]>,
+  setValues: Setter<T[]>,
+  options?: ReorderOptions | Accessor<ReorderOptions>,
+): {
+  groupProps: ElementProps
+  itemProps: (value: T, options?: ReorderItemOptions) => ElementProps
+}
+
+type ReorderOptions = {
+  /** Drag + center-cross axis. Default: "y". */
+  axis?: "x" | "y"
+}
+
+type ReorderItemOptions = {
+  /**
+   * When false, the item does NOT install a whole-item pointer
+   * listener. Pair with `dragControls` to wire drag initiation to a
+   * custom handle. Default: true.
+   */
+  dragListener?: boolean
+  /**
+   * Handle for explicit drag initiation. Composes with
+   * `createDragControls()`. The handle's `onPointerDown` calls
+   * `controls.start(event)` to start the drag.
+   */
+  dragControls?: DragControls
+}
+```
+
+**`<Reorder.Group>` component:**
+
+```ts
+type ReorderGroupProps<T> = {
+  values: Accessor<T[]>
+  onReorder: Setter<T[]>
+  /** "x" | "y". Default: "y". */
+  axis?: "x" | "y"
+  /** Container tag. Default: "ul". */
+  as?: keyof JSX.IntrinsicElements
+  children: JSX.Element
+}
+```
+
+**`<Reorder.Item>` component:**
+
+```ts
+type ReorderItemProps<T> = MotionOptions & {
+  value: T
+  /** Item tag. Default: "li". */
+  as?: keyof JSX.IntrinsicElements
+  dragListener?: boolean
+  dragControls?: DragControls
+  children: JSX.Element
+}
+```
+
+`<Reorder.Item>` extends `MotionOptions` so per-item `initial` /
+`animate` / `exit` / `transition` / `dragTransition` / lifecycle hooks
+all work the same way they do on a `<motion.li>`. `layout` and `drag`
+are managed by the wrapper and shouldn't be overridden by the user.
