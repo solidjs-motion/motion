@@ -394,4 +394,24 @@ export const demos: DemoEntry[] = [
     source: rawSource(() => import("./ReorderBasic.tsx?raw")),
     filename: "ReorderBasic.tsx",
   },
+  {
+    path: "/reorder-handle",
+    title: "Reorder (handle)",
+    blurb:
+      "Drag-handle pattern. Each row has a `⋮⋮` grip; the rest of the row (checkbox, remove button) stays independently interactive. `dragListener: false` + `dragControls` scopes drag initiation to the handle.",
+    phase: 4,
+    component: lazy(() => import("./ReorderHandle")),
+    source: rawSource(() => import("./ReorderHandle.tsx?raw")),
+    filename: "ReorderHandle.tsx",
+  },
+  {
+    path: "/reorder-with-exit",
+    title: "Reorder (with exit)",
+    blurb:
+      "Reorder + <Presence>-coordinated exit. Add / remove items at will — removed items fade + scale out via `exit`; survivors FLIP into new slots in parallel. The <For> sits inside <Presence> so drag-reorder + add/remove all route through the keep-alive coordinator.",
+    phase: 4,
+    component: lazy(() => import("./ReorderWithExit")),
+    source: rawSource(() => import("./ReorderWithExit.tsx?raw")),
+    filename: "ReorderWithExit.tsx",
+  },
 ]
