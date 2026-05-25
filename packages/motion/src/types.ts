@@ -281,6 +281,43 @@ export type DragOptions = {
 }
 
 // ---------------------------------------------------------------------------
+// Reorder options. The primitive `createReorder` accepts `ReorderOptions`
+// for group-level configuration (axis, primarily) and the per-item
+// `itemProps(value, options?)` callable accepts `ReorderItemOptions` for
+// the handle / dragListener composition. See
+// docs/plans/0.2.0-reorder.md and ADR 0008.
+// ---------------------------------------------------------------------------
+
+export type ReorderOptions = {
+  /**
+   * Axis along which items can be dragged AND along which center-cross
+   * detection fires reorders. Mirrors `drag: "x" | "y"` semantics —
+   * the perpendicular axis is locked.
+   *
+   * Default: `"y"`.
+   */
+  axis?: "x" | "y"
+}
+
+export type ReorderItemOptions = {
+  /**
+   * When `false`, the item does NOT install a whole-item pointer
+   * listener. Pair with `dragControls` to wire drag initiation to a
+   * custom handle element. Same semantics as `DragOptions.dragListener`.
+   *
+   * Default: `true`.
+   */
+  dragListener?: boolean
+  /**
+   * Drag-initiation handle. Composes with `createDragControls()`. The
+   * handle's `onPointerDown` calls `controls.start(event)` to start
+   * the drag; same wire-up as the standalone drag primitive's
+   * `dragControls`.
+   */
+  dragControls?: DragControls
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle callbacks. Every hook is typed in Phase 1; only the animation-
 // lifecycle ones (start/complete/cancel/update) are wired in Phase 1. Gesture
 // and drag hooks fire when those features land in Phase 2.
