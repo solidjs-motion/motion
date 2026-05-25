@@ -125,6 +125,17 @@ export type GestureStateMachine = {
   /** Imperatively toggle a gesture state. Triggers re-resolution + animate(). */
   setActive: SetActive
   /**
+   * The reactive active-flags store. Exposed so peer per-element machinery
+   * (in particular `createLayoutController`, for Reorder's drag-suppressed
+   * FLIP gate) can subscribe to specific flags like `whileDrag` without
+   * needing to route through the state machine's diff effect.
+   *
+   * Read-only by convention — only `setActive` should mutate. The
+   * underlying store is the same instance whether internal to this
+   * machine or provided via `externalActiveStore`.
+   */
+  active: ActiveStore
+  /**
    * Resolves when the next animate dispatched while `exit` is the highest-
    * priority active driver state completes. If no exit animation is in
    * flight AND no exit target is defined, resolves immediately.
@@ -584,7 +595,7 @@ export function createGestureStateMachine(
     })
   }
 
-  return { setActive, onceExitComplete }
+  return { setActive, active, onceExitComplete }
 }
 
 // ---------------------------------------------------------------------------

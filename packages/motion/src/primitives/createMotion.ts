@@ -646,7 +646,7 @@ export function createMotion(
     enterReady,
     getValueForAnimate,
   })
-  const { setActive, onceExitComplete } = stateMachine
+  const { setActive, active, onceExitComplete } = stateMachine
 
   // ---------- Presence registration (Phase 3 — inverted shape) ----------
   // Child registers a `runExit` callable that dispatches the exit animate
@@ -842,6 +842,12 @@ export function createMotion(
       motionConfig,
       systemReducedMotion,
       initialFirst,
+      // Drag-suppression gate (Reorder, ADR 0008). The controller skips
+      // its FLIP whenever this element is the active drag target. Reads
+      // the same `whileDrag` flag the gesture-state machine toggles
+      // through motion's standard pan-state pipeline — no Reorder-
+      // specific wiring needed at this layer.
+      isDragging: () => active.whileDrag,
     })
 
     // layoutId donate — at owner-dispose time, capture this element's

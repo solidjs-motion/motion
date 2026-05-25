@@ -178,6 +178,21 @@ export type CreateLayoutControllerConfig = {
    * consumer's natural position.
    */
   initialFirst?: { x: number; y: number; width: number; height: number }
+  /**
+   * When this accessor returns true, the controller suppresses FLIPs
+   * for THIS element. Reorder uses it to gate off the dragged item's
+   * layout animation: as `values` reorders during a drag the dragged
+   * item's slot changes, but its pointer-driven `drag` transform
+   * owns the visual position — firing a FLIP at the same time would
+   * fight the drag. Sibling controllers are unaffected.
+   *
+   * The controller silently updates `first = last` whenever this gate
+   * fires, so the post-drag baseline is fresh against the item's
+   * current slot.
+   *
+   * Default: `() => false` (no suppression).
+   */
+  isDragging?: Accessor<boolean>
 }
 
 /** Projection-parent-local rect (ADR 0007). */
@@ -203,6 +218,7 @@ export function createLayoutController(
     motionConfig,
     systemReducedMotion,
     initialFirst,
+    isDragging,
   } = config
 
   // First-rect cache. Undefined until the baseline measurement runs,
@@ -335,6 +351,20 @@ export function createLayoutController(
     // Baseline-establishing pass. No animation fires; subsequent
     // measurements compare to this snapshot.
     if (first === undefined) {
+      first = last
+      return
+    }
+
+    // Drag-suppression gate (Reorder). When the consumer reports the
+    // element is being dragged, the pointer-driven `drag` transform
+    // owns visual position — firing a layout FLIP at the same time
+    // would fight the drag. Silently update `first` so the post-drag
+    // baseline reflects the element's current slot (which may have
+    // moved as the array reordered around it during the drag), then
+    // return without dispatching the FLIP. Sibling controllers (not
+    // being dragged) see their own `isDragging` as false and FLIP
+    // normally. See ADR 0008 §4.3.
+    if (isDragging?.()) {
       first = last
       return
     }
