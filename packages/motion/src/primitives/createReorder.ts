@@ -36,7 +36,6 @@ import type {
   MotionOptions,
   PanInfo,
   ReorderOptions,
-  UseMotionResult,
 } from "../types"
 import { useMotion } from "../use-motion"
 
@@ -78,7 +77,7 @@ export type ReorderResult<T> = {
   item: (
     value: T,
     motionOptions?: MotionOptions | Accessor<MotionOptions>,
-  ) => UseMotionResult
+  ) => MotionGetProps
   /**
    * The value of the item currently being dragged, or `null` when no
    * drag is active. Tracks the `onDragStart` → `onDragEnd` lifecycle
@@ -343,7 +342,7 @@ export function createReorder<T>(
     item: (
       value: T,
       motionOptions?: MotionOptions | Accessor<MotionOptions>,
-    ): UseMotionResult => {
+    ): MotionGetProps => {
       const getUserOpts: () => MotionOptions =
         typeof motionOptions === "function"
           ? motionOptions
@@ -398,9 +397,7 @@ export function createReorder<T>(
         } as MotionMergedProps<P>
       }
 
-      return Object.assign(wrappedFn as MotionGetProps, {
-        Provider: m.Provider,
-      })
+      return wrappedFn as MotionGetProps
     },
     dragging: draggingSig,
   }

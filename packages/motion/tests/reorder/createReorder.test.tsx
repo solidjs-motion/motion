@@ -297,8 +297,10 @@ describe("createReorder: primitive shape", () => {
     expect(api.values()).toEqual(["a", "b", "c"])
   })
 
-  it("item() returns a useMotion-like callable with Provider", () => {
-    // Render directly so we can inspect the returned shape.
+  it("item() returns a callable that merges DOM props", () => {
+    // Reorder.item returns just MotionGetProps — no Provider attached.
+    // Primitive consumers wanting variant context should nest a <motion.X>
+    // child rather than reaching for an item-level Provider.
     let returned: ReturnType<typeof createReorder<string>>["item"] | undefined
     render(() => {
       const [items, setItems] = createSignal(["a"])
@@ -309,7 +311,8 @@ describe("createReorder: primitive shape", () => {
     const item = returned as NonNullable<typeof returned>
     const r = item("a")
     expect(typeof r).toBe("function")
-    expect(typeof r.Provider).toBe("function")
+    // No Provider on the return.
+    expect((r as unknown as { Provider?: unknown }).Provider).toBeUndefined()
   })
 
   it("dragging flips to the dragged value while the pointer is down", () => {

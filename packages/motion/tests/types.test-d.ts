@@ -22,6 +22,7 @@ import {
   type DragConstraints,
   type DragControls,
   type ElementProps,
+  type MotionGetProps,
   type MotionMergedProps,
   type MotionOptions,
   type MotionValue,
@@ -572,8 +573,9 @@ describe("createReorder", () => {
     expectTypeOf<Parameters<R["item"]>[1]>().toEqualTypeOf<
       MotionOptions | Accessor<MotionOptions> | undefined
     >()
-    // item's return is useMotion's UseMotionResult — callable with .Provider.
-    expectTypeOf<ReturnType<R["item"]>>().toEqualTypeOf<UseMotionResult>()
+    // item's return is the MotionGetProps callable only — no `.Provider`
+    // attached (callers wanting variant context use a nested motion.X).
+    expectTypeOf<ReturnType<R["item"]>>().toEqualTypeOf<MotionGetProps>()
   })
 
   it("createReorder is generic over the value type", () => {

@@ -55,6 +55,12 @@ export {
 } from "./primitives/motion-value"
 // Reduced motion.
 export { createReducedMotion, shouldReduceMotion } from "./reduced-motion"
+// Reorder — drag-driven list-reorder compound component.
+export {
+  Reorder,
+  type ReorderGroupProps,
+  type ReorderItemProps,
+} from "./reorder"
 // Style helper (also useful for users with custom directives or imperative DOM).
 export { targetToStyle } from "./style"
 export type * from "./types"
