@@ -591,10 +591,33 @@ export function createLayoutController(
   //
   // `onMount` fires after Solid has attached the element to the DOM, so
   // `el.parentElement` is the real UL/parent by then.
+  //
+  // Sync-vs-RAF measurement. Parent-MO callbacks run as MICROTASKS after
+  // the DOM mutation that triggered them — earlier than the browser's
+  // next paint. We run `runMeasurement` synchronously inside the MO
+  // callback (not via `scheduleMeasurement` → `frame.read` → next RAF)
+  // so the FLIP transform lands BEFORE the browser paints the new
+  // layout. Without this, the user sees a "double-jump" on each
+  // reorder/list-mutation:
+  //   1. DOM reorders → browser paints siblings at their new slots.
+  //   2. Next frame: FLIP applies → siblings snap back to their old
+  //      slots.
+  //   3. Animation interpolates them forward to the new slots.
+  // Surfaces clearly during Reorder drag (the user is watching siblings
+  // closely) but is the same root cause that affects any layout
+  // animation triggered by a synchronous DOM mutation.
+  //
+  // Other measurement triggers (RO/effects/layoutDependency/broadcast)
+  // stay on the async `scheduleMeasurement` → `frame.read` path because
+  // they fire DURING animations (RO especially) where batching with
+  // motion-dom's read phase reduces forced-reflow cost.
   onMount(() => {
     const parentEl = el.parentElement
     if (parentEl !== null) {
-      const unsubscribe = subscribeParentMo(parentEl, scheduleMeasurement)
+      const unsubscribe = subscribeParentMo(parentEl, () => {
+        if (!live) return
+        runMeasurement()
+      })
       onCleanup(unsubscribe)
     }
   })
