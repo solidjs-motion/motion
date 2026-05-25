@@ -273,6 +273,43 @@ export function createLayoutController(
     const layerY = layerMVs.y?.get() ?? 0
     const layerScaleX = layerMVs.scaleX?.get() ?? 1
     const layerScaleY = layerMVs.scaleY?.get() ?? 1
+
+    // Also subtract user-controlled translate (drag x/y from motion-dom,
+    // any `animate: { x, y }` offsets). bcr includes ALL CSS transforms;
+    // for a valid FLIP baseline we need the LAYOUT position.
+    //
+    // We READ THE INLINE TRANSFORM STRING DIRECTLY, not the source MV's
+    // value. motion-dom's `mv.set` is synchronous but the CSS write is
+    // RAF-batched via its frame.render scheduler — there's a frame-
+    // sized window where `mv.get()` reflects the new value while
+    // `el.style.transform` still has the old one (or vice versa).
+    // Subtracting `mv.get()` from a stale bcr produces a layout
+    // measurement that's offset by a frame's animation progress,
+    // putting `first` and `last` at the wrong slot.
+    //
+    // `el.style.transform` always reflects whatever was actually
+    // written to inline style by either motion-dom's renderHTML or our
+    // own writeFromRegistry. bcr is computed from that same inline
+    // style. So bcr − (inline transform translate) = pure layout.
+    let userX = 0
+    let userY = 0
+    if (el instanceof HTMLElement) {
+      const transformStr = el.style.transform
+      if (transformStr !== "" && transformStr !== "none") {
+        try {
+          const matrix = new DOMMatrix(transformStr)
+          userX = matrix.m41
+          userY = matrix.m42
+          // Subtract the layer contribution — it's already accounted
+          // for via the layerX/layerY locals above. What remains is
+          // the user-controlled translate.
+          userX -= layerX
+          userY -= layerY
+        } catch {
+          // Malformed transform — bail to 0.
+        }
+      }
+    }
     // Subtract any translate transforms on ANCESTORS between this
     // element and the projection parent. Browser's bcr reports the
     // RENDERED position, which includes every ancestor's transform.
@@ -289,8 +326,8 @@ export function createLayoutController(
     // a known limitation. Layout demos and motion-react's typical
     // patterns translate-animate ancestors but rarely scale them.
     const { tx: ancestorTx, ty: ancestorTy } = getAncestorTranslate(el, parentEl)
-    let localX = E.left - P.left - layerX - ancestorTx
-    let localY = E.top - P.top - layerY - ancestorTy
+    let localX = E.left - P.left - layerX - userX - ancestorTx
+    let localY = E.top - P.top - layerY - userY - ancestorTy
     const localWidth = layerScaleX === 0 ? E.width : E.width / layerScaleX
     const localHeight = layerScaleY === 0 ? E.height : E.height / layerScaleY
     // Compensate for `layoutScroll` ancestors between this element and
