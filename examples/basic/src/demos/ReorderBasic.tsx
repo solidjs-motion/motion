@@ -80,7 +80,7 @@ export default function ReorderBasic() {
               animate={{ "box-shadow": "0px 0px 0px rgba(0,0,0,0)" }}
               whileDrag={{
                 cursor: "grabbing",
-                "box-shadow": "0 6px 18px rgba(0,0,0,0.25)",
+                "box-shadow": "0px 6px 18px rgba(0,0,0,0.25)",
                 scale: 1.02,
               }}
               transition={{ duration: 0.18 }}

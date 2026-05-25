@@ -104,7 +104,7 @@ export default function ReorderWithExit() {
                 }}
                 whileDrag={{
                   cursor: "grabbing",
-                  "box-shadow": "0 6px 18px rgba(0,0,0,0.25)",
+                  "box-shadow": "0px 6px 18px rgba(0,0,0,0.25)",
                 }}
               >
                 <span
