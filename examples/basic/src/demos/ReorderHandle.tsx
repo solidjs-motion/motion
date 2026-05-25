@@ -1,6 +1,6 @@
 import { For, createEffect, createSignal } from "solid-js"
 import { createStore } from "solid-js/store";
-import { Reorder, createDragControls } from "solidjs-motion"
+import { Reorder, createDragControls, motion } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
 // ReorderHandle — drag-handle pattern.
@@ -111,11 +111,17 @@ export default function ReorderHandle() {
                 // values; mismatched shapes fall back to a discrete
                 // mid-animation swap (looks like a hard cut), and
                 // `none`/keyword targets can't be interpolated at all.
-                animate={{ "box-shadow": "0px 0px 0px rgba(0,0,0,0)" }}
-                whileDrag={{
-                  cursor: "grabbing",
+                animate="animate"
+                whileDrag="dragging"
+                variants={{
+                  "animate": {
+                    "box-shadow": "0px 0px 0px rgba(0,0,0,0)"
+                  },
+                  "dragging": {
+                    cursor: "grabbing",
                   "box-shadow": "0px 6px 18px rgba(0,0,0,0.25)",
                   scale: 1.02,
+                  }
                 }}
                 transition={{ duration: 0.3 }}
                 // Force a `grabbing` cursor on the whole page during the
@@ -132,12 +138,20 @@ export default function ReorderHandle() {
                   document.body.style.cursor = ""
                 }}
               >
-                <button
+                <motion.button
                   ref={gripRef}
                   type="button"
                   onPointerDown={(e) => controls.start(e)}
                   aria-label={`Drag ${task.label}`}
                   data-testid={`reorder-handle/grip/${task.id}`}
+                  variants={{
+                    "animate": {
+                      color: "var(--color-muted)"
+                    },
+                    "dragging": {
+                      color: "var(--color-motion)"
+                    }
+                  }}
                   style={{
                     // `cursor` is set imperatively by the createEffect
                     // above so it flips between `grab` and `grabbing`
@@ -145,14 +159,14 @@ export default function ReorderHandle() {
                     "touch-action": "none",
                     background: "transparent",
                     border: "none",
-                    color: "var(--color-muted)",
+                    // color: "var(--color-muted)",
                     "font-size": "1rem",
                     padding: "0.25rem",
                     "line-height": 1,
                   }}
                 >
                   ⋮⋮
-                </button>
+                </motion.button>
                 <input
                   type="checkbox"
                   checked={task.done}

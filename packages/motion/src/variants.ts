@@ -107,8 +107,8 @@ function isVariantLabelValue(v: AnimateValue | false | undefined): boolean {
 
 /**
  * A motion node is "controlling variants" when any of its variant slots
- * (`initial`, `animate`, `hover`, `press`, `focus`, `inView`, `exit`) carries
- * a variant *label* (string or array of strings).
+ * (`initial`, `animate`, `hover`, `press`, `focus`, `inView`, `whileDrag`,
+ * `exit`) carries a variant *label* (string or array of strings).
  *
  * Mirrors motion-dom's same-named check. A controlling node opts OUT of
  * inheriting its parent's variant cascade — it provides its own. Descendants
@@ -129,6 +129,7 @@ export function isControllingVariants(opts: MotionOptions): boolean {
     isVariantLabelValue(opts.press) ||
     isVariantLabelValue(opts.focus) ||
     isVariantLabelValue(opts.inView) ||
+    isVariantLabelValue(opts.whileDrag) ||
     isVariantLabelValue(opts.exit)
   )
 }

@@ -241,8 +241,15 @@ export function createGestureStateMachine(
       ),
       // whileDrag — resolved like any other gesture state's target. Drag's
       // visual state composes with drag's translation through the shared
-      // VisualElement (Q5/C-lean).
-      whileDrag: resolveTarget(opts.whileDrag, variants, undefined, custom),
+      // VisualElement (Q5/C-lean). Inherits the parent's `drag` label so
+      // descendants without their own `whileDrag` prop pick up the
+      // ancestor's drag variant while the ancestor is being dragged.
+      whileDrag: resolveTarget(
+        opts.whileDrag,
+        variants,
+        asVariantLabels(parentVariantCtx.drag?.()),
+        custom,
+      ),
       exit: resolveTarget(opts.exit, variants, asVariantLabels(parentVariantCtx.exit?.()), custom),
     }
   })
@@ -630,10 +637,8 @@ function isStateActive(
       return parent.focus?.() !== undefined
     case "whileInView":
       return parent.inView?.() !== undefined
-    // Drag inheritance through context isn't wired in Phase 1's
-    // VariantContextValue (no `drag` slot). Commit 6 will revisit if needed.
     case "whileDrag":
-      return false
+      return parent.drag?.() !== undefined
     case "animate":
     case "exit":
       return false
@@ -727,7 +732,7 @@ function animateValueForState(
     case "exit":
       return opts.exit ?? parentVariantCtx.exit?.()
     case "whileDrag":
-      return opts.whileDrag
+      return opts.whileDrag ?? parentVariantCtx.drag?.()
   }
 }
 

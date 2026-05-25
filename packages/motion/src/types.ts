@@ -646,6 +646,7 @@ export type VariantContextValue = {
   press?: Accessor<VariantLabels | undefined>
   focus?: Accessor<VariantLabels | undefined>
   inView?: Accessor<VariantLabels | undefined>
+  drag?: Accessor<VariantLabels | undefined>
   exit?: Accessor<VariantLabels | undefined>
   custom?: Accessor<unknown>
   transition?: Accessor<Transition | undefined>
