@@ -445,10 +445,15 @@ export function createGestureStateMachine(
       // that brings the key back, the diff sees `lastApplied[key] = fallback`
       // vs `next[key] = newValue` and animates correctly).
       lastApplied = { ...lastApplied, ...changes }
-      // Then drop keys that don't appear in `next` from lastApplied so future
-      // re-removals don't compare against stale fallback values.
+      // Drop any key no longer in `next` from lastApplied. The removed-key
+      // fallback is a one-shot revert: once we've dispatched the animate to
+      // the fallback value, we're DONE with that key. Keeping it in
+      // lastApplied would cause the next effect iteration to see it again,
+      // re-fire the fallback, and dispatch a spurious animate() call —
+      // whose internal prevControls.stop() would cancel any in-flight
+      // animation (including the previous iteration's revert) mid-flight.
       for (const key in lastApplied) {
-        if (!(key in next) && !(key in changes)) delete lastApplied[key]
+        if (!(key in next)) delete lastApplied[key]
       }
 
       // ---------- splitTarget: separate MotionValue refs from plain values ----------
