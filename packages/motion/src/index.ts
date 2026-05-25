@@ -34,6 +34,7 @@ export {
   createPan,
   type PanAxisPair,
 } from "./primitives/createPan"
+export { createReorder, type ReorderResult } from "./primitives/createReorder"
 export {
   type CreateScrollOptions,
   type CreateScrollResult,

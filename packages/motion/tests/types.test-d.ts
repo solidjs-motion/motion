@@ -15,6 +15,7 @@ import {
   createMotionValue,
   createPan,
   type CreatePanOptions,
+  createReorder,
   createScroll,
   type CreateScrollOptions,
   createTransform,
@@ -27,6 +28,8 @@ import {
   type MotionValueAccessor,
   type PanInfo,
   type PressInfo,
+  type ReorderOptions,
+  type ReorderResult,
   type ResolvedValues,
   type Target,
   type Transition,
@@ -542,5 +545,46 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
         () => [10, 20],
       ),
     ).toMatchTypeOf<MotionValueAccessor<number>>()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createReorder — public surface (0.2.0).
+// ---------------------------------------------------------------------------
+
+describe("createReorder", () => {
+  it("ReorderOptions has axis and cancelOnExternalReorder, both optional", () => {
+    expectTypeOf<ReorderOptions>().toEqualTypeOf<{
+      axis?: "x" | "y"
+      cancelOnExternalReorder?: boolean
+    }>()
+  })
+
+  it("returns { group, item, dragging } with expected shapes", () => {
+    type R = ReorderResult<string>
+    // group is an object with a ref function — kept structural so future
+    // 0.3.x additions (e.g. scroll-watcher) can extend non-breakingly.
+    expectTypeOf<R["group"]>().toMatchTypeOf<{ ref: (el: HTMLElement) => void }>()
+    // dragging is an Accessor of value-or-null.
+    expectTypeOf<R["dragging"]>().toEqualTypeOf<Accessor<string | null>>()
+    // item is a callable taking value + optional motionOptions.
+    expectTypeOf<Parameters<R["item"]>[0]>().toEqualTypeOf<string>()
+    expectTypeOf<Parameters<R["item"]>[1]>().toEqualTypeOf<
+      MotionOptions | Accessor<MotionOptions> | undefined
+    >()
+    // item's return is useMotion's UseMotionResult — callable with .Provider.
+    expectTypeOf<ReturnType<R["item"]>>().toEqualTypeOf<UseMotionResult>()
+  })
+
+  it("createReorder is generic over the value type", () => {
+    type R1 = ReturnType<typeof createReorder<{ id: string }>>
+    expectTypeOf<R1["dragging"]>().toEqualTypeOf<Accessor<{ id: string } | null>>()
+    expectTypeOf<Parameters<R1["item"]>[0]>().toEqualTypeOf<{ id: string }>()
+  })
+
+  it("options parameter accepts static OR accessor form", () => {
+    expectTypeOf<Parameters<typeof createReorder>[2]>().toEqualTypeOf<
+      ReorderOptions | Accessor<ReorderOptions> | undefined
+    >()
   })
 })
