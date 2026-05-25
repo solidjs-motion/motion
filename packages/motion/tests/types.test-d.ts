@@ -589,4 +589,21 @@ describe("createReorder", () => {
       ReorderOptions | Accessor<ReorderOptions> | undefined
     >()
   })
+
+  it("values parameter accepts Accessor<T[]> OR T[] (createStore support)", () => {
+    type ValuesParam = Parameters<typeof createReorder<string>>[0]
+    expectTypeOf<ValuesParam>().toEqualTypeOf<Accessor<string[]> | string[]>()
+  })
+
+  it("setValues parameter accepts any (next: T[]) => void function", () => {
+    // Permissive shape — Solid's Setter<T[]> is structurally compatible
+    // (its T[] return is assignable to void), so createSignal users pass
+    // their setter directly. createStore users pass a wrapper like
+    // `(next) => setStore("items", next)`. Using `Setter<T[]>` in the
+    // union confused TypeScript's overload resolution when matched
+    // against SetStoreFunction (top-level array stores), so we keep the
+    // permissive form only.
+    type SetterParam = Parameters<typeof createReorder<string>>[1]
+    expectTypeOf<SetterParam>().toEqualTypeOf<(next: string[]) => void>()
+  })
 })

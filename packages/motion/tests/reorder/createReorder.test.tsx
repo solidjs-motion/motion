@@ -166,7 +166,7 @@ function renderList(
     setItemsExternally = (next) => setItems(next)
     reorderRef = createReorder(
       items,
-      (updater) => {
+      (updater: string[] | ((prev: string[]) => string[])) => {
         const next =
           typeof updater === "function"
             ? (updater as (prev: string[]) => string[])(items())

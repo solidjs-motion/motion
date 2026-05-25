@@ -1,4 +1,5 @@
 import { For, createEffect, createSignal } from "solid-js"
+import { createStore } from "solid-js/store";
 import { Reorder, createDragControls } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
@@ -30,13 +31,15 @@ const INITIAL: Task[] = [
 ]
 
 export default function ReorderHandle() {
-  const [tasks, setTasks] = createSignal<Task[]>(INITIAL)
+  const [tasks, setTasks] = createStore<Task[]>(INITIAL)
 
   const toggleDone = (id: string): void => {
-    setTasks(tasks().map((t) => (t.id === id ? { ...t, done: !t.done } : t)))
+    const index = tasks.findIndex(t => t.id === id);
+    if (index < 0) return;
+    setTasks(index, "done", (done) => !done)
   }
   const remove = (id: string): void => {
-    setTasks(tasks().filter((t) => t.id !== id))
+    setTasks(tasks.filter((t) => t.id !== id))
   }
 
   return (
@@ -61,7 +64,7 @@ export default function ReorderHandle() {
           "min-height": "80px",
         }}
       >
-        <For each={tasks()}>
+        <For each={tasks}>
           {(task) => {
             const controls = createDragControls()
             const [isDraggingThisRow, setIsDraggingThisRow] = createSignal(false)

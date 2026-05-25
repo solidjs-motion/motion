@@ -288,7 +288,7 @@ describe("<Reorder.Item> — drag handle", () => {
     const { container } = render(() => (
       <Reorder.Group
         values={items}
-        onReorder={(updater) => {
+        onReorder={(updater: string[] | ((prev: string[]) => string[])) => {
           const next =
             typeof updater === "function"
               ? (updater as (prev: string[]) => string[])(items())
@@ -359,7 +359,7 @@ describe("<Reorder.Item> — drag handle", () => {
     const { container } = render(() => (
       <Reorder.Group
         values={items}
-        onReorder={(updater) => {
+        onReorder={(updater: string[] | ((prev: string[]) => string[])) => {
           const next =
             typeof updater === "function"
               ? (updater as (prev: string[]) => string[])(items())

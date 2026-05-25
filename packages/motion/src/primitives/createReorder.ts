@@ -26,7 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import { visualElementStore } from "motion-dom"
-import type { Accessor, Setter } from "solid-js"
+import type { Accessor } from "solid-js"
 import { createComputed, createSignal, on, onCleanup } from "solid-js"
 
 import type {
@@ -96,33 +96,51 @@ export type ReorderResult<T> = {
  * primitive mutates the array via `setValues` as items cross sibling
  * centers during a drag.
  *
- * @param values — accessor for the current list.
- * @param setValues — setter for the list. The primitive replaces the
- *   array with a new reference on each crossing (Solid identity rules).
+ * @param values — the current list. Accepts either an `Accessor<T[]>`
+ *   (`createSignal` form) or a `T[]` directly (`createStore` form —
+ *   `store.items` is a reactive proxy that isn't itself a function).
+ *   Both forms track reactivity correctly.
+ * @param setValues — setter for the list. Accepts any function with
+ *   the shape `(next: T[]) => void`. Solid's `Setter<T[]>` from
+ *   `createSignal` is structurally compatible (its `T[]` return is
+ *   assignable to `void`). For `createStore` use a wrapper:
+ *   `(next) => setStore("items", next)`. Set-by-path SetStoreFunction
+ *   variants (e.g., passing `setStore` directly when `T[]` is the top-
+ *   level store shape) are NOT a direct match — wrap them.
  * @param options — group-level config. Accepts a static object or an
  *   accessor for reactive option changes.
  *
- * @example
+ * Mutation-detection (used by `cancelOnExternalReorder` and the
+ * dragged-item-removed-mid-drag abort) is via re-entrancy flag rather
+ * than reference identity, so it works for both `createSignal` and
+ * `createStore` (including `setStore(produce(...))` in-place
+ * mutations where the array reference is stable).
+ *
+ * @example createSignal
  * ```tsx
- * function ItemList() {
- *   const [items, setItems] = createSignal(["a", "b", "c"])
- *   const reorder = createReorder(items, setItems, { axis: "y" })
- *   return (
- *     <ul ref={reorder.group.ref}>
- *       <For each={items()}>
- *         {(item) => {
- *           const m = reorder.item(item)
- *           return <li {...m()}>{item}</li>
- *         }}
- *       </For>
- *     </ul>
- *   )
- * }
+ * const [items, setItems] = createSignal(["a", "b", "c"])
+ * const reorder = createReorder(items, setItems, { axis: "y" })
+ * ```
+ *
+ * @example createStore
+ * ```tsx
+ * const [store, setStore] = createStore({ items: ["a", "b", "c"] })
+ * const reorder = createReorder(
+ *   store.items,
+ *   (next) => setStore("items", next),
+ *   { axis: "y" },
+ * )
  * ```
  */
 export function createReorder<T>(
-  values: Accessor<T[]>,
-  setValues: Setter<T[]>,
+  values: Accessor<T[]> | T[],
+  // `NoInfer` (TS 5.4+) — when the caller passes a complex overloaded
+  // function here (notably Solid's `SetStoreFunction<Task[]>`), the
+  // compiler can pick a path-based overload that resolves T to the
+  // index-key type (`number`) instead of the item type. NoInfer tells
+  // TypeScript: don't use this parameter for T inference — infer T
+  // solely from `values`.
+  setValues: (next: NoInfer<T>[]) => void,
   options?: ReorderOptions | Accessor<ReorderOptions>,
 ): ReorderResult<T> {
   // ---------- Reactive option resolution ----------
@@ -130,6 +148,16 @@ export function createReorder<T>(
     typeof options === "function" ? options : () => options ?? {}
   const axisOf = (): "x" | "y" => getOpts().axis ?? "y"
   const cancelOnExternal = (): boolean => getOpts().cancelOnExternalReorder ?? false
+
+  // ---------- Values normalization (Accessor<T[]> | T[]) ----------
+  // Accept either an accessor (createSignal-style) or a direct value
+  // (createStore-style — `store.items` is a reactive proxy that's not
+  // itself a function). Normalize to an accessor for internal use; the
+  // wrapper `() => values` reads the captured value on each call, which
+  // tracks fine-grained property reads on store proxies and re-evaluates
+  // accessor calls.
+  const valuesAccessor: Accessor<T[]> =
+    typeof values === "function" ? (values as Accessor<T[]>) : () => values
 
   // ---------- Registry & snapshot state ----------
   /** Per-value element registry. Populated by each item's composed ref. */
@@ -180,10 +208,19 @@ export function createReorder<T>(
   let slotCenterByValue: Map<T, number> | null = null
 
   // ---------- External-mutation detection ----------
-  /** The array reference the primitive just wrote (via internalSetValues).
-   * The values-watcher uses reference identity to skip processing
-   * primitive-originated updates. */
-  let expectedNext: T[] | null = null
+  /** True while we're inside `internalSetValues` — the values-watcher
+   * uses this re-entrancy flag (rather than reference identity) to
+   * recognise its own writes. createComputed runs SYNCHRONOUSLY during
+   * the signal/store update propagation, so the flag is still set when
+   * the watcher's callback fires.
+   *
+   * Why not reference identity (the previous approach): for
+   * createStore-backed lists, `setStore(produce(...))` mutates in place
+   * — the proxy reference is stable across mutations, so identity
+   * comparison can't distinguish own writes from external ones. The
+   * flag is who-made-the-call detection, which works regardless of
+   * value-shape semantics. */
+  let isInternalWrite = false
   /** Set by the values-watcher when an external mutation invalidates the
    * snapshot; the next onDrag re-snapshots before running center-cross. */
   let snapshotStale = false
@@ -222,8 +259,12 @@ export function createReorder<T>(
   }
 
   function internalSetValues(next: T[]): void {
-    expectedNext = next
-    setValues(next)
+    isInternalWrite = true
+    try {
+      setValues(next)
+    } finally {
+      isInternalWrite = false
+    }
   }
 
   function abortDrag(): void {
@@ -261,12 +302,13 @@ export function createReorder<T>(
   // is dormant until a value-change actually occurs.
   createComputed(
     on(
-      values,
+      valuesAccessor,
       (next) => {
         if (activeValue === null) return
-        // Our own write — drain expectedNext and bail.
-        if (next === expectedNext) {
-          expectedNext = null
+        // Our own write — the re-entrancy flag is still true because
+        // createComputed runs synchronously within `internalSetValues`'s
+        // call to `setValues`. Bail without touching state.
+        if (isInternalWrite) {
           return
         }
         // External write: dragged item gone → abort hard.
@@ -357,7 +399,7 @@ export function createReorder<T>(
     let didSwap = true
     while (didSwap) {
       didSwap = false
-      const currentArray = values()
+      const currentArray = valuesAccessor()
       const draggedIndex = currentArray.indexOf(value)
       if (draggedIndex < 0) return // dragged item externally removed mid-iter
 

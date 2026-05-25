@@ -29,7 +29,6 @@ import {
   type Accessor,
   createContext,
   type JSX,
-  type Setter,
   splitProps,
   useContext,
 } from "solid-js"
@@ -50,14 +49,22 @@ export type ReorderGroupProps<T> = Omit<
   JSX.HTMLAttributes<HTMLElement>,
   "children"
 > & {
-  /** Reactive array of items. Same accessor convention as `<For each>`. */
-  values: Accessor<T[]>
   /**
-   * Setter for the values array. Called with the swapped array on every
-   * center-cross during a drag, AND propagates back through Solid's
-   * normal signal flow.
+   * The current list. Accepts either an `Accessor<T[]>` (`createSignal`)
+   * or a `T[]` directly (`createStore` — `store.items` is a reactive
+   * proxy that isn't itself a function). Both forms track reactivity.
    */
-  onReorder: Setter<T[]>
+  values: Accessor<T[]> | T[]
+  /**
+   * Setter for the values array. Any function with shape
+   * `(next: T[]) => void`. Solid's `Setter<T[]>` from `createSignal`
+   * AND `createStore`'s `SetStoreFunction<T[]>` are both accepted via
+   * structural compatibility. `NoInfer` ensures T is inferred from
+   * `values` alone — without it, SetStoreFunction's overloaded shape
+   * could confuse inference and resolve T to `number` (the array-index
+   * type) instead of the item type.
+   */
+  onReorder: (next: NoInfer<T>[]) => void
   /** Drag + center-cross axis. Default: `"y"`. */
   axis?: "x" | "y"
   /**
