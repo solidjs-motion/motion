@@ -274,39 +274,45 @@ export function createLayoutController(
     const layerScaleX = layerMVs.scaleX?.get() ?? 1
     const layerScaleY = layerMVs.scaleY?.get() ?? 1
 
-    // Also subtract user-controlled translate (drag x/y from motion-dom,
-    // any `animate: { x, y }` offsets). bcr includes ALL CSS transforms;
-    // for a valid FLIP baseline we need the LAYOUT position.
+    // Also subtract user-controlled translate AND user-controlled scale
+    // (drag x/y, animate: { x, y, scale }, whileDrag: { scale, … }, etc.).
+    // bcr includes ALL CSS transforms; for a valid FLIP baseline we need
+    // the LAYOUT box, not the visually-transformed box.
     //
-    // We READ THE INLINE TRANSFORM STRING DIRECTLY, not the source MV's
-    // value. motion-dom's `mv.set` is synchronous but the CSS write is
-    // RAF-batched via its frame.render scheduler — there's a frame-
+    // We READ THE INLINE TRANSFORM STRING DIRECTLY via DOMMatrix, not
+    // the source MVs' values. motion-dom's `mv.set` is synchronous but
+    // its CSS write is RAF-batched via frame.render — there's a frame-
     // sized window where `mv.get()` reflects the new value while
     // `el.style.transform` still has the old one (or vice versa).
-    // Subtracting `mv.get()` from a stale bcr produces a layout
-    // measurement that's offset by a frame's animation progress,
-    // putting `first` and `last` at the wrong slot.
+    // Subtracting `mv.get()` from a stale bcr produces a measurement
+    // off by a frame's animation progress.
     //
-    // `el.style.transform` always reflects whatever was actually
-    // written to inline style by either motion-dom's renderHTML or our
-    // own writeFromRegistry. bcr is computed from that same inline
-    // style. So bcr − (inline transform translate) = pure layout.
+    // `el.style.transform` always reflects what was actually written to
+    // inline style by either motion-dom's renderHTML or our own
+    // writeFromRegistry. bcr is computed from that same inline style,
+    // so they're in lockstep regardless of any writer's RAF queue.
+    //
+    // Translate: subtract layer contribution from matrix.m41/m42 →
+    // user translate.
+    // Scale: matrix.m11/m22 are the COMBINED (layer * user) scale (in
+    // absence of rotation, which we don't currently support on layout
+    // elements). Divide bcr width/height by the combined scale → layout
+    // width/height.
     let userX = 0
     let userY = 0
+    let combinedScaleX = layerScaleX
+    let combinedScaleY = layerScaleY
     if (el instanceof HTMLElement) {
       const transformStr = el.style.transform
       if (transformStr !== "" && transformStr !== "none") {
         try {
           const matrix = new DOMMatrix(transformStr)
-          userX = matrix.m41
-          userY = matrix.m42
-          // Subtract the layer contribution — it's already accounted
-          // for via the layerX/layerY locals above. What remains is
-          // the user-controlled translate.
-          userX -= layerX
-          userY -= layerY
+          userX = matrix.m41 - layerX
+          userY = matrix.m42 - layerY
+          combinedScaleX = matrix.m11
+          combinedScaleY = matrix.m22
         } catch {
-          // Malformed transform — bail to 0.
+          // Malformed transform — bail to defaults (layer-only).
         }
       }
     }
@@ -328,8 +334,8 @@ export function createLayoutController(
     const { tx: ancestorTx, ty: ancestorTy } = getAncestorTranslate(el, parentEl)
     let localX = E.left - P.left - layerX - userX - ancestorTx
     let localY = E.top - P.top - layerY - userY - ancestorTy
-    const localWidth = layerScaleX === 0 ? E.width : E.width / layerScaleX
-    const localHeight = layerScaleY === 0 ? E.height : E.height / layerScaleY
+    const localWidth = combinedScaleX === 0 ? E.width : E.width / combinedScaleX
+    const localHeight = combinedScaleY === 0 ? E.height : E.height / combinedScaleY
     // Compensate for `layoutScroll` ancestors between this element and
     // its projection parent. The chain (built in `m.Provider` per the
     // locked Q-layoutScroll chain-reset rule) only includes scrollers
