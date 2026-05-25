@@ -25,6 +25,7 @@
 // transform. Siblings — not dragging — FLIP normally into their new slots.
 // ---------------------------------------------------------------------------
 
+import { visualElementStore } from "motion-dom"
 import type { Accessor, Setter } from "solid-js"
 import { createComputed, createSignal, on, onCleanup } from "solid-js"
 
@@ -151,6 +152,32 @@ export function createReorder<T>(
    * Center-cross math uses this as the dragged item's "origin" so the
    * pointer-tracking center stays continuous across mid-drag reorders. */
   let draggedStartRect: DOMRect | null = null
+  /** Cumulative layout shift the dragged item has experienced from swaps
+   * (along the active axis). Every onDrag subtracts this from the drag
+   * MV so the dragged item's VISUAL position stays under the pointer
+   * even after its DOM slot has moved. Without this compensation,
+   * motion-dom's drag pipeline computes `mv = dragStart + info.offset`
+   * from the ORIGINAL slot, so post-swap the visual jumps ahead of the
+   * pointer by the slot delta. See ADR 0008 follow-up notes. */
+  let cumulativeLayoutDelta = 0
+  /** Saved inline `position` and `z-index` of the dragged element so we
+   * can promote it to a higher stacking context for the drag duration
+   * and restore the user's original styles on drag-end. Required because
+   * `layout: true` siblings all share the parent stacking context and
+   * paint in DOM order — without an explicit `z-index` boost the dragged
+   * item would paint UNDER siblings later in the array. */
+  let savedStyles: { zIndex: string; position: string } | null = null
+  /** Per-value layout slot center along the active axis. Initialized from
+   * the drag-start snapshot, updated via swap arithmetic on each
+   * crossing — never re-derived from `getBoundingClientRect()` after
+   * drag-start. This sidesteps the timing problem where post-swap bcrs
+   * may include in-flight FLIP transforms (siblings from previous swaps
+   * still animating) or stale drag transforms (motion-dom's transform
+   * writer may not have applied the latest MV yet). The map is exact
+   * for equal-height items; variable-height items are approximate
+   * (slot center swap is symmetric, but actual layout deltas depend on
+   * each item's height — a follow-up can refine that math). */
+  let slotCenterByValue: Map<T, number> | null = null
 
   // ---------- External-mutation detection ----------
   /** The array reference the primitive just wrote (via internalSetValues).
@@ -168,8 +195,28 @@ export function createReorder<T>(
 
   function snapshotAll(): void {
     bcrSnapshot.clear()
+    // Real browsers: offsetTop/Left/Width/Height return the element's
+    // CSS-box layout position EXCLUDING all transforms. This is exactly
+    // what we need for the slot-center map:
+    //   - excludes the active drag transform on the dragged item,
+    //   - excludes any in-flight FLIP transforms on siblings (from a
+    //     prior drag whose layout animations haven't settled yet — the
+    //     jankiness you'd see if we used getBoundingClientRect here).
+    //
+    // JSDOM (tests): doesn't compute layout, so offsetWidth returns 0.
+    // Fall back to getBoundingClientRect — test stubs install bcrs
+    // directly, and the FLIP-in-flight scenario this offset path
+    // protects against doesn't arise in JSDOM (no real animations).
+    //
+    // All items share the same offsetParent (the group's container or
+    // its nearest positioned ancestor), so offsetTop/Left are mutually
+    // comparable across items in the same Reorder.Group.
     for (const [v, el] of elementByValue) {
-      bcrSnapshot.set(v, el.getBoundingClientRect())
+      const hasLayout = el.offsetWidth > 0 || el.offsetHeight > 0
+      const rect = hasLayout
+        ? new DOMRect(el.offsetLeft, el.offsetTop, el.offsetWidth, el.offsetHeight)
+        : el.getBoundingClientRect()
+      bcrSnapshot.set(v, rect)
     }
     snapshotStale = false
   }
@@ -240,32 +287,73 @@ export function createReorder<T>(
   )
 
   // ---------- Drag lifecycle ----------
+  function rebuildSlotCenters(): void {
+    if (activeAxis === null) {
+      slotCenterByValue = null
+      return
+    }
+    const map = new Map<T, number>()
+    for (const [v, rect] of bcrSnapshot) {
+      map.set(v, centerOf(rect, activeAxis))
+    }
+    slotCenterByValue = map
+  }
+
   function handleDragStart(value: T, event: PointerEvent): void {
     activeValue = value
     activeAxis = axisOf()
     activeElement = elementByValue.get(value) ?? null
     activePointerId = event.pointerId
+    cumulativeLayoutDelta = 0
     setDraggingSig(() => value)
     snapshotAll()
     draggedStartRect = bcrSnapshot.get(value) ?? null
+    // Initial slot centers from the drag-start snapshot. From this point
+    // on, slotCenterByValue is updated only via swap arithmetic — never
+    // re-derived from bcr — so transform-write timing doesn't matter.
+    rebuildSlotCenters()
+
+    // Promote the dragged element so it paints above siblings during the
+    // drag. `position: relative` only kicks in when the computed style
+    // is `static` (don't clobber `absolute`/`fixed`/`sticky` users have
+    // chosen deliberately). `z-index: 1000` is high enough to win against
+    // typical card stacks without escaping a portal.
+    if (activeElement !== null) {
+      savedStyles = {
+        zIndex: activeElement.style.zIndex,
+        position: activeElement.style.position,
+      }
+      const computedPos = window.getComputedStyle(activeElement).position
+      if (computedPos === "static") {
+        activeElement.style.position = "relative"
+      }
+      activeElement.style.zIndex = "1000"
+    }
   }
 
   function handleDrag(value: T, info: PanInfo): void {
     if (activeValue !== value || activeAxis === null) return
-    if (snapshotStale) snapshotAll()
-    if (draggedStartRect === null) return
+    if (snapshotStale) {
+      snapshotAll()
+      // Rebuild the slot center map from the fresh bcrs. The dragged item's
+      // bcr had its drag-transform offset stripped inside snapshotAll, and
+      // siblings' bcrs may include in-flight FLIP transforms (acceptable
+      // approximation — external mutations during a drag are corner cases).
+      rebuildSlotCenters()
+    }
+    if (draggedStartRect === null || slotCenterByValue === null) return
 
     const ax = activeAxis
     const offsetAlongAxis = ax === "y" ? info.offset.y : info.offset.x
     // Pointer position along axis = original slot center + cumulative drag.
-    // Frozen draggedStartRect keeps this stable across mid-drag reorders
-    // (the value's own bcrSnapshot entry updates as it changes slots, but
-    // we don't use it for the pointer-tracking math here).
+    // Frozen draggedStartRect keeps this stable across mid-drag reorders.
     const draggedCenter = centerOf(draggedStartRect, ax) + offsetAlongAxis
 
     // Center-cross loop — handles fast drags crossing multiple siblings
-    // in one frame. Each successful swap mutates values, re-snapshots, and
-    // checks the new neighbor.
+    // in one onDrag tick. All slot centers come from `slotCenterByValue`,
+    // which is updated purely via swap arithmetic — never re-derived from
+    // bcr after drag-start. This eliminates the timing dependency on
+    // motion-dom's transform writer and on in-flight sibling FLIPs.
     let didSwap = true
     while (didSwap) {
       didSwap = false
@@ -273,21 +361,16 @@ export function createReorder<T>(
       const draggedIndex = currentArray.indexOf(value)
       if (draggedIndex < 0) return // dragged item externally removed mid-iter
 
-      // Direction = where the pointer is relative to the dragged item's
-      // CURRENT slot. Read from the live snapshot (which reflects each
-      // post-swap layout position).
-      const currentSlotRect = bcrSnapshot.get(value)
-      if (currentSlotRect === undefined) return
-      const currentSlotCenter = centerOf(currentSlotRect, ax)
-      const direction = draggedCenter > currentSlotCenter ? 1 : -1
+      const currentSlotCenter = slotCenterByValue.get(value)
+      if (currentSlotCenter === undefined) return
 
+      const direction = draggedCenter > currentSlotCenter ? 1 : -1
       const neighborIndex = draggedIndex + direction
       if (neighborIndex < 0 || neighborIndex >= currentArray.length) break
 
       const neighborValue = currentArray[neighborIndex] as T
-      const neighborRect = bcrSnapshot.get(neighborValue)
-      if (neighborRect === undefined) break
-      const neighborCenter = centerOf(neighborRect, ax)
+      const neighborCenter = slotCenterByValue.get(neighborValue)
+      if (neighborCenter === undefined) break
 
       const crossed =
         direction > 0
@@ -295,27 +378,65 @@ export function createReorder<T>(
           : draggedCenter < neighborCenter
 
       if (crossed) {
+        // Layout delta = how far the dragged item's slot center moves.
+        // For equal-height items (v1 demo case), the dragged item swaps
+        // INTO the neighbor's old slot — so its new center IS the
+        // neighbor's old center, exact. Swap the two values' slot
+        // entries in the map so subsequent iterations / frames see
+        // each item at the slot it now occupies.
+        cumulativeLayoutDelta += neighborCenter - currentSlotCenter
+        slotCenterByValue.set(value, neighborCenter)
+        slotCenterByValue.set(neighborValue, currentSlotCenter)
+
         const swapped = currentArray.slice()
         swapped[draggedIndex] = neighborValue
         swapped[neighborIndex] = value
         internalSetValues(swapped)
-        // <For> reconciles synchronously; the DOM is reordered before this
-        // line. Re-read fresh bcrs for the post-swap layout — the dragged
-        // value's new entry reflects its new slot (used for direction
-        // detection above), but draggedStartRect stays frozen.
-        snapshotAll()
+
         didSwap = true
+      }
+    }
+
+    // Visual-continuity compensation. motion-dom's handlePan writes
+    //   mv = dragStartX + info.offset.axis
+    // every frame, which is anchored to the slot the item occupied at
+    // pointerdown. As we mutate values() and the DOM reorders, the
+    // dragged item's layout slot moves but `dragStartX` doesn't —
+    // composed `visual = slot + mv` would jump by the cumulative slot
+    // delta. Subtract that delta from the MV here (we run AFTER
+    // handlePan via the composed onDrag chain) so:
+    //   visual = newSlot + (mv - delta) = newSlot + originalSlotMv - delta
+    //          = originalSlot + originalSlotMv = pointer position. ✓
+    if (cumulativeLayoutDelta !== 0 && activeElement !== null) {
+      // visualElementStore is populated by motion-dom's createMotion
+      // setup. Tests mock it as an empty WeakMap, so this branch is a
+      // no-op there — the test stubs don't change layout on swap, so the
+      // compensation isn't observable anyway.
+      const ve = visualElementStore.get(activeElement)
+      if (ve !== undefined) {
+        const mv = ve.getValue(ax, 0)
+        mv.set(mv.get() - cumulativeLayoutDelta)
       }
     }
   }
 
   function handleDragEnd(value: T): void {
     if (activeValue !== value) return
+    // Restore inline styles before clearing the element reference.
+    // Empty string for either field reverts to whatever CSS classes /
+    // computed style would resolve to (i.e., no inline override).
+    if (activeElement !== null && savedStyles !== null) {
+      activeElement.style.zIndex = savedStyles.zIndex
+      activeElement.style.position = savedStyles.position
+      savedStyles = null
+    }
     activeValue = null
     activeAxis = null
     activeElement = null
     activePointerId = null
     draggedStartRect = null
+    cumulativeLayoutDelta = 0
+    slotCenterByValue = null
     setDraggingSig(() => null)
     bcrSnapshot.clear()
   }
