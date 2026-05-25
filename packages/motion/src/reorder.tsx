@@ -3,26 +3,19 @@
 // ADR 0008, Plan §3.2 + §4.4.
 //
 // The components are intentionally thin — Group calls createReorder and
-// publishes the result via context; Item reads the context and renders a
-// Dynamic spread with the primitive's `item()` callable. The primitive
-// does all the work; the components are the ergonomic surface most users
-// will reach for.
-//
-// Two design choices worth noting (and documented in the JSDoc below):
+// publishes the result via context; Item reads the context, captures the
+// outer projection context, and renders a Dynamic wrapped in m.Provider
+// so variant labels propagate from a Reorder.Item to nested motion
+// children (matches the motion-proxy's makeMotionTag pattern).
 //
 //   - Group wraps its children in `<LayoutGroup>` so layoutId scoping
 //     stays per-list. Same convention as the layout-animations plan.
 //
-//   - Item renders the element directly via Dynamic, NOT wrapped in
-//     `m.Provider`. The motion-proxy pattern (m.Provider around the
-//     Dynamic) needs the outer-projection-context capture trick to
-//     avoid measuring against self — a fix that requires threading an
-//     internal config into useMotion. createReorder.item doesn't
-//     expose that channel in v1, so Item skips m.Provider entirely.
-//     The trade-off: variant context (hover/press labels) does NOT
-//     propagate from a `<Reorder.Item>` into its children. Users who
-//     need that should compose `<Reorder.Item>` with a nested
-//     `<motion.div>` for the variant root.
+//   - Item captures `useProjectionContext()` BEFORE m.Provider wraps
+//     the Dynamic, then threads it through createReorder.item's
+//     internal config so createMotion's ref-fire reads the OUTER
+//     projection context (not the element's own push). Without this
+//     capture, ref-fire would measure against self → no FLIP.
 // ---------------------------------------------------------------------------
 
 import {
@@ -37,7 +30,28 @@ import { Dynamic } from "solid-js/web"
 import { LayoutGroup } from "./layout-group"
 import { MOTION_OPT_KEYS } from "./motion-proxy"
 import { createReorder, type ReorderResult } from "./primitives/createReorder"
-import type { ElementProps, MotionOptions } from "./types"
+import { useProjectionContext } from "./projection-context"
+import type {
+  ElementProps,
+  MotionOptions,
+  ProjectionContextValue,
+  UseMotionResult,
+} from "./types"
+
+/**
+ * Internal-only signature used by Reorder.Item to pass the captured
+ * outer projection context through to createReorder.item. The public
+ * `ReorderResult<T>["item"]` type omits this third parameter so
+ * primitive consumers don't see it (TypeScript will reject any call
+ * that passes a third arg via the public type). Inside this file we
+ * cast to recover the third-arg signature at the one call site that
+ * needs it.
+ */
+type ReorderItemWithConfig<T> = (
+  value: T,
+  motionOptions?: MotionOptions | Accessor<MotionOptions>,
+  config?: { parentProjectionContext?: ProjectionContextValue },
+) => UseMotionResult
 
 /**
  * Props for {@link Reorder.Group}. The container element defaults to `<ul>`
@@ -144,17 +158,34 @@ function Group<T>(props: ReorderGroupProps<T>): JSX.Element {
 
 function Item<T>(props: ReorderItemProps<T>): JSX.Element {
   const reorder = useReorderGroupContext<T>()
+  // Capture the OUTER projection context BEFORE the Dynamic ends up
+  // inside m.Provider. createMotion's ref-fire walks the Solid owner
+  // chain via `useProjectionContext()` and — if it found the element's
+  // own pushed-projection ctx (provided implicitly inside m.Provider's
+  // scope) — would compute `E - P = 0` and skip the FLIP. Threading
+  // this OUTER ctx into createReorder.item's internal config passes
+  // it down to useMotion, which uses it instead of the live ctx at
+  // ref-fire. Same pattern as the motion-proxy's makeMotionTag.
+  const outerProjectionCtx = useProjectionContext()
   const [own, motionAndDom] = splitProps(props, ["value", "as", "children"])
   // Same split-by-MOTION_OPT_KEYS pattern as the motion proxy. After this,
   // `motionOpts` is the MotionOptions subset feeding createReorder.item,
   // and `domProps` is everything else (class/id/style/event handlers/data-*)
   // which gets merged into the rendered element via `m(domProps)`.
   const [motionOpts, domProps] = splitProps(motionAndDom, MOTION_OPT_KEYS)
-  const m = reorder.item(own.value, () => motionOpts as MotionOptions)
+  // Cast to the internal-with-config signature to pass the captured
+  // projection context. The public `reorder.item` type doesn't expose
+  // the third param — see ReorderItemInternalConfig in createReorder.ts.
+  const itemWithConfig = reorder.item as unknown as ReorderItemWithConfig<T>
+  const m = itemWithConfig(own.value, () => motionOpts as MotionOptions, {
+    parentProjectionContext: outerProjectionCtx,
+  })
   return (
-    <Dynamic component={own.as ?? "li"} {...m(domProps as ElementProps)}>
-      {own.children}
-    </Dynamic>
+    <m.Provider>
+      <Dynamic component={own.as ?? "li"} {...m(domProps as ElementProps)}>
+        {own.children}
+      </Dynamic>
+    </m.Provider>
   )
 }
 

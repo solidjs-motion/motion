@@ -36,9 +36,25 @@ import type {
   MotionMergedProps,
   MotionOptions,
   PanInfo,
+  ProjectionContextValue,
   ReorderOptions,
+  UseMotionResult,
 } from "../types"
 import { useMotion } from "../use-motion"
+
+/**
+ * Internal config for {@link ReorderResult.item}. Not part of the public
+ * `ReorderResult` type — only the JSX wrapper `<Reorder.Item>` passes
+ * this, threading the outer projection context to `useMotion` so the
+ * rendered element can be safely wrapped in `m.Provider` for variant
+ * propagation without hitting the projection-finds-self issue. Primitive
+ * consumers calling `reorder.item(value, motionOptions)` should never
+ * need this — TypeScript hides the third parameter from the public
+ * signature via a `ReorderResult<T>["item"]` cast at the return site.
+ */
+type ReorderItemInternalConfig = {
+  parentProjectionContext?: ProjectionContextValue
+}
 
 /**
  * Return value of {@link createReorder}.
@@ -74,11 +90,17 @@ export type ReorderResult<T> = {
    * Identity model: `value` is the array entry by reference identity,
    * the same convention as `<For each={values}>`. Duplicate values
    * collapse onto a single registry entry — see ADR 0008 §3.2.
+   *
+   * Returns the same `UseMotionResult` shape `useMotion` returns — a
+   * callable for merging props plus a `.Provider` component for
+   * variant context propagation. The JSX wrapper `<Reorder.Item>`
+   * uses `m.Provider` to propagate variants to nested motion children;
+   * primitive consumers can do the same if they need it.
    */
   item: (
     value: T,
     motionOptions?: MotionOptions | Accessor<MotionOptions>,
-  ) => MotionGetProps
+  ) => UseMotionResult
   /**
    * The value of the item currently being dragged, or `null` when no
    * drag is active. Tracks the `onDragStart` → `onDragEnd` lifecycle
@@ -502,10 +524,18 @@ export function createReorder<T>(
       // can attach here without changing the surface.
       ref: (_el: HTMLElement): void => {},
     },
-    item: (
+    // The runtime accepts an optional third `config` arg used by the
+    // JSX `<Reorder.Item>` wrapper to thread the outer projection
+    // context to useMotion. The `as ReorderResult<T>["item"]` cast at
+    // the end of this object literal hides the third param from the
+    // public ReorderResult type so primitive consumers see a clean
+    // two-arg signature — TypeScript will error if a user calls
+    // `reorder.item(value, opts, anything)`.
+    item: ((
       value: T,
       motionOptions?: MotionOptions | Accessor<MotionOptions>,
-    ): MotionGetProps => {
+      config?: ReorderItemInternalConfig,
+    ): UseMotionResult => {
       const getUserOpts: () => MotionOptions =
         typeof motionOptions === "function"
           ? motionOptions
@@ -531,7 +561,7 @@ export function createReorder<T>(
         }
       }
 
-      const m = useMotion(mergedOpts)
+      const m = useMotion(mergedOpts, config)
 
       // Owner-scoped cleanup: drops the value from registry/snapshot when
       // this item's owner (a `<For>` row) disposes — i.e., when the value
@@ -560,8 +590,13 @@ export function createReorder<T>(
         } as MotionMergedProps<P>
       }
 
-      return wrappedFn as MotionGetProps
-    },
+      // Return both the wrapped callable AND m's Provider (for variant-
+      // context propagation when the caller wraps children in
+      // <m.Provider>). Mirrors the shape useMotion returns.
+      return Object.assign(wrappedFn as MotionGetProps, {
+        Provider: m.Provider,
+      })
+    }) as ReorderResult<T>["item"],
     dragging: draggingSig,
   }
 }
