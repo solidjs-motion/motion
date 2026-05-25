@@ -80,8 +80,12 @@ export default function ReorderWithExit() {
                 // can race with motion-dom's drag transform writer —
                 // a known architectural issue queued for a follow-up
                 // (see deferred items, post v0.2.0).
+                // `animate` includes `box-shadow: none` so the
+                // whileDrag shadow reverts cleanly on drag-end (the
+                // variant system's removed-key fallback can't infer
+                // a revert target for non-transform CSS properties).
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
+                animate={{ opacity: 1, "box-shadow": "0px 0px 0px rgba(0,0,0,0)" }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.18 }}
                 style={{

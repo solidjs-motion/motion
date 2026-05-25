@@ -98,11 +98,26 @@ export default function ReorderHandle() {
                   gap: "0.75rem",
                   "user-select": "none",
                 }}
+                // `animate` defines the resting target so non-transform
+                // properties revert cleanly when `whileDrag` deactivates
+                // — the variant system's removed-key fallback resolves
+                // to `null` for keys not in motion's defaults table
+                // (`box-shadow` isn't), and motion's animate treats
+                // `null` as no-op, leaving the shadow stuck.
+                //
+                // Both shadow values use the same 4-component shape
+                // (x, y, blur, color — no spread on either side). WAA
+                // only interpolates between matching-structure shadow
+                // values; mismatched shapes fall back to a discrete
+                // mid-animation swap (looks like a hard cut), and
+                // `none`/keyword targets can't be interpolated at all.
+                animate={{ "box-shadow": "0px 0px 0px rgba(0,0,0,0)" }}
                 whileDrag={{
                   cursor: "grabbing",
-                  "box-shadow": "0 6px 18px rgba(0,0,0,0.25)",
+                  "box-shadow": "0px 6px 18px rgba(0,0,0,0.25)",
                   scale: 1.02,
                 }}
+                transition={{ duration: 0.3 }}
                 // Force a `grabbing` cursor on the whole page during the
                 // drag. motion-dom's drag pipeline captures the pointer
                 // to the dragged item but doesn't touch document.body's
