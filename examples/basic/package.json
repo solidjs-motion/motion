@@ -23,6 +23,7 @@
     "vinxi": "^0.5.7"
   },
   "devDependencies": {
+    "solid-devtools": "0.34.3",
     "typescript": "^6.0.3"
   }
 }
