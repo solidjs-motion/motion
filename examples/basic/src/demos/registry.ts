@@ -383,4 +383,15 @@ export const demos: DemoEntry[] = [
     source: rawSource(() => import("./LayoutGroupNamespace.tsx?raw")),
     filename: "LayoutGroupNamespace.tsx",
   },
+  // ---- Reorder (0.2.0) ----
+  {
+    path: "/reorder-basic",
+    title: "Reorder (basic)",
+    blurb:
+      "<Reorder.Group> + <Reorder.Item> — drag any row to reorder a controlled list. Center-cross detection mutates values() live; siblings FLIP into new slots; dragged row snaps back via dragSnapToOrigin.",
+    phase: 4,
+    component: lazy(() => import("./ReorderBasic")),
+    source: rawSource(() => import("./ReorderBasic.tsx?raw")),
+    filename: "ReorderBasic.tsx",
+  },
 ]
