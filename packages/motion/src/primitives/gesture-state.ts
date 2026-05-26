@@ -455,7 +455,15 @@ export function createGestureStateMachine(
         // on pointerdown and snap the element back to its initial state
         // before the user's first move could reach the DOM.
         if (active.whileDrag && (key === "x" || key === "y")) continue
-        changes[key] = getRevertValue(key)
+        const revertValue = getRevertValue(key)
+        // Equality guard — if the previously-applied value already matches
+        // the revert target, the dispatch would be a zero-effect animate()
+        // that still calls prevControls.stop() and cancels any in-flight
+        // tween. Common case: a gesture whose target happens to equal the
+        // motion default or the captured original. The prune step below
+        // still drops the key from lastApplied so we don't reconsider it.
+        if (lastApplied[key] === revertValue) continue
+        changes[key] = revertValue
       }
     }
 
@@ -495,6 +503,19 @@ export function createGestureStateMachine(
         : undefined,
     })
 
+    // Prune removed keys from lastApplied REGARDLESS of whether we
+    // dispatch below. The removed-key fallback is a one-shot revert:
+    // - If we dispatched it (changes had the key), we're done — drop it.
+    // - If the equality guard above skipped it (revert value already
+    //   matched), lastApplied is already at the right value — drop it
+    //   too so we don't reconsider on every subsequent effect run.
+    // Keeping stale entries used to allow the next iteration to re-fire
+    // the fallback and spuriously cancel any in-flight animation via
+    // prevControls.stop().
+    for (const key in lastApplied) {
+      if (!(key in next)) delete lastApplied[key]
+    }
+
     if (!skipAnimate && Object.keys(changes).length > 0) {
       // Update lastApplied to the new winner snapshot (NOT including removed-
       // key fallback values — those become "applied" only after the animation
@@ -503,16 +524,6 @@ export function createGestureStateMachine(
       // that brings the key back, the diff sees `lastApplied[key] = fallback`
       // vs `next[key] = newValue` and animates correctly).
       lastApplied = { ...lastApplied, ...changes }
-      // Drop any key no longer in `next` from lastApplied. The removed-key
-      // fallback is a one-shot revert: once we've dispatched the animate to
-      // the fallback value, we're DONE with that key. Keeping it in
-      // lastApplied would cause the next effect iteration to see it again,
-      // re-fire the fallback, and dispatch a spurious animate() call —
-      // whose internal prevControls.stop() would cancel any in-flight
-      // animation (including the previous iteration's revert) mid-flight.
-      for (const key in lastApplied) {
-        if (!(key in next)) delete lastApplied[key]
-      }
 
       // ---------- splitTarget: separate MotionValue refs from plain values ----------
       // Preserved from Phase 1: motion's vanilla animate(el, target) doesn't

@@ -218,6 +218,26 @@ describe("gesture state machine — per-key handoff (Q3b)", () => {
     expect(lastCall?.[1]).toMatchObject({ "background-color": "rgba(0, 0, 0, 0)" })
     dispose()
   })
+
+  it("skips the revert dispatch when the gesture value already equals the revert target", () => {
+    // whileHover: { scale: 1 } sets scale to the motion default. The
+    // first hover activation dispatches scale: 1 (vs lastApplied[scale]
+    // = undefined). On hover-end, getRevertValue("scale") = 1 (motion
+    // default) === lastApplied[scale] = 1 — the equality guard skips
+    // the no-op animate() and the spurious prevControls.stop() that
+    // would otherwise cancel any concurrent in-flight tween.
+    const { setActive, dispose } = makeStateMachine({
+      hover: { scale: 1 },
+    })
+
+    setActive("whileHover", true)
+    const callsAfterActivate = animateSpy.mock.calls.length
+    setActive("whileHover", false)
+    const callsAfterDeactivate = animateSpy.mock.calls.length
+
+    expect(callsAfterDeactivate).toBe(callsAfterActivate)
+    dispose()
+  })
 })
 
 // ---------------------------------------------------------------------------
