@@ -486,6 +486,69 @@ export function TaskList() {
 }
 ```
 
+### 16. `createReorder` primitive (custom Reorder UI)
+
+`<Reorder.Group>` / `<Reorder.Item>` are thin JSX wrappers over `createReorder`.
+Drop down to the primitive when you need a custom container/item structure, or
+when surrounding UI needs to react to the drag state (e.g., a status bar, a
+disabled-while-dragging side panel, a drop-zone indicator). `createReorder`
+returns `{ group, item, dragging }`:
+
+- `group.ref` — spread onto the container element (forward-compat slot).
+- `item(value, motionOptions?)` — per-row factory. Returns the same callable
+  shape `useMotion` returns: spread `m()` onto the JSX element, optionally
+  wrap children in `m.Provider` for variant cascade.
+- `dragging()` — Accessor of the value being dragged (or `null`). Use it
+  anywhere — outside the list, inside it, in a sibling component.
+
+```tsx
+import { createReorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+export function PrioritisedTaskList() {
+  const [tasks, setTasks] = createSignal([
+    { id: "1", label: "Draft RFC", priority: "high" },
+    { id: "2", label: "Review PRs", priority: "med" },
+    { id: "3", label: "Update docs", priority: "low" },
+  ])
+
+  const reorder = createReorder(tasks, setTasks, { axis: "y" })
+
+  return (
+    <section>
+      <header>
+        Drag to reorder ·{" "}
+        <strong>{reorder.dragging()?.label ?? "(idle)"}</strong>
+      </header>
+      <ul ref={reorder.group.ref} class="task-list">
+        <For each={tasks()}>
+          {(task) => {
+            const m = reorder.item(task)
+            return (
+              <li
+                {...m({
+                  class: `task ${task.priority} ${
+                    reorder.dragging() === task ? "is-dragging" : ""
+                  }`,
+                })}
+              >
+                {task.label}
+              </li>
+            )
+          }}
+        </For>
+      </ul>
+    </section>
+  )
+}
+```
+
+`createReorder` accepts an `Accessor<T[]>` (`createSignal` form) OR `T[]`
+directly (`createStore` form — pass `store.items` and `(next) => setStore("items", next)`).
+Both forms track reactivity correctly; mutation-detection uses a re-entrancy
+flag rather than reference identity so `setStore(produce(...))` in-place
+mutations work too.
+
 ## Roadmap
 
 ### Shipped
