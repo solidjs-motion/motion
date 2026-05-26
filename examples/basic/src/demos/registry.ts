@@ -414,4 +414,14 @@ export const demos: DemoEntry[] = [
     source: rawSource(() => import("./ReorderWithExit.tsx?raw")),
     filename: "ReorderWithExit.tsx",
   },
+  {
+    path: "/reorder-perf",
+    title: "Reorder (perf stage)",
+    blurb:
+      "Profiling stage at realistic list sizes (N=50/100/300/500/1000). Toggle between minimal rows (library overhead) and card rows (realistic feature cost). Auto-drag button dispatches a programmatic sweep so DevTools captures are repeatable. Pair with bench/BASELINES.md §09 for the JS-coordination baseline.",
+    phase: 4,
+    component: lazy(() => import("./ReorderPerfStage")),
+    source: rawSource(() => import("./ReorderPerfStage.tsx?raw")),
+    filename: "ReorderPerfStage.tsx",
+  },
 ]

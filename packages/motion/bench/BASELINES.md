@@ -121,6 +121,29 @@ createSwitchTransition wiring, ref/static-style application, exit
 dispatch chain, subtree-walk registry pruning). The real perceived cost
 in production is dominated by the animate duration itself.
 
+### 09 — Reorder crossing (per-crossing JS cost in active drag)
+
+| Bench | ops/sec | mean (ms) | p99 (ms) |
+|---|--:|--:|--:|
+| single crossing in 100-item list | 4,160 | 0.24 | 0.90 |
+| single crossing in 1000-item list | 415 | 2.41 | 4.36 |
+
+**Read.** One center-cross during an active drag fires a chain of
+synchronous work: composed `onDrag` → center-cross loop → `internalSetValues` →
+Solid `<For>` reconcile → parent `MutationObserver` fires (microtask) →
+N sibling controllers run `runMeasurement` synchronously inside the MO
+callback (sub-paint correctness, see [createLayoutController.ts:636](../src/primitives/createLayoutController.ts#L636))
+→ N bcr-pair reads + DOMMatrix parses + ancestor-translate walks → 2 FLIP
+dispatches (the swapped pair) + 98 no-op measurements that bail at the
+epsilon check + cumulative-layout-delta MV compensation. At N=100 the
+total is ~240 µs (≈ 1.4% of a 60Hz frame budget) and per-item cost
+amortizes to ~2.4 µs — comparable to one `createMotionValue` (bench 05).
+10× N produced 10.03× mean: cleanly linear, no quadratic surprises in
+the cascade. Linear extrapolation suggests the architecture starts
+feeling the cost around N≈500–700 in a fast drag (~30 crossings/sec),
+which is the natural boundary where virtualized-Reorder or a projection-
+node tree stops being premature.
+
 ## Method note
 
 These numbers were taken on one machine, one run. **Use them as a

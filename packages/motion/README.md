@@ -629,6 +629,14 @@ Both forms track reactivity correctly; mutation-detection uses a re-entrancy
 flag rather than reference identity so `setStore(produce(...))` in-place
 mutations work too.
 
+## Performance
+
+For the mental model on `<Reorder.Group>` + `layout: true` at realistic
+list sizes (N up to ~500), how to measure JS coordination cost vs. real
+browser paint/composite/GC, and the optimization checklist, see
+[PERFORMANCE.md](./PERFORMANCE.md). Raw numbers live in
+[bench/BASELINES.md](./bench/BASELINES.md).
+
 ## Roadmap
 
 ### Shipped

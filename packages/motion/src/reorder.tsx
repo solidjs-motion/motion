@@ -26,6 +26,7 @@ import { MOTION_OPT_KEYS } from "./motion-proxy"
 import { createReorder, type ReorderResult } from "./primitives/createReorder"
 import { useProjectionContext } from "./projection-context"
 import type { ElementProps, MotionOptions, ProjectionContextValue, UseMotionResult } from "./types"
+import { useMotion } from "./use-motion"
 
 /**
  * Internal-only signature used by Reorder.Item to pass the captured
@@ -127,16 +128,32 @@ function Group<T>(props: ReorderGroupProps<T>): JSX.Element {
     axis: own.axis,
     cancelOnExternalReorder: own.cancelOnExternalReorder,
   }))
+  // Mark the group container as a scroll ancestor for descendant FLIPs.
+  // Reorder.Items have `layout: true`; when the group is the scrollable
+  // viewport for a long list (`max-height` + `overflow: auto`), their
+  // projection chain must include this element so post-swap deltas
+  // compensate for the group's scroll offset. Without it, sibling FLIPs
+  // computed in viewport coordinates would mis-translate when the group
+  // is scrolled. Mirrors motion-react's `<Reorder.Group>` (always a
+  // motion element with `layoutScroll`). The `m.Provider` wrap below
+  // publishes the extended `scrollAncestors` chain to descendants.
+  const m = useMotion(() => ({ layoutScroll: true }))
   return (
     <ReorderGroupContext.Provider value={reorder as AnyReorderResult}>
       <LayoutGroup>
-        <Dynamic
-          component={own.as ?? "ul"}
-          ref={reorder.group.ref}
-          {...(rest as JSX.HTMLAttributes<HTMLElement>)}
-        >
-          {own.children}
-        </Dynamic>
+        <m.Provider>
+          <Dynamic
+            component={own.as ?? "ul"}
+            {...m({
+              ...(rest as ElementProps),
+              ref: (el) => {
+                if (el instanceof HTMLElement) reorder.group.ref(el)
+              },
+            })}
+          >
+            {own.children}
+          </Dynamic>
+        </m.Provider>
       </LayoutGroup>
     </ReorderGroupContext.Provider>
   )
