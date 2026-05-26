@@ -199,10 +199,12 @@ describe("gesture state machine — per-key handoff (Q3b)", () => {
     dispose()
   })
 
-  it("falls a key to null (computed-style read) when no initial AND no motion default", () => {
+  it("falls a non-transform key to the captured pre-gesture computed value when no initial AND no motion default", () => {
     // background-color has no entry in TRANSFORM_DEFAULTS. With no initial
-    // override, the fallback is null — motion's animate() reads from
-    // getComputedStyle at animation start.
+    // override, the originals map snapshots the element's computed style on
+    // the first effect iteration (before any gesture has dispatched) and
+    // serves THAT as the revert target. In jsdom, an unset background-color
+    // computes to "rgba(0, 0, 0, 0)".
     const { setActive, dispose } = makeStateMachine({
       animate: { x: 0 },
       hover: { "background-color": "red" },
@@ -213,7 +215,7 @@ describe("gesture state machine — per-key handoff (Q3b)", () => {
     setActive("whileHover", false)
 
     const lastCall = animateSpy.mock.calls[animateSpy.mock.calls.length - 1]
-    expect(lastCall?.[1]).toMatchObject({ "background-color": null })
+    expect(lastCall?.[1]).toMatchObject({ "background-color": "rgba(0, 0, 0, 0)" })
     dispose()
   })
 })
