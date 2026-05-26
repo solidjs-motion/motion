@@ -219,7 +219,7 @@ fixed anchor is a meaningful value — so it stays static-typed.
 for non-Solid-source ancestor changes. Composes with `layoutDependency`
 or `LayoutGroup.dependency`.
 
-## Reorder (0.2.0 work-in-progress)
+## Reorder (0.2.0)
 
 Reorder is a layout-feature consumer rather than a new layout primitive
 — it builds on `layout` (for the sibling FLIP cascade) and `drag` (for
@@ -234,11 +234,18 @@ ADR; see [docs/plans/0.2.0-reorder.md](docs/plans/0.2.0-reorder.md) and
   for the duration of the drag. The controlled `values` array is
   updated live as the dragged item's center crosses each sibling's
   center — `onReorder` fires per swap.
-- **`createReorder`** — the primitive hook. Takes `Accessor<T[]>` values
-  source + `Setter<T[]>` setter + optional reactive options. Returns
-  `{ groupProps, itemProps }` for the user to spread on their own
-  container + item elements. Composes with explicit `<For>` (and with
-  `<Presence>` when items need exit animations).
+- **`createReorder`** — the primitive hook. Takes a values source
+  (either `Accessor<T[]>` from `createSignal` OR a `T[]` directly from
+  `createStore` — `store.items` is a reactive proxy that isn't itself a
+  function), an `onReorder` setter with shape `(next: T[]) => void`
+  (both `Setter<T[]>` and `SetStoreFunction<T[]>` are structurally
+  compatible), and optional reactive options. Returns
+  `{ group, item, dragging }`: `group.ref` for the container element,
+  `item(value, motionOptions?)` per-row factory returning the same
+  `UseMotionResult` shape `useMotion` does, and `dragging()` accessor
+  of the value being dragged (or `null`). Composes with explicit `<For>`
+  (and with `<Presence exitMethod="keep-index">` when items need exit
+  animations).
 - **`<Reorder.Group>` / `<Reorder.Item>`** — JSX-level wrapper
   components around `createReorder`. Group defaults to `<ul>` and
   internally wraps children in `<LayoutGroup>` (scopes any `layoutId`

@@ -441,12 +441,91 @@ export function ExpandableCard() {
 }
 ```
 
-### 15. Reorder list (drag + add/remove)
+### 15. Reorder list (basic drag-to-reorder)
 
 `<Reorder.Group>` + `<Reorder.Item>` for drag-to-reorder. Each Item gets `layout: true`
-+ `drag: <axis>` automatically. Pair with `<Presence exitMethod="keep-index">` when items
-have `exit` declared — the default `exitMethod` (`"move-to-end"`) shuffles the exiting
-node to the end of the list during its fade, hiding the exit visually.
++ `drag: <axis>` automatically. The dragged row tracks the pointer; siblings FLIP into
+their new slots as it crosses their centers; `values` is mutated live (no preview state).
+
+```tsx
+import { Reorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+const INITIAL = [{ id: "1", label: "First" }, { id: "2", label: "Second" }, { id: "3", label: "Third" }]
+
+export function SortableList() {
+  const [items, setItems] = createSignal(INITIAL)
+  return (
+    <Reorder.Group values={items} onReorder={setItems}>
+      <For each={items()}>
+        {(item) => (
+          <Reorder.Item value={item} class="list-item">
+            {item.label}
+          </Reorder.Item>
+        )}
+      </For>
+    </Reorder.Group>
+  )
+}
+```
+
+### 16. Reorder with a drag handle
+
+When item content contains interactive elements (checkboxes, inputs, buttons), full-row
+drag steals pointer events from them. Scope drag initiation to a dedicated handle with
+`dragListener: false` + `dragControls={controls}` (the same `createDragControls` factory
+that's used outside Reorder). One controls instance per row.
+
+```tsx
+import { createDragControls, Reorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+export function TaskList() {
+  const [tasks, setTasks] = createSignal([
+    { id: "1", label: "Pick up groceries", done: false },
+    { id: "2", label: "Review PR #142", done: true },
+  ])
+  const toggle = (id: string) =>
+    setTasks((p) => p.map((t) => (t.id === id ? { ...t, done: !t.done } : t)))
+
+  return (
+    <Reorder.Group values={tasks} onReorder={setTasks}>
+      <For each={tasks()}>
+        {(task) => {
+          const controls = createDragControls()
+          return (
+            <Reorder.Item value={task} dragListener={false} dragControls={controls}>
+              <button
+                type="button"
+                aria-label={`Drag ${task.label}`}
+                onPointerDown={(e) => controls.start(e)}
+                style={{ "touch-action": "none", cursor: "grab" }}
+              >
+                ⋮⋮
+              </button>
+              <input
+                type="checkbox"
+                checked={task.done}
+                onChange={() => toggle(task.id)}
+              />
+              <span>{task.label}</span>
+            </Reorder.Item>
+          )
+        }}
+      </For>
+    </Reorder.Group>
+  )
+}
+```
+
+### 17. Reorder with exit animations
+
+Pair Reorder with `<Presence>` to animate items in/out as they're added/removed.
+**Always pass `exitMethod="keep-index"`** for layout-animated lists — the default
+(`"move-to-end"`) shuffles the exiting node to the end of the list during its fade,
+firing the layout-coordinator's parent-MO mid-exit and visibly sliding the item to
+the bottom instead of letting it fade in place. `keep-index` holds the slot until
+exit completes; survivors only FLIP after the slot is released.
 
 ```tsx
 import { Presence, Reorder } from "solidjs-motion"
@@ -486,7 +565,7 @@ export function TaskList() {
 }
 ```
 
-### 16. `createReorder` primitive (custom Reorder UI)
+### 18. `createReorder` primitive (custom Reorder UI)
 
 `<Reorder.Group>` / `<Reorder.Item>` are thin JSX wrappers over `createReorder`.
 Drop down to the primitive when you need a custom container/item structure, or
