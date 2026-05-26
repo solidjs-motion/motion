@@ -1,6 +1,6 @@
-import { defineConfig } from "@solidjs/start/config"
-import tailwindcss from "@tailwindcss/vite"
-import devtools from "solid-devtools/vite"
+import { defineConfig } from "@solidjs/start/config";
+import tailwindcss from "@tailwindcss/vite";
+import devtools from "solid-devtools/vite";
 
 // ---------------------------------------------------------------------------
 // SolidStart configuration — replaces the previous Vite SPA setup. Build
@@ -25,7 +25,7 @@ import devtools from "solid-devtools/vite"
 // subpath. Local dev leaves it unset → serves at `/` with no surprises.
 // ---------------------------------------------------------------------------
 
-const DEPLOY_BASE = process.env.DEPLOY_BASE ?? "/"
+const DEPLOY_BASE = process.env.DEPLOY_BASE ?? "/";
 
 export default defineConfig({
   server: {
@@ -60,4 +60,4 @@ export default defineConfig({
       conditions: ["development", "browser", "solid"],
     },
   },
-})
+});
