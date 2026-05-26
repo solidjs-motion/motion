@@ -658,7 +658,6 @@ mutations work too.
 - `useAnimate` imperative AnimationControls equivalent.
 - `LazyMotion` lazy-loaded feature bundles.
 - Generalized shadow-shape normalization (currently only `"none"`/`""` are normalized for box/text-shadow).
-- Default `exitMethod="keep-index"` on `<Presence>` (currently "move-to-end"; would be a breaking change).
 
 ## License
 
