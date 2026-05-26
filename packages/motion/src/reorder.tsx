@@ -241,6 +241,32 @@ function Item<T>(props: ReorderItemProps<T>): JSX.Element {
  *   </For>
  * </Reorder.Group>
  * ```
+ *
+ * @example Exit animation with `<Presence>`
+ * Always pair Reorder with `<Presence exitMethod="keep-index">` when items
+ * have `exit` declared. The default `exitMethod` ("move-to-end") shuffles
+ * the exiting node to the end of the list during its exit window, which
+ * fires the layout-coordinator's parent-MO mid-fade and visibly slides
+ * the item to the bottom instead of letting it fade in place. `keep-index`
+ * holds the slot until exit completes, then survivors FLIP up cleanly.
+ * ```tsx
+ * <Reorder.Group values={items} onReorder={setItems}>
+ *   <Presence exitMethod="keep-index">
+ *     <For each={items()}>
+ *       {(item) => (
+ *         <Reorder.Item
+ *           value={item}
+ *           initial={{ opacity: 0 }}
+ *           animate={{ opacity: 1 }}
+ *           exit={{ opacity: 0 }}
+ *         >
+ *           {item.label}
+ *         </Reorder.Item>
+ *       )}
+ *     </For>
+ *   </Presence>
+ * </Reorder.Group>
+ * ```
  */
 export const Reorder: {
   Group: <T>(props: ReorderGroupProps<T>) => JSX.Element

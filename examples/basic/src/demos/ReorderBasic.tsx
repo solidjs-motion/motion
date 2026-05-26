@@ -70,14 +70,13 @@ export default function ReorderBasic() {
                 gap: "0.6rem",
                 "user-select": "none",
               }}
-              // `animate` defines the resting target so non-transform
-              // properties (box-shadow) revert when `whileDrag` ends.
-              // Use a zero-shadow rather than "none" — WAA can't
-              // interpolate to/from the `none` keyword cleanly. The
-              // shape (3 numerics + color) must match whileDrag's
-              // shadow or WAA falls back to a discrete mid-animation
-              // swap.
-              animate={{ "box-shadow": "0px 0px 0px rgba(0,0,0,0)" }}
+              // No `animate` clause needed for the shadow revert —
+              // gesture-state's originals tracking captures the row's
+              // pre-gesture computed `box-shadow` on first paint (the
+              // jsdom/browser-default `""`/`"none"`, normalized to a
+              // transparent zero-shadow) and uses that as the revert
+              // target when `whileDrag` deactivates. scale reverts to
+              // the motion default (1) via the same chain.
               whileDrag={{
                 cursor: "grabbing",
                 "box-shadow": "0px 6px 18px rgba(0,0,0,0.25)",

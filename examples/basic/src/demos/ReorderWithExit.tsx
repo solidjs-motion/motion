@@ -69,7 +69,7 @@ export default function ReorderWithExit() {
           "min-height": "80px",
         }}
       >
-        <Presence>
+        <Presence exitMethod="keep-index">
           <For each={tasks()}>
             {(task) => (
               <Reorder.Item
@@ -80,12 +80,13 @@ export default function ReorderWithExit() {
                 // can race with motion-dom's drag transform writer —
                 // a known architectural issue queued for a follow-up
                 // (see deferred items, post v0.2.0).
-                // `animate` includes `box-shadow: none` so the
-                // whileDrag shadow reverts cleanly on drag-end (the
-                // variant system's removed-key fallback can't infer
-                // a revert target for non-transform CSS properties).
+                //
+                // box-shadow doesn't need an explicit revert in `animate`:
+                // gesture-state's originals tracking captures the
+                // pre-gesture computed style on first paint and uses
+                // that as the revert target when whileDrag deactivates.
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 1, "box-shadow": "0px 0px 0px rgba(0,0,0,0)" }}
+                animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.18 }}
                 style={{
