@@ -8,14 +8,7 @@ import {
   type SpringOptions,
   springValue,
 } from "motion"
-import {
-  type Accessor,
-  createComputed,
-  createSignal,
-  from,
-  onCleanup,
-  untrack,
-} from "solid-js"
+import { type Accessor, createComputed, createSignal, from, onCleanup, untrack } from "solid-js"
 import type { MotionValueAccessor } from "../types"
 
 // ---------------------------------------------------------------------------

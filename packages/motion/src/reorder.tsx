@@ -18,25 +18,14 @@
 //     capture, ref-fire would measure against self → no FLIP.
 // ---------------------------------------------------------------------------
 
-import {
-  type Accessor,
-  createContext,
-  type JSX,
-  splitProps,
-  useContext,
-} from "solid-js"
+import { type Accessor, createContext, type JSX, splitProps, useContext } from "solid-js"
 import { Dynamic } from "solid-js/web"
 
 import { LayoutGroup } from "./layout-group"
 import { MOTION_OPT_KEYS } from "./motion-proxy"
 import { createReorder, type ReorderResult } from "./primitives/createReorder"
 import { useProjectionContext } from "./projection-context"
-import type {
-  ElementProps,
-  MotionOptions,
-  ProjectionContextValue,
-  UseMotionResult,
-} from "./types"
+import type { ElementProps, MotionOptions, ProjectionContextValue, UseMotionResult } from "./types"
 
 /**
  * Internal-only signature used by Reorder.Item to pass the captured
@@ -59,10 +48,7 @@ type ReorderItemWithConfig<T> = (
  * `style`, event handlers, `data-*`, …) pass through to the rendered
  * element.
  */
-export type ReorderGroupProps<T> = Omit<
-  JSX.HTMLAttributes<HTMLElement>,
-  "children"
-> & {
+export type ReorderGroupProps<T> = Omit<JSX.HTMLAttributes<HTMLElement>, "children"> & {
   /**
    * The current list. Accepts either an `Accessor<T[]>` (`createSignal`)
    * or a `T[]` directly (`createStore` — `store.items` is a reactive

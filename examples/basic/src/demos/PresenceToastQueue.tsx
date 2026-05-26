@@ -92,9 +92,7 @@ export default function PresenceToastQueue() {
         }}
       >
         <Presence exitMethod="keep-index">
-          <For each={toasts()}>
-            {(toast) => <ToastCard toast={toast} onDismiss={dismiss} />}
-          </For>
+          <For each={toasts()}>{(toast) => <ToastCard toast={toast} onDismiss={dismiss} />}</For>
         </Presence>
       </div>
     </div>

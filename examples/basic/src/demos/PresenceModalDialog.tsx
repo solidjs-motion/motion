@@ -42,10 +42,10 @@ export default function PresenceModalDialog() {
   return (
     <div>
       <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
-        Open the modal — backdrop and dialog share the <code>"open"</code> /{" "}
-        <code>"closed"</code> / <code>"dropped"</code> label vocabulary. Toggling exit style
-        switches which variant the children resolve when they unmount; the change takes effect
-        on the next close because <code>runExit</code> re-reads opts at exit time.
+        Open the modal — backdrop and dialog share the <code>"open"</code> / <code>"closed"</code> /{" "}
+        <code>"dropped"</code> label vocabulary. Toggling exit style switches which variant the
+        children resolve when they unmount; the change takes effect on the next close because{" "}
+        <code>runExit</code> re-reads opts at exit time.
       </p>
       <div style={{ display: "flex", gap: "0.5rem", "margin-bottom": "1rem" }}>
         <button
@@ -68,7 +68,9 @@ export default function PresenceModalDialog() {
       </div>
       <Show when={confirmed()}>
         {(msg) => (
-          <div style={{ color: "var(--color-muted)", "font-size": "0.85rem", "margin-bottom": "1rem" }}>
+          <div
+            style={{ color: "var(--color-muted)", "font-size": "0.85rem", "margin-bottom": "1rem" }}
+          >
             Last action: <code>{msg()}</code>
           </div>
         )}

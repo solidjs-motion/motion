@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@solidjs/testing-library"
-import { For, createSignal } from "solid-js"
+import { createSignal, For } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 // ---------------------------------------------------------------------------
@@ -218,11 +218,7 @@ function renderList(
 }
 
 /** Drive a drag on `el` from `(fromX, fromY)` to `(toX, toY)` and release. */
-function drag(
-  el: HTMLElement,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-): void {
+function drag(el: HTMLElement, from: { x: number; y: number }, to: { x: number; y: number }): void {
   fireEvent.pointerDown(el, {
     pointerId: 1,
     clientX: from.x,

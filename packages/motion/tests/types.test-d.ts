@@ -9,15 +9,15 @@ import { describe, expectTypeOf, it } from "vitest"
 import {
   type AnimateValue,
   type AnimationPlaybackControls,
-  createInView,
   type CreateInViewOptions,
+  type CreatePanOptions,
+  type CreateScrollOptions,
+  createInView,
   createMotion,
   createMotionValue,
   createPan,
-  type CreatePanOptions,
-  createReorder,
-  createScroll,
-  type CreateScrollOptions,
+  type createReorder,
+  type createScroll,
   createTransform,
   type DragConstraints,
   type DragControls,
@@ -475,9 +475,9 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
   })
 
   it("createInView accepts ref as Accessor OR static Element", () => {
-    expectTypeOf(createInView).parameter(0).toEqualTypeOf<
-      Accessor<Element | null | undefined> | Element | null | undefined
-    >()
+    expectTypeOf(createInView)
+      .parameter(0)
+      .toEqualTypeOf<Accessor<Element | null | undefined> | Element | null | undefined>()
   })
 
   it("createInView accepts options as static OR accessor form", () => {
@@ -493,9 +493,9 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
   })
 
   it("createPan accepts ref as Accessor OR static HTMLElement", () => {
-    expectTypeOf(createPan).parameter(0).toEqualTypeOf<
-      Accessor<HTMLElement | null | undefined> | HTMLElement | null | undefined
-    >()
+    expectTypeOf(createPan)
+      .parameter(0)
+      .toEqualTypeOf<Accessor<HTMLElement | null | undefined> | HTMLElement | null | undefined>()
   })
 
   it("createPan accepts options as static OR accessor form", () => {
@@ -523,8 +523,7 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
     // The () => HTMLElement | null arm was dropped in 0.2.0. Reactivity
     // comes from wrapping MotionOptions in an accessor.
     expectTypeOf<DragConstraints>().toEqualTypeOf<
-      | { top?: number; left?: number; right?: number; bottom?: number }
-      | HTMLElement
+      { top?: number; left?: number; right?: number; bottom?: number } | HTMLElement
     >()
   })
 

@@ -258,12 +258,8 @@ describe("layout: drag-suppression gate (Reorder)", () => {
       )
     }
     const { container } = render(() => <App />)
-    const dragged = container.querySelector<HTMLElement>(
-      "[data-testid='dragged']",
-    ) as HTMLElement
-    const sibling = container.querySelector<HTMLElement>(
-      "[data-testid='sibling']",
-    ) as HTMLElement
+    const dragged = container.querySelector<HTMLElement>("[data-testid='dragged']") as HTMLElement
+    const sibling = container.querySelector<HTMLElement>("[data-testid='sibling']") as HTMLElement
 
     stubRect(dragged, { x: 0, y: 0, width: 100, height: 100 })
     stubRect(sibling, { x: 0, y: 110, width: 100, height: 100 })

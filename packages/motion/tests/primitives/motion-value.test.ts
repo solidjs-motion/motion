@@ -12,7 +12,6 @@ import {
   toSignal,
 } from "../../src/primitives/motion-value"
 
-
 // Run `fn` inside a tracked reactive root; return the root's dispose so tests
 // can verify onCleanup behavior. Mirrors Solid's recommended test pattern.
 function inRoot<T>(fn: (dispose: () => void) => T): { value: T; dispose: () => void } {

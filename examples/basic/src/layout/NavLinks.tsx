@@ -121,7 +121,7 @@ function NavGroup(props: NavGroupProps) {
                   {/* Hover background — shared layoutId animates between
                       links as the cursor moves. Suppressed on the active
                       link so it doesn't double up with the solid fill. */}
-                  <Show when={isHovered() && !isActive()}>
+                  <Show when={isHovered()}>
                     <motion.div
                       layoutId="nav-hover"
                       class="pointer-events-none absolute inset-0 rounded-md bg-primary/15"

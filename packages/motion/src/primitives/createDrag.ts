@@ -154,7 +154,9 @@ function readVisibleTranslate(el: HTMLElement): { x: number; y: number } {
     return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 }
   }
 
-  return fromString(getComputedStyle(el).transform) ?? fromString(el.style.transform) ?? { x: 0, y: 0 }
+  return (
+    fromString(getComputedStyle(el).transform) ?? fromString(el.style.transform) ?? { x: 0, y: 0 }
+  )
 }
 
 /**
@@ -210,8 +212,7 @@ function resolveConstraints(
   // Discriminate variants: HTMLElement → container form; everything else is
   // the numeric rect. The function-arm (per-field accessor) was dropped in
   // 0.2.0; reactivity now lives at the MotionOptions accessor level.
-  const container: HTMLElement | null =
-    constraints instanceof HTMLElement ? constraints : null
+  const container: HTMLElement | null = constraints instanceof HTMLElement ? constraints : null
 
   if (container) {
     // Element-form: compute offset bounds from rects, then add dragStart

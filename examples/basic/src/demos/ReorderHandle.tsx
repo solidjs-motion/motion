@@ -1,6 +1,6 @@
-import { For, createEffect, createSignal } from "solid-js"
-import { createStore } from "solid-js/store";
-import { Reorder, createDragControls, motion } from "solidjs-motion"
+import { createEffect, createSignal, For } from "solid-js"
+import { createStore } from "solid-js/store"
+import { createDragControls, motion, Reorder } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
 // ReorderHandle — drag-handle pattern.
@@ -34,8 +34,8 @@ export default function ReorderHandle() {
   const [tasks, setTasks] = createStore<Task[]>(INITIAL)
 
   const toggleDone = (id: string): void => {
-    const index = tasks.findIndex(t => t.id === id);
-    if (index < 0) return;
+    const index = tasks.findIndex((t) => t.id === id)
+    if (index < 0) return
     setTasks(index, "done", (done) => !done)
   }
   const remove = (id: string): void => {
@@ -67,18 +67,6 @@ export default function ReorderHandle() {
         <For each={tasks}>
           {(task) => {
             const controls = createDragControls()
-            const [isDraggingThisRow, setIsDraggingThisRow] = createSignal(false)
-            // Sync grip's cursor with the row's drag state. Solid's
-            // inline-style object evaluates conditionals once at render
-            // setup, so a `cursor: isDraggingThisRow() ? ...` literal
-            // wouldn't update reactively. A createEffect on the ref is
-            // the clean Solid-idiomatic way.
-            let gripRef: HTMLButtonElement | undefined
-            createEffect(() => {
-              if (gripRef !== undefined) {
-                gripRef.style.cursor = isDraggingThisRow() ? "grabbing" : "grab"
-              }
-            })
             return (
               <Reorder.Item
                 value={task}
@@ -114,14 +102,14 @@ export default function ReorderHandle() {
                 animate="animate"
                 whileDrag="dragging"
                 variants={{
-                  "animate": {
-                    "box-shadow": "0px 0px 0px rgba(0,0,0,0)"
+                  animate: {
+                    "box-shadow": "0px 0px 0px rgba(0,0,0,0)",
                   },
-                  "dragging": {
+                  dragging: {
                     cursor: "grabbing",
-                  "box-shadow": "0px 6px 18px rgba(0,0,0,0.25)",
-                  scale: 1.02,
-                  }
+                    "box-shadow": "0px 6px 18px rgba(0,0,0,0.25)",
+                    scale: 1.02,
+                  },
                 }}
                 transition={{ duration: 0.3 }}
                 // Force a `grabbing` cursor on the whole page during the
@@ -129,28 +117,21 @@ export default function ReorderHandle() {
                 // to the dragged item but doesn't touch document.body's
                 // cursor — without this, the cursor reverts to default
                 // whenever the pointer moves off the dragged row.
-                onDragStart={() => {
-                  setIsDraggingThisRow(true)
-                  document.body.style.cursor = "grabbing"
-                }}
-                onDragEnd={() => {
-                  setIsDraggingThisRow(false)
-                  document.body.style.cursor = ""
-                }}
               >
                 <motion.button
-                  ref={gripRef}
                   type="button"
                   onPointerDown={(e) => controls.start(e)}
                   aria-label={`Drag ${task.label}`}
                   data-testid={`reorder-handle/grip/${task.id}`}
                   variants={{
-                    "animate": {
-                      color: "var(--color-muted)"
+                    animate: {
+                      color: "var(--color-muted)",
+                      cursor: "grab",
                     },
-                    "dragging": {
-                      color: "var(--color-motion)"
-                    }
+                    dragging: {
+                      color: "var(--color-motion)",
+                      cursor: "grabbing",
+                    },
                   }}
                   style={{
                     // `cursor` is set imperatively by the createEffect
@@ -159,6 +140,7 @@ export default function ReorderHandle() {
                     "touch-action": "none",
                     background: "transparent",
                     border: "none",
+                    cursor: "grab",
                     // color: "var(--color-muted)",
                     "font-size": "1rem",
                     padding: "0.25rem",

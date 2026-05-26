@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@solidjs/testing-library"
-import { For, createSignal } from "solid-js"
+import { createSignal, For } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 // ---------------------------------------------------------------------------
@@ -142,11 +142,7 @@ afterEach(() => {
   delete (window as Partial<Window>).matchMedia
 })
 
-function drag(
-  el: HTMLElement,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-): void {
+function drag(el: HTMLElement, from: { x: number; y: number }, to: { x: number; y: number }): void {
   fireEvent.pointerDown(el, {
     pointerId: 1,
     clientX: from.x,
@@ -243,12 +239,7 @@ describe("<Reorder.Group> / <Reorder.Item> — shape", () => {
       <Reorder.Group values={items} onReorder={setItems}>
         <For each={items()}>
           {(v) => (
-            <Reorder.Item
-              value={v}
-              class="row"
-              id={`row-${v}`}
-              data-testid={`row-${v}`}
-            >
+            <Reorder.Item value={v} class="row" id={`row-${v}`} data-testid={`row-${v}`}>
               {v}
             </Reorder.Item>
           )}
@@ -460,11 +451,7 @@ describe("<Reorder.*> — integration with createReorder", () => {
       const [items, setItems] = createSignal(["a", "b", "c"])
       externalSet = (next) => setItems(next)
       return (
-        <Reorder.Group
-          values={items}
-          onReorder={setItems}
-          cancelOnExternalReorder={true}
-        >
+        <Reorder.Group values={items} onReorder={setItems} cancelOnExternalReorder={true}>
           <For each={items()}>
             {(v) => (
               <Reorder.Item value={v} data-testid={`it-${v}`}>

@@ -33,10 +33,10 @@ export default function PresenceOrchestratedList() {
   return (
     <div>
       <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
-        Toggle to mount and unmount the list. The parent shell dictates the active label
-        (<code>"open"</code> on enter, <code>"closed"</code> on exit) via{" "}
-        <code>m.Provider</code>; passive children inherit that label and resolve their own
-        variant map for it. Per-index staggers come from <code>custom</code>.
+        Toggle to mount and unmount the list. The parent shell dictates the active label (
+        <code>"open"</code> on enter, <code>"closed"</code> on exit) via <code>m.Provider</code>;
+        passive children inherit that label and resolve their own variant map for it. Per-index
+        staggers come from <code>custom</code>.
       </p>
       <div style={{ display: "flex", gap: "0.5rem", "margin-bottom": "1.5rem" }}>
         <button type="button" class="demo-button" onClick={() => setMounted((m) => !m)}>

@@ -114,10 +114,7 @@ function subscribeParentMo(parent: Element, onChange: () => void): () => void {
 //
 // Pure-translate only. Scale/rotate on ancestors is a known limitation.
 // ---------------------------------------------------------------------------
-function getAncestorTranslate(
-  el: Element,
-  stopAt: Element | null,
-): { tx: number; ty: number } {
+function getAncestorTranslate(el: Element, stopAt: Element | null): { tx: number; ty: number } {
   let tx = 0
   let ty = 0
   let cur: Element | null = el.parentElement

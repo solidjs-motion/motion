@@ -817,9 +817,7 @@ describe("drag — whileDrag state composition", () => {
     const el = container.firstChild as HTMLElement
 
     // animate's x=100 must appear in the spy's calls.
-    const xCall = animateSpy.mock.calls.find(
-      (c) => (c[1] as Record<string, unknown>)?.x === 100,
-    )
+    const xCall = animateSpy.mock.calls.find((c) => (c[1] as Record<string, unknown>)?.x === 100)
     expect(xCall).toBeDefined()
     // opacity still flows.
     const opacityCall = animateSpy.mock.calls.find(

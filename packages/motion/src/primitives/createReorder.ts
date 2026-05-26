@@ -97,10 +97,7 @@ export type ReorderResult<T> = {
    * uses `m.Provider` to propagate variants to nested motion children;
    * primitive consumers can do the same if they need it.
    */
-  item: (
-    value: T,
-    motionOptions?: MotionOptions | Accessor<MotionOptions>,
-  ) => UseMotionResult
+  item: (value: T, motionOptions?: MotionOptions | Accessor<MotionOptions>) => UseMotionResult
   /**
    * The value of the item currently being dragged, or `null` when no
    * drag is active. Tracks the `onDragStart` → `onDragEnd` lifecycle
@@ -437,9 +434,7 @@ export function createReorder<T>(
       if (neighborCenter === undefined) break
 
       const crossed =
-        direction > 0
-          ? draggedCenter > neighborCenter
-          : draggedCenter < neighborCenter
+        direction > 0 ? draggedCenter > neighborCenter : draggedCenter < neighborCenter
 
       if (crossed) {
         // Layout delta = how far the dragged item's slot center moves.
@@ -537,9 +532,7 @@ export function createReorder<T>(
       config?: ReorderItemInternalConfig,
     ): UseMotionResult => {
       const getUserOpts: () => MotionOptions =
-        typeof motionOptions === "function"
-          ? motionOptions
-          : () => motionOptions ?? {}
+        typeof motionOptions === "function" ? motionOptions : () => motionOptions ?? {}
 
       const mergedOpts: () => MotionOptions = () => {
         const u = getUserOpts()
@@ -551,12 +544,8 @@ export function createReorder<T>(
           dragSnapToOrigin: true,
           dragMomentum: false,
           // Composed callbacks — caller's runs first.
-          onDragStart: compose(u.onDragStart, (e: PointerEvent) =>
-            handleDragStart(value, e),
-          ),
-          onDrag: compose(u.onDrag, (_e: PointerEvent, info: PanInfo) =>
-            handleDrag(value, info),
-          ),
+          onDragStart: compose(u.onDragStart, (e: PointerEvent) => handleDragStart(value, e)),
+          onDrag: compose(u.onDrag, (_e: PointerEvent, info: PanInfo) => handleDrag(value, info)),
           onDragEnd: compose(u.onDragEnd, () => handleDragEnd(value)),
         }
       }
@@ -574,9 +563,7 @@ export function createReorder<T>(
       // Wrap m's callable to compose refs: motion's ref runs first (so the
       // visual element registers in visualElementStore), then ours records
       // the HTML element for our per-value registry.
-      const wrappedFn = <P extends ElementProps>(
-        userProps?: P,
-      ): MotionMergedProps<P> => {
+      const wrappedFn = <P extends ElementProps>(userProps?: P): MotionMergedProps<P> => {
         const motionProps = m(userProps)
         const motionRef = motionProps.ref
         return {

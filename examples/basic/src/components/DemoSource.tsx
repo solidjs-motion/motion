@@ -56,21 +56,14 @@ export function DemoSource(props: DemoSourceProps) {
         // theme (and WASM oniguruma), ballooning the lazy chunk to ~600KB+.
         // The JS regex engine avoids the WASM blob entirely.
         const [source, { createHighlighterCore }, { createJavaScriptRegexEngine }] =
-          await Promise.all([
-            loader(),
-            import("shiki/core"),
-            import("shiki/engine/javascript"),
-          ])
+          await Promise.all([loader(), import("shiki/core"), import("shiki/engine/javascript")])
         if (cancelled) return
         const highlighter = await createHighlighterCore({
           // Dual-theme load: Shiki emits inline-style CSS variables for
           // BOTH light + dark variants in the same output. The active
           // theme is selected by the `@media (prefers-color-scheme:
           // dark)` rule in app.css — no JS toggle needed.
-          themes: [
-            import("shiki/themes/github-light.mjs"),
-            import("shiki/themes/github-dark.mjs"),
-          ],
+          themes: [import("shiki/themes/github-light.mjs"), import("shiki/themes/github-dark.mjs")],
           langs: [import("shiki/langs/tsx.mjs")],
           engine: createJavaScriptRegexEngine(),
         })
@@ -94,11 +87,7 @@ export function DemoSource(props: DemoSourceProps) {
   })
 
   return (
-    <Collapsible
-      open={open()}
-      onOpenChange={setOpen}
-      class="mt-10 border-t border-border pt-5"
-    >
+    <Collapsible open={open()} onOpenChange={setOpen} class="mt-10 border-t border-border pt-5">
       <Collapsible.Trigger class="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-sm font-semibold tracking-wide text-fg/85 hover:text-fg focus-visible:outline-2 focus-visible:outline-primary">
         {/*
           The label tucks down ~3px and back to 0 on open — a small

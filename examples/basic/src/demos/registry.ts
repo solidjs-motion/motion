@@ -408,7 +408,7 @@ export const demos: DemoEntry[] = [
     path: "/reorder-with-exit",
     title: "Reorder (with exit)",
     blurb:
-      "Reorder + <Presence exitMethod=\"keep-index\">. Add / remove items at will — removed items fade in place via `exit`; survivors FLIP into new slots after the slot is released. `keep-index` is REQUIRED for layout-animated lists: the default (`\"move-to-end\"`) shuffles the exiting node to the end of the list during its fade, hiding the exit visually.",
+      'Reorder + <Presence exitMethod="keep-index">. Add / remove items at will — removed items fade in place via `exit`; survivors FLIP into new slots after the slot is released. `keep-index` is REQUIRED for layout-animated lists: the default (`"move-to-end"`) shuffles the exiting node to the end of the list during its fade, hiding the exit visually.',
     phase: 4,
     component: lazy(() => import("./ReorderWithExit")),
     source: rawSource(() => import("./ReorderWithExit.tsx?raw")),
