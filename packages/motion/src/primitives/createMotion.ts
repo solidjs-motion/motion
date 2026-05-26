@@ -797,31 +797,48 @@ export function createMotion(
     const layoutIdAtMount = initialOpts.layoutId
     let initialFirst: { x: number; y: number; width: number; height: number } | undefined
     if (layoutIdAtMount !== undefined) {
-      // Track A path: look for a still-mounted sibling under this id.
-      const liveDonor = layoutGroupContext.coordinator.findLive(layoutIdAtMount, el)
-      if (liveDonor !== null) {
-        const donorRect = liveDonor.getBoundingClientRect()
+      // Donor → consumer-local rect conversion. The donor's bcr is in
+      // VIEWPORT coords; the consumer's runtime measurements (see
+      // `measureLocal` in createLayoutController) live in projection-
+      // parent-local coords with `layoutScroll` ancestor scroll offsets
+      // added back. `initialFirst` and `last` must share that frame, or
+      // the very first FLIP delta is offset by every intermediate
+      // scroller's scrollTop / scrollLeft and the consumer jumps from a
+      // pre-scroll phantom position before catching up to its natural
+      // slot. Computed lazily (only when a donor is found) so the
+      // non-handoff path stays free of the bcr + scroll reads.
+      const donorRectToInitialFirst = (donorRect: {
+        left: number
+        top: number
+        width: number
+        height: number
+      }) => {
         const consumerProjParent = projectionContext.parentEl()
         const P = consumerProjParent.getBoundingClientRect()
-        initialFirst = {
-          x: donorRect.left - P.left,
-          y: donorRect.top - P.top,
+        let scrollX = 0
+        let scrollY = 0
+        for (const scroller of projectionContext.scrollAncestors()) {
+          scrollX += scroller.scrollLeft
+          scrollY += scroller.scrollTop
+        }
+        return {
+          x: donorRect.left - P.left + scrollX,
+          y: donorRect.top - P.top + scrollY,
           width: donorRect.width,
           height: donorRect.height,
         }
+      }
+
+      // Track A path: look for a still-mounted sibling under this id.
+      const liveDonor = layoutGroupContext.coordinator.findLive(layoutIdAtMount, el)
+      if (liveDonor !== null) {
+        initialFirst = donorRectToInitialFirst(liveDonor.getBoundingClientRect())
       } else {
         // Fall back to the donate queue (cross-tick handoff path).
         const entry = layoutGroupContext.coordinator.consume(layoutIdAtMount)
         if (entry !== null) {
           const donorRect = entry.el.isConnected ? entry.el.getBoundingClientRect() : entry.rect
-          const consumerProjParent = projectionContext.parentEl()
-          const P = consumerProjParent.getBoundingClientRect()
-          initialFirst = {
-            x: donorRect.left - P.left,
-            y: donorRect.top - P.top,
-            width: donorRect.width,
-            height: donorRect.height,
-          }
+          initialFirst = donorRectToInitialFirst(donorRect)
         }
       }
 

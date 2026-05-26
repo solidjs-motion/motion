@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-25
+
+### Fixed
+
+- **`layoutId` handoff respects `layoutScroll` ancestors.** The donor
+  rect captured for a consumer's `initialFirst` is in viewport
+  coordinates, but `measureLocal` produces consumer measurements in
+  projection-parent-local coords with each `layoutScroll` ancestor's
+  scroll offset added back. The two frames previously diverged by every
+  intermediate scroller's `scrollTop` / `scrollLeft`, so a layoutId
+  consumer mounting inside a scrolled `layoutScroll` container started
+  its FLIP from the donor's pre-scroll position before catching up to
+  its natural slot — visible as the marker leaping upward (or sideways)
+  whenever the user had scrolled the container. `initialFirst` now adds
+  the same scroll-ancestor offsets, putting both ends of the handoff in
+  the same coord frame.
+
 ## [0.2.0] — 2026-05-25
 
 ### Breaking

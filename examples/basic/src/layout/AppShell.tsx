@@ -53,12 +53,15 @@ export function AppShell(props: ParentProps) {
 
       <div class="flex">
         {/* Desktop sidebar — hidden on mobile */}
-        <aside class="sticky top-0 hidden h-screen w-60 shrink-0 overflow-y-auto border-r border-border bg-surface px-4 py-6 md:block">
+        <motion.aside
+          class="sticky top-0 hidden h-screen w-60 shrink-0 overflow-y-auto border-r border-border bg-surface px-4 py-6 md:block"
+          layoutScroll
+        >
           <A href="/" class="mb-6 block text-base font-bold no-underline">
             <Wordmark />
           </A>
           <NavLinks />
-        </aside>
+        </motion.aside>
 
         <main class="flex-1 px-4 py-6 md:px-12 md:py-10">
           <div class="mx-auto max-w-3xl">
