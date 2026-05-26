@@ -484,3 +484,143 @@ describe("drag-scroll — pointer tracking", () => {
     unmount()
   })
 })
+
+// ---------------------------------------------------------------------------
+// X axis — the same machinery on `drag: "x"` (scrollLeft / scrollWidth /
+// horizontal edges). Every axis-dependent helper in createDrag branches on
+// scrollAxis; these confirm the "x" arm exercises that branch end-to-end.
+// ---------------------------------------------------------------------------
+
+/** Horizontal mirror of stubScrollableY — scrollLeft range + left/right
+ * bounding edges. Clamps against the current scrollWidth so the boundary
+ * (and its inflation) is observable. */
+function stubScrollableX(
+  el: HTMLElement,
+  opts: { clientWidth: number; scrollWidth: number; left?: number; initialScroll?: number },
+): { setScrollWidth: (w: number) => void } {
+  const { clientWidth, left = 0 } = opts
+  let scrollLeft = opts.initialScroll ?? 0
+  let scrollWidth = opts.scrollWidth
+  Object.defineProperty(el, "scrollLeft", {
+    configurable: true,
+    get: () => scrollLeft,
+    set: (v: number) => {
+      scrollLeft = Math.max(0, Math.min(v, scrollWidth - clientWidth))
+    },
+  })
+  Object.defineProperty(el, "scrollWidth", { configurable: true, get: () => scrollWidth })
+  Object.defineProperty(el, "clientWidth", { configurable: true, value: clientWidth })
+  el.getBoundingClientRect = () => new DOMRect(left, 0, clientWidth, 100)
+  return {
+    setScrollWidth: (w: number) => {
+      scrollWidth = w
+    },
+  }
+}
+
+type DraggableXAPI = {
+  el: HTMLElement
+  container: HTMLElement
+  unmount: () => void
+  setScrollWidth: (w: number) => void
+}
+
+function renderDraggableX(
+  extraOpts: Record<string, unknown> = {},
+  scroll: { clientWidth: number; scrollWidth: number; left?: number; initialScroll?: number } = {
+    clientWidth: 200,
+    scrollWidth: 1000,
+  },
+): DraggableXAPI {
+  let containerEl!: HTMLElement
+  const { container, unmount } = render(() => {
+    const m = useMotion(() => ({
+      drag: "x",
+      dragScrollContainer: () => containerEl,
+      ...extraOpts,
+    }))
+    return (
+      <div
+        ref={(el: HTMLElement) => {
+          containerEl = el
+        }}
+        data-testid="container"
+      >
+        <div {...m()} data-testid="el" />
+      </div>
+    )
+  })
+  const el = container.querySelector<HTMLElement>("[data-testid='el']") as HTMLElement
+  const { setScrollWidth } = stubScrollableX(containerEl, scroll)
+  return { el, container: containerEl, unmount, setScrollWidth }
+}
+
+/** Begin an x-drag and move the pointer to `clientX`; y stays constant. */
+function dragToX(el: HTMLElement, startX: number, clientX: number): void {
+  fireEvent.pointerDown(el, { pointerId: 1, clientX: startX, clientY: 50, isPrimary: true })
+  fireEvent.pointerMove(window, { pointerId: 1, clientX: startX + 5, clientY: 50, isPrimary: true })
+  fireEvent.pointerMove(window, { pointerId: 1, clientX, clientY: 50, isPrimary: true })
+}
+
+describe("drag-scroll — x axis", () => {
+  it("scrolls right when the pointer enters the trailing (right) edge zone", () => {
+    // container [0,200], threshold min(80, 40) = 40 → right zone [160,200].
+    const { el, container, unmount } = renderDraggableX()
+    dragToX(el, 100, 200) // at the right edge → full-speed ramp
+    expect(container.scrollLeft).toBe(0)
+    frameLoop.tick(1000) // 720px/s × 1s = 720, clamped to max 800
+    expect(container.scrollLeft).toBeCloseTo(720, 0)
+    unmount()
+  })
+
+  it("scrolls left when the pointer nears the leading edge", () => {
+    const { el, container, unmount } = renderDraggableX(undefined, {
+      clientWidth: 200,
+      scrollWidth: 1000,
+      initialScroll: 500,
+    })
+    dragToX(el, 100, 0) // left edge → scroll left
+    frameLoop.tick(1000)
+    expect(container.scrollLeft).toBeLessThan(500)
+    unmount()
+  })
+
+  it("does not arm in the middle (outside the edge zone)", () => {
+    const { el, unmount } = renderDraggableX()
+    dragToX(el, 100, 100)
+    expect(frameLoop.callbacks.size).toBe(0)
+    unmount()
+  })
+
+  it("folds the scroll delta into the dragged element's x MV", () => {
+    const { el, container, unmount } = renderDraggableX()
+    dragToX(el, 100, 200) // offset.x = 100 → xMV 100
+    expect(lastWrite("x")).toBeCloseTo(100, 0)
+    frameLoop.tick(100) // +72 scroll
+    const scrolled = container.scrollLeft
+    expect(scrolled).toBeCloseTo(72, 0)
+    expect(lastWrite("x")).toBeCloseTo(100 + scrolled, 0)
+    unmount()
+  })
+
+  it("clamps to the drag-start bound when the dragged element inflates scrollWidth", () => {
+    const { el, container, setScrollWidth, unmount } = renderDraggableX() // bound 800
+    dragToX(el, 100, 200)
+    frameLoop.tick(1000)
+    setScrollWidth(3000) // transform inflates the horizontal scroll area
+    frameLoop.tick(1000)
+    frameLoop.tick(1000)
+    expect(container.scrollLeft).toBe(800)
+    expect(frameLoop.callbacks.size).toBe(0)
+    unmount()
+  })
+
+  it("dragScroll: false disables horizontal auto-scroll", () => {
+    const { el, container, unmount } = renderDraggableX({ dragScroll: false })
+    dragToX(el, 100, 200)
+    expect(frameLoop.callbacks.size).toBe(0)
+    frameLoop.tick(1000)
+    expect(container.scrollLeft).toBe(0)
+    unmount()
+  })
+})

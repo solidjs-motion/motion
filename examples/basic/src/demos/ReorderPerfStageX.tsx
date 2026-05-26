@@ -2,23 +2,15 @@ import { createMemo, createSignal, For } from "solid-js"
 import { Reorder } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
-// ReorderPerfStage — a profiling stage for Reorder + layout animations at
-// realistic list sizes. NOT instrumented: the demo deliberately does not
-// run its own timing. Open Chrome DevTools → Performance, hit record, drag a
-// row around (drag toward an edge to exercise drag-scroll), stop. The frame
-// timeline is the authoritative read of what the architecture costs in the
-// real browser.
+// ReorderPerfStageX — the horizontal twin of ReorderPerfStage. Same profiling
+// intent (drag a cell, watch the DevTools frame timeline), but the group is an
+// `axis="x"` horizontal scroller, so it exercises the x-axis paths of layout
+// FLIP and drag-scroll (scrollLeft / horizontal edges) rather than the y ones.
 //
-// Companion to the in-jsdom bench (bench/09-reorder-crossing.bench.tsx).
-// The bench measures JS coordination cost with motion.animate mocked out;
-// this demo measures everything the bench can't — WAA setup, GPU layer
-// promotion, paint, compositor work, GC.
-//
-// The toggle between "minimal" and "card" row variants separates the
-// library's overhead (minimal) from a realistic feature's total cost (card).
-// CSS for the card variant is intentionally boring — border + padding +
-// background, no filters, no backdrop-blur, no animated gradients — so the
-// number reflects the cost of a plausible row, not a CSS edge case.
+// Drag a cell toward the LEFT or RIGHT edge to trigger horizontal drag-scroll.
+// Everything else mirrors the y stage: minimal vs card variants separate
+// library overhead from realistic content cost; the demo runs no timing of its
+// own — the frame timeline is the source of truth.
 // ---------------------------------------------------------------------------
 
 const N_CHOICES = [50, 100, 300, 500, 1000] as const
@@ -42,28 +34,25 @@ function makeItems(n: number): Item[] {
     items.push({
       id: i,
       label: `Item ${i.toString().padStart(4, "0")}`,
-      subtitle: `entry #${i} · row ${i + 1} of ${n}`,
+      subtitle: `entry #${i} · col ${i + 1} of ${n}`,
       tone: TONES[i % TONES.length] as string,
     })
   }
   return items
 }
 
-export default function ReorderPerfStage() {
+export default function ReorderPerfStageX() {
   const [n, setN] = createSignal<number>(100)
   const [variant, setVariant] = createSignal<"minimal" | "card">("minimal")
-  // drag-scroll knobs — the group is scrollable (max-height + overflow), so
-  // dragging an item toward the top/bottom edge auto-scrolls. Toggle off to
-  // feel the difference; tune speed/threshold to sanity-check the options.
+  // drag-scroll knobs — the group is a horizontal scroller (overflow-x: auto),
+  // so dragging a cell toward the left/right edge auto-scrolls along x. Toggle
+  // off to feel the difference; tune speed/threshold to sanity-check.
   const [dragScroll, setDragScroll] = createSignal(true)
   const [dragScrollSpeed, setDragScrollSpeed] = createSignal(720)
   const [dragScrollThreshold, setDragScrollThreshold] = createSignal(80)
 
-  // Regenerate items whenever N changes; createMemo dedupes when the same N
-  // is selected. The fresh array reference is what onReorder mutates.
   const initial = createMemo<Item[]>(() => makeItems(n()))
   const [items, setItems] = createSignal<Item[]>(initial())
-  // Reset items whenever N changes (initial() ref changes too).
   let lastN = n()
   const itemsForN = (): Item[] => {
     if (n() !== lastN) {
@@ -76,12 +65,10 @@ export default function ReorderPerfStage() {
   return (
     <div>
       <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
-        Profiling stage for Reorder + layout at realistic list sizes. Open Chrome DevTools →
-        Performance, hit record, <strong>drag a row</strong> (drag toward an edge to exercise
-        drag-scroll), stop. The frame timeline is the authoritative measurement — this demo
-        deliberately does not run its own timing. Pair with the JS-coordination numbers in{" "}
-        <code>bench/BASELINES.md</code> §09 to separate library overhead from real-browser
-        paint/composite/GC.
+        Horizontal profiling stage — an <code>axis="x"</code> Reorder list in a horizontal scroller.
+        Open Chrome DevTools → Performance, hit record, <strong>drag a cell</strong> (drag toward
+        the left/right edge to exercise horizontal drag-scroll), stop. Mirror of the vertical{" "}
+        <code>/reorder-perf</code> stage; pair with <code>bench/BASELINES.md</code> §09.
       </p>
 
       <div
@@ -101,17 +88,17 @@ export default function ReorderPerfStage() {
           <select
             value={n()}
             onChange={(e) => setN(Number(e.currentTarget.value))}
-            data-testid="reorder-perf/n-selector"
+            data-testid="reorder-perf-x/n-selector"
           >
             <For each={N_CHOICES}>{(choice) => <option value={choice}>{choice}</option>}</For>
           </select>
         </label>
         <label style={{ color: "var(--color-fg)", display: "flex", gap: "0.4rem" }}>
-          row:
+          cell:
           <select
             value={variant()}
             onChange={(e) => setVariant(e.currentTarget.value as "minimal" | "card")}
-            data-testid="reorder-perf/variant-selector"
+            data-testid="reorder-perf-x/variant-selector"
           >
             <option value="minimal">minimal</option>
             <option value="card">card</option>
@@ -122,7 +109,7 @@ export default function ReorderPerfStage() {
             type="checkbox"
             checked={dragScroll()}
             onChange={(e) => setDragScroll(e.currentTarget.checked)}
-            data-testid="reorder-perf/drag-scroll"
+            data-testid="reorder-perf-x/drag-scroll"
           />
           drag-scroll
         </label>
@@ -143,7 +130,7 @@ export default function ReorderPerfStage() {
             value={dragScrollSpeed()}
             onChange={(e) => setDragScrollSpeed(Number(e.currentTarget.value))}
             disabled={!dragScroll()}
-            data-testid="reorder-perf/drag-scroll-speed"
+            data-testid="reorder-perf-x/drag-scroll-speed"
             style={{ width: "5rem" }}
           />
         </label>
@@ -164,19 +151,20 @@ export default function ReorderPerfStage() {
             value={dragScrollThreshold()}
             onChange={(e) => setDragScrollThreshold(Number(e.currentTarget.value))}
             disabled={!dragScroll()}
-            data-testid="reorder-perf/drag-scroll-threshold"
+            data-testid="reorder-perf-x/drag-scroll-threshold"
             style={{ width: "5rem" }}
           />
         </label>
       </div>
 
       <Reorder.Group
+        axis="x"
         values={itemsForN}
         onReorder={setItems}
         dragScroll={dragScroll()}
         dragScrollSpeed={dragScrollSpeed()}
         dragScrollThreshold={dragScrollThreshold()}
-        data-testid="reorder-perf/group"
+        data-testid="reorder-perf-x/group"
         style={{
           "list-style": "none",
           padding: "0.5rem",
@@ -184,26 +172,28 @@ export default function ReorderPerfStage() {
           "border-radius": "10px",
           background: "var(--color-surface)",
           display: "flex",
-          "flex-direction": "column",
+          "flex-direction": "row",
           gap: "0.35rem",
-          "max-height": "70vh",
-          overflow: "auto",
+          "max-width": "100%",
+          "overflow-x": "auto",
         }}
       >
-        <For each={itemsForN()}>{(item) => <Row item={item} variant={variant()} />}</For>
+        <For each={itemsForN()}>{(item) => <Cell item={item} variant={variant()} />}</For>
       </Reorder.Group>
     </div>
   )
 }
 
-function Row(props: { item: Item; variant: "minimal" | "card" }): import("solid-js").JSX.Element {
+function Cell(props: { item: Item; variant: "minimal" | "card" }): import("solid-js").JSX.Element {
   return (
     <Reorder.Item
       value={props.item}
-      data-testid={`reorder-perf/item/${props.item.id}`}
+      data-testid={`reorder-perf-x/item/${props.item.id}`}
       style={
         props.variant === "minimal"
           ? {
+              "flex-shrink": "0",
+              width: "8rem",
               padding: "0.4rem 0.6rem",
               background: "var(--color-elevated)",
               "border-radius": "6px",
@@ -218,6 +208,8 @@ function Row(props: { item: Item; variant: "minimal" | "card" }): import("solid-
               "user-select": "none",
             }
           : {
+              "flex-shrink": "0",
+              width: "12rem",
               padding: "0.6rem 0.75rem",
               background: "var(--color-elevated)",
               "border-radius": "8px",
@@ -265,15 +257,6 @@ function Row(props: { item: Item; variant: "minimal" | "card" }): import("solid-
               }}
             />
             <strong style={{ "font-size": "0.9rem" }}>{props.item.label}</strong>
-            <span
-              style={{
-                "margin-left": "auto",
-                color: "var(--color-muted)",
-                "font-size": "0.7rem",
-              }}
-            >
-              #{props.item.id}
-            </span>
           </div>
           <div style={{ color: "var(--color-muted)", "font-size": "0.75rem" }}>
             {props.item.subtitle}
@@ -281,7 +264,6 @@ function Row(props: { item: Item; variant: "minimal" | "card" }): import("solid-
           <div style={{ display: "flex", gap: "0.35rem" }}>
             <Tag>todo</Tag>
             <Tag>perf</Tag>
-            <Tag>{props.item.tone.replace("#", "")}</Tag>
           </div>
         </>
       )}

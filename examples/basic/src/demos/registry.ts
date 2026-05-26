@@ -418,10 +418,20 @@ export const demos: DemoEntry[] = [
     path: "/reorder-perf",
     title: "Reorder (perf stage)",
     blurb:
-      "Profiling stage at realistic list sizes (N=50/100/300/500/1000). Toggle between minimal rows (library overhead) and card rows (realistic feature cost). Auto-drag button dispatches a programmatic sweep so DevTools captures are repeatable. Pair with bench/BASELINES.md §09 for the JS-coordination baseline.",
+      "Profiling stage at realistic list sizes (N=50/100/300/500/1000). Toggle between minimal rows (library overhead) and card rows (realistic feature cost). Drag a row in DevTools → Performance to record the frame timeline; drag toward an edge to exercise drag-scroll (speed/threshold knobs). Pair with bench/BASELINES.md §09 for the JS-coordination baseline.",
     phase: 4,
     component: lazy(() => import("./ReorderPerfStage")),
     source: rawSource(() => import("./ReorderPerfStage.tsx?raw")),
     filename: "ReorderPerfStage.tsx",
+  },
+  {
+    path: "/reorder-perf-x",
+    title: "Reorder (perf stage, x-axis)",
+    blurb:
+      'Horizontal twin of the perf stage — an axis="x" Reorder list in a horizontal scroller. Drag a cell toward the left/right edge to exercise horizontal drag-scroll (scrollLeft + horizontal edges). Same N / variant / drag-scroll knobs as the vertical stage.',
+    phase: 4,
+    component: lazy(() => import("./ReorderPerfStageX")),
+    source: rawSource(() => import("./ReorderPerfStageX.tsx?raw")),
+    filename: "ReorderPerfStageX.tsx",
   },
 ]
