@@ -154,7 +154,9 @@ function readVisibleTranslate(el: HTMLElement): { x: number; y: number } {
     return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 }
   }
 
-  return fromString(getComputedStyle(el).transform) ?? fromString(el.style.transform) ?? { x: 0, y: 0 }
+  return (
+    fromString(getComputedStyle(el).transform) ?? fromString(el.style.transform) ?? { x: 0, y: 0 }
+  )
 }
 
 /**
@@ -188,17 +190,16 @@ type ResolvedBounds = {
  *
  * - **Numeric** (`{ top, left, right, bottom }`): bounds are absolute MV
  *   values. `left: -100` means x cannot go below -100.
- * - **HTMLElement or `() => HTMLElement | null`**: container that the
- *   dragged element must stay inside. Bounds are computed from the
- *   container's bounding rect vs the dragged element's current rect, then
- *   re-centered around the current MV values.
+ * - **HTMLElement**: container that the dragged element must stay inside.
+ *   Bounds are computed from the container's bounding rect vs the dragged
+ *   element's current rect, then re-centered around the current MV values.
  *
  * The element form is resolved ONCE at drag-start (current viewport rects).
- * Reactive constraint changes mid-drag aren't honored in v0.1 — they'd
- * require re-measuring on each pointermove. Acceptable corner case.
+ * Reactive constraint changes mid-drag aren't honored — they'd require
+ * re-measuring on each pointermove. Acceptable corner case.
  *
- * Returns `null` when constraints are unset or the accessor returns null —
- * caller treats as "no clamping, no elastic resistance."
+ * Returns `null` when constraints are unset — caller treats as "no
+ * clamping, no elastic resistance."
  */
 function resolveConstraints(
   constraints: DragConstraints | undefined,
@@ -208,17 +209,10 @@ function resolveConstraints(
 ): ResolvedBounds | null {
   if (!constraints) return null
 
-  // Discriminate variants with `instanceof HTMLElement` first — this rules
-  // out HTMLElement so the `typeof === "function"` check below narrows
-  // cleanly to the accessor variant. (TS gets confused if we test the
-  // function form first; HTMLElement instances have many methods on their
-  // prototype, which can muddle TS's narrowing logic.)
-  let container: HTMLElement | null = null
-  if (constraints instanceof HTMLElement) {
-    container = constraints
-  } else if (typeof constraints === "function") {
-    container = constraints()
-  }
+  // Discriminate variants: HTMLElement → container form; everything else is
+  // the numeric rect. The function-arm (per-field accessor) was dropped in
+  // 0.2.0; reactivity now lives at the MotionOptions accessor level.
+  const container: HTMLElement | null = constraints instanceof HTMLElement ? constraints : null
 
   if (container) {
     // Element-form: compute offset bounds from rects, then add dragStart

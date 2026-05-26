@@ -1,5 +1,6 @@
 import { defineConfig } from "@solidjs/start/config"
 import tailwindcss from "@tailwindcss/vite"
+import devtools from "solid-devtools/vite"
 
 // ---------------------------------------------------------------------------
 // SolidStart configuration — replaces the previous Vite SPA setup. Build
@@ -44,7 +45,7 @@ export default defineConfig({
     // Tailwind v4 plugin — no PostCSS/autoprefixer config needed; the
     // plugin handles content scanning and JIT compilation through Vite.
     // `@theme` block (in `src/app.css`) provides design tokens.
-    plugins: [tailwindcss()],
+    plugins: [tailwindcss(), devtools({ autoname: true })],
     // Inject the app's deploy base as a string literal so the client
     // Router can use it. `import.meta.env.BASE_URL` is unreliable here:
     // Vinxi sets Vite's `base` to the asset-bundle path ("/motion/_build")

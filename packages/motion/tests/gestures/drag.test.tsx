@@ -633,11 +633,15 @@ describe("drag — constraints", () => {
     // jsdom returns 0-rects by default; stub getBoundingClientRect on both.
     let containerEl!: HTMLDivElement
     const { container, unmount } = render(() => {
-      const m = useMotion({
+      // useMotion options wrapped in a function — accessor-form lets
+      // dragConstraints read `containerEl` fresh at drag-start, after the
+      // ref callback has populated it. Per-field accessor on
+      // dragConstraints was dropped in 0.2.0.
+      const m = useMotion(() => ({
         drag: true,
-        dragConstraints: () => containerEl,
+        dragConstraints: containerEl,
         dragElastic: 0,
-      })
+      }))
       return (
         <div ref={(r) => (containerEl = r)} style={{ width: "200px", height: "100px" }}>
           <div {...m()} />
@@ -813,9 +817,7 @@ describe("drag — whileDrag state composition", () => {
     const el = container.firstChild as HTMLElement
 
     // animate's x=100 must appear in the spy's calls.
-    const xCall = animateSpy.mock.calls.find(
-      (c) => (c[1] as Record<string, unknown>)?.x === 100,
-    )
+    const xCall = animateSpy.mock.calls.find((c) => (c[1] as Record<string, unknown>)?.x === 100)
     expect(xCall).toBeDefined()
     // opacity still flows.
     const opacityCall = animateSpy.mock.calls.find(
@@ -825,6 +827,102 @@ describe("drag — whileDrag state composition", () => {
     unmount()
     // Suppress "el unused" lint — the test renders through it.
     void el
+  })
+})
+
+// ---------------------------------------------------------------------------
+// whileDrag label propagation to descendants (commit-6 follow-up)
+//
+// Mirrors hover/press/focus/inView propagation: when the parent's whileDrag
+// is a variant LABEL (string), descendants wrapped in `parent.Provider` that
+// have a matching label in their own `variants` map resolve to it while the
+// parent is being dragged. Closes the gap noted in gesture-state.ts —
+// `VariantContextValue.drag` is now wired through stateTargets, isStateActive,
+// and animateValueForState.
+// ---------------------------------------------------------------------------
+
+describe("drag — whileDrag label propagation to descendants", () => {
+  it("non-controlling child inherits parent's whileDrag label while parent drags", () => {
+    function Child() {
+      const m = useMotion({
+        variants: { rest: { opacity: 1 }, dragging: { opacity: 0.5 } },
+      })
+      return <div {...m()} data-testid="child" />
+    }
+    const { getByTestId, unmount } = render(() => {
+      const parent = useMotion({
+        drag: true,
+        animate: "rest",
+        whileDrag: "dragging",
+        variants: { rest: { scale: 1 }, dragging: { scale: 1.1 } },
+      })
+      return (
+        <div {...parent()} data-testid="parent">
+          <parent.Provider>
+            <Child />
+          </parent.Provider>
+        </div>
+      )
+    })
+    const parentEl = getByTestId("parent")
+    animateSpy.mockClear()
+
+    // Cross the drag threshold — parent's `whileDrag` activates and the
+    // Provider's `drag` slot starts returning "dragging". The child's
+    // state machine sees the inherited label and animates its own
+    // `variants.dragging` target.
+    fireEvent.pointerDown(parentEl, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+
+    const childCall = animateSpy.mock.calls.find(
+      (c) => (c[1] as Record<string, unknown>)?.opacity === 0.5,
+    )
+    expect(childCall).toBeDefined()
+
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    unmount()
+  })
+
+  it("controlling child does NOT inherit parent's whileDrag label", () => {
+    // A child with its own variant label (animate: "other") is "controlling"
+    // and opts OUT of the parent's variant cascade — including drag.
+    function Child() {
+      const m = useMotion({
+        animate: "other",
+        variants: { other: { opacity: 0.9 }, dragging: { opacity: 0.5 } },
+      })
+      return <div {...m()} data-testid="child" />
+    }
+    const { getByTestId, unmount } = render(() => {
+      const parent = useMotion({
+        drag: true,
+        animate: "rest",
+        whileDrag: "dragging",
+        variants: { rest: { scale: 1 }, dragging: { scale: 1.1 } },
+      })
+      return (
+        <div {...parent()} data-testid="parent">
+          <parent.Provider>
+            <Child />
+          </parent.Provider>
+        </div>
+      )
+    })
+    const parentEl = getByTestId("parent")
+    animateSpy.mockClear()
+
+    fireEvent.pointerDown(parentEl, { pointerId: 1, clientX: 0, clientY: 0, isPrimary: true })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+
+    // Child's "dragging" target (opacity: 0.5) must NOT have been animated;
+    // it stays on its own `animate: "other"` resolution.
+    const childDraggingCall = animateSpy.mock.calls.find(
+      (c) => (c[1] as Record<string, unknown>)?.opacity === 0.5,
+    )
+    expect(childDraggingCall).toBeUndefined()
+
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 5, clientY: 0, isPrimary: true })
+    unmount()
   })
 })
 

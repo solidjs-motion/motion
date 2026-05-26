@@ -1,4 +1,5 @@
 import { type MotionValue, motionValue } from "motion"
+import type { Target } from "../types"
 
 // ---------------------------------------------------------------------------
 // Per-element value registry.
@@ -39,6 +40,33 @@ import { type MotionValue, motionValue } from "motion"
 //   collect them once all subscribers have cleaned up.
 // ---------------------------------------------------------------------------
 
+/**
+ * Layout-layer axis identifiers. The string spelling exists ONLY here
+ * (as a discriminator for `setLayoutValue`) — it is NOT a runtime key
+ * in the registry's `values` Map. The names `_layoutX`, `_layoutY`,
+ * `_layoutScaleX`, `_layoutScaleY` referenced in ADR 0006 are
+ * documentary; at runtime the layer is a typed sub-record with `x` /
+ * `y` / `scaleX` / `scaleY` fields, accessed via dotted property
+ * lookup at fold time. See ADR 0006 for the design rationale.
+ */
+export type LayoutAxis = "x" | "y" | "scaleX" | "scaleY"
+
+/**
+ * Layout's second-layer contribution to the registry's transform writer.
+ * Up to four MVs (one per axis); when present, the writer FOLDS each
+ * axis into the corresponding user-facing key at compile time
+ * (`effectiveX = x + layer.x`, `effectiveScaleX = scaleX * layer.scaleX`).
+ *
+ * Owned by the layout controller (added in a later step); cleared on
+ * `layout` toggling off via `clearLayoutLayer()`. See ADR 0006.
+ */
+export type LayoutLayer = {
+  x?: MotionValue<number>
+  y?: MotionValue<number>
+  scaleX?: MotionValue<number>
+  scaleY?: MotionValue<number>
+}
+
 export type ValueRegistry = {
   /** Returns the MV registered for `key`, or `undefined` if none. */
   get(key: string): MotionValue<unknown> | undefined
@@ -48,6 +76,10 @@ export type ValueRegistry = {
    * Number of entries currently registered. Used by `createMotion` to decide
    * whether the per-element writer can take a specialized single-key path
    * (size === 1) or needs the general-purpose `applyStaticStyle` walk.
+   *
+   * Excludes the layout layer — that's tracked separately via
+   * {@link hasLayoutLayer} because it doesn't flow through the
+   * string-keyed `values` Map.
    */
   readonly size: number
   /**
@@ -70,11 +102,154 @@ export type ValueRegistry = {
    * don't unsubscribe imperatively here.
    */
   dispose(): void
+  /**
+   * Layout's second-layer contribution. Empty by default; populated via
+   * {@link setLayoutValue} from the layout controller and cleared via
+   * {@link clearLayoutLayer} on `layout` toggle-off. See ADR 0006.
+   */
+  readonly layoutLayer: LayoutLayer
+  /**
+   * Has the layout layer registered any axis? Drives the writer's
+   * fast-path selection: when true, the single-key writer is bypassed
+   * even if `size === 1`, because the fold needs the multi-key path.
+   */
+  readonly hasLayoutLayer: boolean
+  /**
+   * Install or replace an MV for a layout-layer axis. Layout-controller
+   * internal use only — there is no string-keyed public path that can
+   * reach this surface (per ADR 0006's "no public string-keyed write
+   * API for the layer at all" formulation).
+   */
+  setLayoutValue(axis: LayoutAxis, mv: MotionValue<number>): void
+  /**
+   * Drop all layout-layer MVs. Called by the layout controller when
+   * `layout` toggles off mid-life.
+   */
+  clearLayoutLayer(): void
 }
+
+/**
+ * Compose a translate-axis fold. Layer contribution is always a pixel
+ * delta (numeric, from `getBoundingClientRect`); the user-side value
+ * can be:
+ *
+ * - `number` → additive: `userPx + layerPx`.
+ * - `string` (e.g. `"50%"`, `"calc(var(--x) + 10px)"`, `"10vw"`) →
+ *   composed via CSS `calc()`: `calc(<user> + <layer>px)` or
+ *   `calc(<user> - <abs(layer)>px)` for negative deltas. Direct
+ *   interpolation of a negative number into `+ -30px` produces invalid
+ *   CSS — we split into `-` operator + absolute value.
+ * - `undefined` → layer value alone (numeric).
+ *
+ * Layer of exactly `0` is a no-op when the user is a string (no calc
+ * wrapper added; the original string passes through).
+ */
+function composeTranslateAxis(userValue: unknown, layerPx: number): unknown {
+  if (typeof userValue === "number") return userValue + layerPx
+  if (typeof userValue === "string") {
+    if (layerPx === 0) return userValue
+    const sign = layerPx < 0 ? "-" : "+"
+    return `calc(${userValue} ${sign} ${Math.abs(layerPx)}px)`
+  }
+  return layerPx
+}
+
+/**
+ * Compose a scale-axis fold. Layer contribution is a numeric factor;
+ * the effective user-side value is the per-axis value if defined, else
+ * the shortcut `scale`, else `1`. String user-side values (rare; e.g.,
+ * `scaleX: "var(--base-scale)"`) compose via CSS `calc()`:
+ * `calc((<user>) * <layer>)`.
+ *
+ * Layer of exactly `1` is a no-op (user value passes through).
+ */
+function composeScaleAxis(userValue: unknown, layerFactor: number): number | string {
+  if (layerFactor === 1) {
+    if (typeof userValue === "number" || typeof userValue === "string") return userValue
+    return 1
+  }
+  if (typeof userValue === "number") return userValue * layerFactor
+  if (typeof userValue === "string") return `calc((${userValue}) * ${layerFactor})`
+  return layerFactor
+}
+
+/**
+ * Pure helper — folds {@link LayoutLayer} contributions into a target
+ * Record IN PLACE before it reaches {@link targetToStyle}. Exported
+ * for unit testing; `createMotion`'s `multiKeyWriter` is the only
+ * production caller.
+ *
+ * Translate fold is additive; scale fold is multiplicative. Both
+ * support mixed-unit user values via CSS `calc()`:
+ *
+ * - Numeric user + numeric layer → numeric result.
+ * - String user + numeric layer → `calc(...)` string result.
+ * - Undefined user → layer alone.
+ *
+ * The scale fold expands the `scale` shortcut to `scaleX` / `scaleY`
+ * whenever EITHER axis has a layer contribution, so `TRANSFORM_ORDER`'s
+ * emission doesn't double-apply `scale(s)` AND `scaleX(s * layer)`.
+ * When only one axis has a layer, the other axis inherits the original
+ * `scale` value explicitly so its semantics survive the `scale` delete.
+ *
+ * @see [ADR 0006](../../../../docs/adr/0006-layout-transform-composition.md)
+ */
+export function foldLayoutLayerIntoTarget(
+  target: Record<string, unknown>,
+  layer: LayoutLayer,
+): void {
+  // --- Translates: additive (calc() for mixed units) ---
+  if (layer.x !== undefined) {
+    target.x = composeTranslateAxis(target.x, layer.x.get())
+  }
+  if (layer.y !== undefined) {
+    target.y = composeTranslateAxis(target.y, layer.y.get())
+  }
+
+  // --- Scales: multiplicative (calc() for mixed units) ---
+  const hasScaleX = layer.scaleX !== undefined
+  const hasScaleY = layer.scaleY !== undefined
+  if (hasScaleX || hasScaleY) {
+    const rawScale = target.scale
+    // Effective user values: per-axis overrides scale shortcut overrides 1.
+    const userScaleX = target.scaleX !== undefined ? target.scaleX : rawScale
+    const userScaleY = target.scaleY !== undefined ? target.scaleY : rawScale
+
+    if (hasScaleX) {
+      // biome-ignore lint/style/noNonNullAssertion: hasScaleX guards layer presence.
+      target.scaleX = composeScaleAxis(userScaleX, layer.scaleX!.get())
+    } else if (rawScale !== undefined && target.scaleX === undefined) {
+      // Layer doesn't fold scaleX but we're about to delete `scale` —
+      // propagate the original shortcut to scaleX so its semantics survive.
+      target.scaleX = rawScale
+    }
+
+    if (hasScaleY) {
+      // biome-ignore lint/style/noNonNullAssertion: hasScaleY guards layer presence.
+      target.scaleY = composeScaleAxis(userScaleY, layer.scaleY!.get())
+    } else if (rawScale !== undefined && target.scaleY === undefined) {
+      target.scaleY = rawScale
+    }
+
+    if (rawScale !== undefined) {
+      delete target.scale
+    }
+  }
+}
+
+// Re-export the public Target type so callers (and the JSDoc above)
+// can resolve it from this module's namespace without a separate
+// import in tests.
+export type { Target }
 
 export function createValueRegistry(): ValueRegistry {
   const values = new Map<string, MotionValue<unknown>>()
   const transient = new Set<MotionValue<unknown>>()
+  // Mutable storage for the layout layer. The `layoutLayer` getter
+  // returns this object (read-only via the public type) so consumers
+  // see the latest axis MVs without re-querying.
+  const layer: LayoutLayer = {}
+  let layerActiveCount = 0
 
   return {
     get(key) {
@@ -109,6 +284,29 @@ export function createValueRegistry(): ValueRegistry {
     dispose() {
       transient.clear()
       values.clear()
+      // Clear the layer too — controller ownership ends with the registry.
+      layer.x = undefined
+      layer.y = undefined
+      layer.scaleX = undefined
+      layer.scaleY = undefined
+      layerActiveCount = 0
+    },
+    get layoutLayer() {
+      return layer
+    },
+    get hasLayoutLayer() {
+      return layerActiveCount > 0
+    },
+    setLayoutValue(axis, mv) {
+      if (layer[axis] === undefined) layerActiveCount++
+      layer[axis] = mv
+    },
+    clearLayoutLayer() {
+      layer.x = undefined
+      layer.y = undefined
+      layer.scaleX = undefined
+      layer.scaleY = undefined
+      layerActiveCount = 0
     },
   }
 }

@@ -38,8 +38,8 @@ export default function PresenceInitialFalse() {
       <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Reload the page and watch the two columns. With{" "}
         <code>&lt;Presence initial={"{false}"}&gt;</code> the initial children appear instantly
-        (painted at the animate target); without it they cascade in. Adding items mid-life
-        animates the same in both.
+        (painted at the animate target); without it they cascade in. Adding items mid-life animates
+        the same in both.
       </p>
       <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "1.5rem" }}>
         <Column
@@ -76,7 +76,9 @@ function Column(props: {
       <div style={{ "font-family": "ui-monospace, monospace", "font-size": "0.85rem" }}>
         {props.title}
       </div>
-      <div style={{ color: "var(--color-muted)", "font-size": "0.75rem", "margin-bottom": "0.5rem" }}>
+      <div
+        style={{ color: "var(--color-muted)", "font-size": "0.75rem", "margin-bottom": "0.5rem" }}
+      >
         {props.subtitle}
       </div>
       <div style={{ display: "flex", gap: "0.35rem", "margin-bottom": "0.75rem" }}>

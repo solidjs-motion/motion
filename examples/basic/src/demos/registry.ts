@@ -342,4 +342,76 @@ export const demos: DemoEntry[] = [
     source: rawSource(() => import("./SierpinskiTriangle.tsx?raw")),
     filename: "SierpinskiTriangle.tsx",
   },
+  // ---- Layout animations (0.2.0) ----
+  {
+    path: "/layout-toggle",
+    title: "Layout (toggle)",
+    blurb:
+      "Single motion.div whose width/height swaps via signal — `layout` FLIPs from the old rect to the new one via ResizeObserver(self).",
+    phase: 4,
+    component: lazy(() => import("./LayoutToggle")),
+    source: rawSource(() => import("./LayoutToggle.tsx?raw")),
+    filename: "LayoutToggle.tsx",
+  },
+  {
+    path: "/layout-list",
+    title: "Layout (list)",
+    blurb:
+      "<For> list with add / remove / shuffle. Survivors animate to new slots via parent-MutationObserver triggers; inserted items baseline.",
+    phase: 4,
+    component: lazy(() => import("./LayoutList")),
+    source: rawSource(() => import("./LayoutList.tsx?raw")),
+    filename: "LayoutList.tsx",
+  },
+  {
+    path: "/layout-id-handoff",
+    title: "Shared element (layoutId)",
+    blurb:
+      "Thumbnail ↔ hero share `layoutId='card'`. Donor's onCleanup donates rect; consumer's createMotion FLIPs from there. Wrapped in Presence — exit + FLIP run in parallel.",
+    phase: 4,
+    component: lazy(() => import("./LayoutIdHandoff")),
+    source: rawSource(() => import("./LayoutIdHandoff.tsx?raw")),
+    filename: "LayoutIdHandoff.tsx",
+  },
+  {
+    path: "/layout-group-namespace",
+    title: "LayoutGroup scoping",
+    blurb:
+      "Two tab strips, each with its own <LayoutGroup>. Same layoutId in each doesn't cross-match — the indicator stays put when the other strip's tab changes.",
+    phase: 4,
+    component: lazy(() => import("./LayoutGroupNamespace")),
+    source: rawSource(() => import("./LayoutGroupNamespace.tsx?raw")),
+    filename: "LayoutGroupNamespace.tsx",
+  },
+  // ---- Reorder (0.2.0) ----
+  {
+    path: "/reorder-basic",
+    title: "Reorder (basic)",
+    blurb:
+      "<Reorder.Group> + <Reorder.Item> — drag any row to reorder a controlled list. Center-cross detection mutates values() live; siblings FLIP into new slots; dragged row snaps back via dragSnapToOrigin.",
+    phase: 4,
+    component: lazy(() => import("./ReorderBasic")),
+    source: rawSource(() => import("./ReorderBasic.tsx?raw")),
+    filename: "ReorderBasic.tsx",
+  },
+  {
+    path: "/reorder-handle",
+    title: "Reorder (handle)",
+    blurb:
+      "Drag-handle pattern. Each row has a `⋮⋮` grip; the rest of the row (checkbox, remove button) stays independently interactive. `dragListener: false` + `dragControls` scopes drag initiation to the handle.",
+    phase: 4,
+    component: lazy(() => import("./ReorderHandle")),
+    source: rawSource(() => import("./ReorderHandle.tsx?raw")),
+    filename: "ReorderHandle.tsx",
+  },
+  {
+    path: "/reorder-with-exit",
+    title: "Reorder (with exit)",
+    blurb:
+      'Reorder + <Presence exitMethod="keep-index">. Add / remove items at will — removed items fade in place via `exit`; survivors FLIP into new slots after the slot is released. `keep-index` is REQUIRED for layout-animated lists: the default (`"move-to-end"`) shuffles the exiting node to the end of the list during its fade, hiding the exit visually.',
+    phase: 4,
+    component: lazy(() => import("./ReorderWithExit")),
+    source: rawSource(() => import("./ReorderWithExit.tsx?raw")),
+    filename: "ReorderWithExit.tsx",
+  },
 ]

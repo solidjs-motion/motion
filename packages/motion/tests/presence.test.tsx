@@ -255,9 +255,7 @@ describe("<Presence> — switch path", () => {
     const [open, setOpen] = createSignal(true)
     const { container, unmount } = render(() => (
       <Presence>
-        <Show when={open()}>
-          {(_v) => <Shell />}
-        </Show>
+        <Show when={open()}>{(_v) => <Shell />}</Show>
       </Presence>
     ))
 

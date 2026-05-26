@@ -1,7 +1,9 @@
 import { animate, type MotionValue } from "motion"
-import { createSignal, onCleanup, untrack } from "solid-js"
+import { type Accessor, createSignal, onCleanup, untrack } from "solid-js"
+import { useLayoutGroupContext } from "../layout-group-context"
 import { useMotionConfig } from "../motion-config"
 import { usePresenceContext } from "../presence-context"
+import { useProjectionContext } from "../projection-context"
 import { createReducedMotion, shouldReduceMotion } from "../reduced-motion"
 import {
   formatProperty,
@@ -14,6 +16,7 @@ import type {
   AnimateValue,
   MotionElement,
   MotionOptions,
+  ProjectionContextValue,
   Target,
   Transition,
   VariantContextValue,
@@ -23,8 +26,13 @@ import type {
 import { effectiveLabels, resolveVariant, useVariantContext } from "../variants"
 import { createDrag } from "./createDrag"
 import { createGestures } from "./createGestures"
+import { createLayoutController } from "./createLayoutController"
 import { type ActiveStoreTuple, createGestureStateMachine } from "./gesture-state"
-import { createValueRegistry, type ValueRegistry } from "./value-registry"
+import {
+  createValueRegistry,
+  foldLayoutLayerIntoTarget,
+  type ValueRegistry,
+} from "./value-registry"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,6 +97,62 @@ export function mergeTransition(
 }
 
 /**
+ * Library default transition for layout animations.
+ *
+ * Layout FLIPs have different physics needs than animate/gesture
+ * targets. A `transition: { type: "spring", stiffness: 300, damping: 30 }`
+ * tuned for a hover effect overshoots ~55% when applied to layout —
+ * items visibly fly past their target slot before settling. Conversely,
+ * a stiff `damping: 60` spring tuned for layout feels lifeless on
+ * gesture-driven targets.
+ *
+ * Modern motion's spring `duration` + `bounce` API lets us specify a
+ * smooth no-bounce spring in user-friendly terms: ~450ms perceptual
+ * duration, zero overshoot. Critically damped, lands at rest exactly
+ * on first crossing. This is what motion/react's layout system uses
+ * under the hood for its "snappy but not bouncy" default.
+ *
+ * Users override this per-element via `layoutTransition` (or workspace-
+ * wide via `<MotionConfig transition>`).
+ */
+export const LAYOUT_DEFAULT_TRANSITION: Transition = {
+  type: "spring",
+  duration: 0.45,
+  bounce: 0,
+} as Transition
+
+/**
+ * Resolve the transition for a layout FLIP.
+ *
+ * Priority chain (lowest → highest):
+ *   1. {@link LAYOUT_DEFAULT_TRANSITION} — library floor
+ *   2. `motionConfig.transition()` — workspace-wide default (via
+ *      `<MotionConfig>`); applies to layout too for consistency
+ *   3. `opts.layoutTransition` — per-element layout-specific override
+ *
+ * Notably, the regular per-element `opts.transition` is **NOT** in the
+ * chain. That prop is for animate/gesture targets; if it flowed into
+ * layout, a user-tuned spring for hover/animate would silently override
+ * the layout default and produce surprising overshoot. Users who DO
+ * want their transition prop to apply uniformly use the workspace-wide
+ * `<MotionConfig transition>` instead.
+ *
+ * Reduced motion: returns `{ duration: 0 }` (Q11 sub-4 semantics).
+ */
+export function mergeLayoutTransition(
+  configDefault: Transition | undefined,
+  perTargetTransition: Transition | undefined,
+  reduced: boolean,
+): Transition {
+  if (reduced) return { duration: 0 } as Transition
+  return {
+    ...LAYOUT_DEFAULT_TRANSITION,
+    ...(configDefault ?? {}),
+    ...(perTargetTransition ?? {}),
+  } as Transition
+}
+
+/**
  * Apply a static target to an element's inline style before paint. Used on
  * mount when no SSR style was emitted. The ref callback fires before the
  * browser yields, so this avoids a frame of flicker.
@@ -98,13 +162,12 @@ function applyStaticStyle(el: MotionElement, target: Target): void {
   for (const key in style) {
     const value = (style as Record<string, string | number | undefined>)[key]
     if (value === undefined) continue
-    if (key.startsWith("--")) {
-      el.style.setProperty(key, String(value))
-    } else {
-      // ElementCSSInlineStyle.style is indexable for camelCase property names.
-      // Available on both HTMLElement and SVGElement (Phase 4 SVG support).
-      ;(el.style as unknown as Record<string, string | number>)[key] = value
-    }
+    // `setProperty` handles every CSS property name uniformly — hyphen-case
+    // standard properties, vendor prefixes (`-webkit-...`), CSS custom
+    // properties (`--foo`), AND `transform`. Direct `el.style[key] =`
+    // assignment is camelCase-only at the DOM level, which would silently
+    // drop writes for hyphen-case Target keys.
+    el.style.setProperty(key, String(value))
   }
 }
 
@@ -153,6 +216,24 @@ export type CreateMotionConfig = {
    * `snapshotValue` reduction before passing them in.
    */
   styleStaticTransforms?: Map<string, number | string>
+  /**
+   * The motion proxy threads its captured OUTER projection context
+   * here so the element measures against its true parent context.
+   *
+   * Why this can't be `useProjectionContext()` inside createMotion: the
+   * motion proxy renders the underlying DOM element INSIDE the element's
+   * OWN `m.Provider`, so when the ref fires the owner-chain lookup
+   * finds the element's own myProjectionCtx — which (for layout-active
+   * elements) returns the element itself as projection parent. Result:
+   * the controller measures against itself, `E - P = 0` on every
+   * measurement, no FLIP fires.
+   *
+   * Direct createMotion / useMotion callers (without the proxy) don't
+   * pass this and fall back to the live `useProjectionContext()`,
+   * which is correct because they place `<m.Provider>` MANUALLY around
+   * descendants — the live context at ref-fire IS the parent context.
+   */
+  parentProjectionContext?: ProjectionContextValue
 }
 
 /**
@@ -166,15 +247,26 @@ export type CreateMotionConfig = {
  */
 export function createMotion(
   el: MotionElement,
-  getOpts: () => MotionOptions,
+  opts: MotionOptions | Accessor<MotionOptions>,
   config?: CreateMotionConfig,
 ): void {
+  const getOpts: () => MotionOptions = typeof opts === "function" ? opts : () => opts
   // Q4 follow-up: useMotion passes a shadowed (controlling-aware) context;
   // standalone callers fall back to the live VariantContext.
   const parentVariantCtx: VariantContextValue = config?.parentContext ?? useVariantContext()
   const presence = usePresenceContext()
   const motionConfig = useMotionConfig()
   const systemReducedMotion = createReducedMotion()
+  // Layout contexts read unconditionally — same pattern as
+  // presence/motionConfig above (Q-option a from step 7 sign-off). The
+  // controller below consumes them only when `opts.layout` is truthy
+  // at construction; non-layout elements pay two `Map.get` calls.
+  // When the motion proxy is the caller, it passes the OUTER projection
+  // context (captured before m.Provider wraps the element). Direct
+  // callers fall back to `useProjectionContext()` — correct because
+  // they place `<m.Provider>` manually around descendants.
+  const projectionContext = config?.parentProjectionContext ?? useProjectionContext()
+  const layoutGroupContext = useLayoutGroupContext()
 
   // ---------- Per-element value registry (lazy — Stage 4.5) ----------
   // Most elements never need a registry: they have no MV in style, no static
@@ -294,6 +386,14 @@ export function createMotion(
     for (const [k, mv] of valueRegistry.entries()) {
       target[k] = mv.get()
     }
+    // Layout's second-layer fold (ADR 0006). When `layoutLayer` is
+    // populated, mutate `target` to compose layer values into the
+    // user-facing axes BEFORE `applyStaticStyle` calls `targetToStyle`.
+    // `targetToStyle` stays SSR-pure — reserved layer MVs are never
+    // populated server-side.
+    if (valueRegistry.hasLayoutLayer) {
+      foldLayoutLayerIntoTarget(target, valueRegistry.layoutLayer)
+    }
     if (Object.keys(target).length === 0) return
     applyStaticStyle(el, target as Target)
   }
@@ -316,27 +416,29 @@ export function createMotion(
         }
       }
     }
-    if (key.startsWith("--")) {
-      return () => {
-        const v = snapshotValue(mv.get())
-        if (v !== undefined) el.style.setProperty(key, String(v))
-      }
-    }
+    // `setProperty` is used uniformly for every key (CSS custom property,
+    // hyphen-case standard property, or `transform`). Direct
+    // `el.style[key] =` would only work for camelCase keys and silently
+    // drop hyphen-case writes.
     return () => {
       const v = snapshotValue(mv.get())
       if (v === undefined) return
       const formatted = formatProperty(key, v)
-      ;(el.style as unknown as Record<string, string | number>)[key] = formatted
+      el.style.setProperty(key, String(formatted))
     }
   }
 
   const refreshWriter = (): void => {
     const size = valueRegistry?.size ?? 0
-    if (size === 0) {
+    const hasLayer = valueRegistry?.hasLayoutLayer ?? false
+    if (size === 0 && !hasLayer) {
       writer = noop
       return
     }
-    if (size === 1) {
+    // When the layout layer is active we can't use the single-key
+    // specialized closure — its emission path bypasses the layer fold.
+    // Fall through to multiKeyWriter so the fold runs.
+    if (size === 1 && !hasLayer) {
       writer = compileSingleKeyWriter()
       return
     }
@@ -544,7 +646,7 @@ export function createMotion(
     enterReady,
     getValueForAnimate,
   })
-  const { setActive, onceExitComplete } = stateMachine
+  const { setActive, active, onceExitComplete } = stateMachine
 
   // ---------- Presence registration (Phase 3 — inverted shape) ----------
   // Child registers a `runExit` callable that dispatches the exit animate
@@ -658,6 +760,132 @@ export function createMotion(
   // surface a dev warning here later if needed.
   if (el instanceof HTMLElement) {
     createDrag(el, getOpts, setActive)
+  }
+
+  // ---------- Layout (0.2.0 — controller + layoutId handoff) ----------
+  // Snapshot `opts.layout` / `opts.layoutId` at construction; reactive
+  // toggle-off is the Q8/risk #4 polish, deferred to its own step.
+  // Bridging the controller into the registry-write path requires
+  // `bridgeActive = true` so the writer composes the layer's transform
+  // contribution — without this the writer stays on its no-op default
+  // and the FLIP visual never paints. Force activation by ensuring the
+  // registry exists and the writer recompiles when the layer's shape
+  // changes (via the controller's `refreshWriter` callback).
+  if (initialOpts.layout || initialOpts.layoutId !== undefined) {
+    ensureRegistry()
+    bridgeActive = true
+    refreshWriter()
+
+    // layoutId consume — if this element donates/receives a shared-
+    // element transition, find the previous holder of this id and FLIP
+    // from its rect. Two sources, checked in order:
+    //
+    //   1. A LIVE sibling already mounted under the same layoutId
+    //      (`findLive`). This is the common case under `<Presence>`
+    //      keep-alive (donor still in DOM, awaiting exit) and under
+    //      same-tick `<Show>`/route swaps where the consumer mounts
+    //      BEFORE the donor's `onCleanup` fires. We read the donor's
+    //      CURRENT `getBoundingClientRect()` — the visually-accurate
+    //      "First" — and use it as the consumer's first rect.
+    //
+    //   2. A queued `donate(...)` entry (`consume`), populated by the
+    //      previous holder's onCleanup. This handles the case where
+    //      the donor has already detached from the DOM by the time
+    //      the consumer mounts (no Presence, cross-tick handoff).
+    //
+    // See ADR 0007 and Plan §6.
+    const layoutIdAtMount = initialOpts.layoutId
+    let initialFirst: { x: number; y: number; width: number; height: number } | undefined
+    if (layoutIdAtMount !== undefined) {
+      // Track A path: look for a still-mounted sibling under this id.
+      const liveDonor = layoutGroupContext.coordinator.findLive(layoutIdAtMount, el)
+      if (liveDonor !== null) {
+        const donorRect = liveDonor.getBoundingClientRect()
+        const consumerProjParent = projectionContext.parentEl()
+        const P = consumerProjParent.getBoundingClientRect()
+        initialFirst = {
+          x: donorRect.left - P.left,
+          y: donorRect.top - P.top,
+          width: donorRect.width,
+          height: donorRect.height,
+        }
+      } else {
+        // Fall back to the donate queue (cross-tick handoff path).
+        const entry = layoutGroupContext.coordinator.consume(layoutIdAtMount)
+        if (entry !== null) {
+          const donorRect = entry.el.isConnected ? entry.el.getBoundingClientRect() : entry.rect
+          const consumerProjParent = projectionContext.parentEl()
+          const P = consumerProjParent.getBoundingClientRect()
+          initialFirst = {
+            x: donorRect.left - P.left,
+            y: donorRect.top - P.top,
+            width: donorRect.width,
+            height: donorRect.height,
+          }
+        }
+      }
+
+      // Register THIS element under the layoutId so a future consumer
+      // can find it via `findLive`. Done AFTER the lookup above so we
+      // don't find ourselves (defensive — `findLive` already excludes
+      // `self`, but registering after also keeps the registry's
+      // intent clear).
+      layoutGroupContext.coordinator.register(layoutIdAtMount, el)
+    }
+
+    createLayoutController(el, getOpts, {
+      registry: ensureRegistry(),
+      refreshWriter,
+      writeFromRegistry,
+      projectionContext,
+      layoutGroupContext,
+      motionConfig,
+      systemReducedMotion,
+      initialFirst,
+      // Drag-suppression gate (Reorder, ADR 0008). The controller skips
+      // its FLIP whenever this element is the active drag target. Reads
+      // the same `whileDrag` flag the gesture-state machine toggles
+      // through motion's standard pan-state pipeline — no Reorder-
+      // specific wiring needed at this layer.
+      isDragging: () => active.whileDrag,
+    })
+
+    // layoutId donate — at owner-dispose time, capture this element's
+    // rect + projection-parent rect and deposit them in the
+    // coordinator. The locked timing (Q5): `onCleanup` runs
+    // synchronously when Solid disposes the owner, BEFORE any exit
+    // animation. Inside `<Presence>` the element stays in the DOM
+    // (transition-group keep-alive), so `el.getBoundingClientRect()`
+    // returns the donor's pre-exit rect at this moment.
+    //
+    // Registered AFTER `createLayoutController` (which registers its
+    // own onCleanup) so donate fires FIRST in LIFO order — captures
+    // the rect before the controller clears the layer.
+    if (layoutIdAtMount !== undefined) {
+      onCleanup(() => {
+        // Re-read layoutId via untrack — in case it's reactive and
+        // changed since mount. Skip donation when there's no id
+        // (e.g., flipped to undefined by the time of unmount).
+        const liveLayoutId = untrack(getOpts).layoutId ?? layoutIdAtMount
+        if (liveLayoutId === undefined) return
+
+        // Unregister from the live registry FIRST. Without this, a
+        // same-tick consumer's `findLive` could return THIS element
+        // even though it's about to be removed — leading the consumer
+        // to FLIP from its own pre-unmount position rather than from
+        // a meaningful donor.
+        layoutGroupContext.coordinator.unregister(liveLayoutId, el)
+
+        const projParent = projectionContext.parentEl()
+        const rect = el.getBoundingClientRect()
+        const projRect = projParent.getBoundingClientRect()
+        layoutGroupContext.coordinator.donate(liveLayoutId, {
+          el,
+          rect,
+          projectionParentRect: projRect,
+        })
+      })
+    }
   }
 }
 

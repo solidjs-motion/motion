@@ -1,5 +1,5 @@
 import { scroll as motionScroll } from "motion"
-import { batch, createEffect, onCleanup } from "solid-js"
+import { type Accessor, batch, createEffect, onCleanup } from "solid-js"
 import type { MotionValueAccessor } from "../types"
 import { createMotionValue } from "./motion-value"
 
@@ -24,10 +24,19 @@ type MotionScrollInfo = {
 type ScrollOffset = any[]
 
 export type CreateScrollOptions = {
-  /** Accessor returning the scroll container element. Defaults to window. */
-  container?: () => Element | null
-  /** Accessor returning the scroll target. Defaults to the container itself. */
-  target?: () => Element | null
+  /**
+   * Scroll container element. Defaults to the window. For reactivity, wrap
+   * the whole options object in an accessor — e.g.
+   * `createScroll(() => ({ container: containerEl() }))`. Per-field
+   * accessors were dropped in 0.2.0.
+   */
+  container?: Element | null
+  /**
+   * Scroll target element. Defaults to the container itself. For reactivity,
+   * wrap the whole options object in an accessor — e.g.
+   * `createScroll(() => ({ target: targetEl() }))`.
+   */
+  target?: Element | null
   /** Primary scroll axis (both axes are still populated regardless). */
   axis?: "x" | "y"
   /** Intersection offsets controlling when progress reaches 0/1. */
@@ -74,12 +83,18 @@ export type CreateScrollResult = {
  * const { scrollY, scrollYProgress } = createScroll()
  * const opacity = createTransform(scrollYProgress, [0, 1], [1, 0])
  *
- * @example
+ * @example Static container element
+ * let scrollerEl!: HTMLElement
+ * const { scrollY } = createScroll({ container: scrollerEl })
+ *
+ * @example Accessor-form options (reactive container)
  * const [el, setEl] = createSignal<HTMLElement>()
- * const { scrollY } = createScroll({ container: el })
+ * const { scrollY } = createScroll(() => ({ container: el() }))
  * <div ref={setEl} style={{ overflow: "auto" }}>...</div>
  */
-export function createScroll(options?: CreateScrollOptions): CreateScrollResult {
+export function createScroll(
+  options?: Accessor<CreateScrollOptions> | CreateScrollOptions,
+): CreateScrollResult {
   const scrollX = createMotionValue(0)
   const scrollY = createMotionValue(0)
   const scrollXProgress = createMotionValue(0)
@@ -95,9 +110,14 @@ export function createScroll(options?: CreateScrollOptions): CreateScrollResult 
   // it when the effect re-runs (tearing down the previous subscription)
   // and again when the outer owner disposes (tearing down the final one).
   createEffect(() => {
-    const container = options?.container?.() ?? undefined
-    const target = options?.target?.() ?? undefined
-    const trackContentSize = options?.trackContentSize ?? true
+    // Normalize options to a snapshot per iteration. If the user passed an
+    // accessor, this is where its signals get tracked — effect re-runs when
+    // the accessor returns new values. If a static object was passed, the
+    // effect runs once and never re-subscribes.
+    const opts = typeof options === "function" ? options() : options
+    const container = opts?.container ?? undefined
+    const target = opts?.target ?? undefined
+    const trackContentSize = opts?.trackContentSize ?? true
 
     // Suppress motion-dom's "no scrollable content" edge-case dispatch.
     //
@@ -142,8 +162,8 @@ export function createScroll(options?: CreateScrollOptions): CreateScrollResult 
     const cleanup = motionScroll(handler, {
       container: container as HTMLElement | undefined,
       target: target as HTMLElement | undefined,
-      axis: options?.axis,
-      offset: options?.offset,
+      axis: opts?.axis,
+      offset: opts?.offset,
       trackContentSize,
     } as Parameters<typeof motionScroll>[1])
     onCleanup(cleanup)

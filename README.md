@@ -55,21 +55,27 @@ bun --filter basic dev
 
 ## Status
 
-Pre-alpha (0.0.x). Phases 1 through 4 are landed — the v0.1 surface is feature-complete:
+Targeting **0.2.0**. The v0.1 surface (animation primitives, MotionValues, gestures, drag,
+Presence, motion proxy + HOC, MV-in-style) is shipped; v0.2.0 adds layout animations,
+shared-element transitions, and drag-to-reorder.
 
-- **Shipped:** `useMotion`, the full MotionValue family (`createMotionValue`,
+- **Shipped in v0.1.x:** `useMotion`, the full MotionValue family (`createMotionValue`,
   `createTransform`, `createSpring`, `createTime`, `createVelocity`, `createTemplate`),
   scroll + viewport (`createScroll`, `createInView`), gestures (hover / press / focus /
   whileInView), drag with constraints/elastic/momentum, `createPan`, `createDragControls`,
   variants with parent-cascade + controlling-children rule, `<Presence>` +
-  `useAnimatePresence` for exit animations, `<motion.X>` proxy + `motion.create(Component)`
-  HOC for JSX-level wrappers with automatic variant-context propagation, MV-in-style
-  (`<motion.div style={{ scale: mv }}>` — MotionValues compose with `initial` / `animate` /
-  gestures through a per-element value registry, see
+  `useAnimatePresence`, `<motion.X>` proxy + `motion.create(Component)` HOC, MV-in-style
+  (per-element value registry, see
   [ADR 0005](./docs/adr/0005-mv-in-style-value-registry.md)), `<MotionConfig>`,
   `createReducedMotion`, SSR-friendly first paint.
-- **Deferred to v0.2+:** layout animations, `layoutId` shared-element transitions,
-  `<Reorder>`, SVG path drawing, `useAnimate`, `LazyMotion`.
+- **New in v0.2.0:** layout animations (`layout`, `layoutId`, `<LayoutGroup>`,
+  `layoutScroll`, `layoutRoot`, `layoutAnchor`, `layoutDependency`, `layoutTransition`,
+  `onLayoutAnimationStart/Complete`), drag-to-reorder
+  (`<Reorder.Group>` / `<Reorder.Item>` / `createReorder`), originals tracking for
+  non-transform property reverts, `whileDrag` variant context propagation, Target
+  accepting every CSS property via `csstype.PropertiesHyphen`.
+- **Deferred to v0.3+:** SVG path drawing (`<motion.path pathLength>`), `useAnimate`
+  imperative AnimationControls, `LazyMotion` lazy-loaded feature bundles.
 
 See [`packages/motion/README.md`](./packages/motion/README.md#roadmap) for the per-API breakdown.
 

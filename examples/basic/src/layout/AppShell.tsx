@@ -91,9 +91,7 @@ export function AppShell(props: ParentProps) {
                   </Show>
                   {props.children}
                   <Show when={activeDemo()}>
-                    {(demo) => (
-                      <DemoSource source={demo().source} filename={demo().filename} />
-                    )}
+                    {(demo) => <DemoSource source={demo().source} filename={demo().filename} />}
                   </Show>
                 </motion.div>
               </Show>

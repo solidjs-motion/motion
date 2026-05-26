@@ -59,11 +59,7 @@ export default function PresenceWaitMode() {
   )
 }
 
-function Strip(props: {
-  label: string
-  mode: "sync" | "wait"
-  current: (typeof PAGES)[number]
-}) {
+function Strip(props: { label: string; mode: "sync" | "wait"; current: (typeof PAGES)[number] }) {
   return (
     <div>
       <div

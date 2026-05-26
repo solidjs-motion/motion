@@ -53,7 +53,9 @@ export default function UseAnimatePresenceHook() {
         <button type="button" class="demo-button" onClick={reset} disabled={mounted()}>
           reset
         </button>
-        <span style={{ "align-self": "center", color: "var(--color-muted)", "font-size": "0.85rem" }}>
+        <span
+          style={{ "align-self": "center", color: "var(--color-muted)", "font-size": "0.85rem" }}
+        >
           state: <strong>{savingState()}</strong>
         </span>
       </div>

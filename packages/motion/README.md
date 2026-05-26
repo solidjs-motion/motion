@@ -50,7 +50,18 @@ serialized into SSR HTML so the first paint is flicker-free.
 
 ### 1. Reactive options
 
-Pass a function to `useMotion` to track Solid signals inside the target.
+Every primitive that takes an options bag accepts EITHER a static object OR a Solid
+`Accessor<Options>` — i.e. a `() => Options` function. The accessor form lets you
+read signals inside the options without per-field accessor boilerplate. This is
+the canonical reactive escape hatch across the public API:
+
+- `useMotion(opts | () => opts)`
+- `createMotion(el, opts | () => opts)`
+- `createScroll(opts | () => opts)`
+- `createInView(ref, opts | () => opts)`
+- `createPan(ref, opts | () => opts)`
+- `createSpring(source, opts | () => opts)`
+- `createTransform(input, range | () => range, output | () => output, opts?)`
 
 ```tsx
 import { useMotion } from "solidjs-motion"
@@ -66,6 +77,28 @@ export function Toggle() {
     <button onClick={() => setOpen((p) => !p)} {...motion()}>
       ↑
     </button>
+  )
+}
+```
+
+Same pattern for a scroll-linked progress bar with a swappable container:
+
+```tsx
+import { createScroll, createTransform, motion } from "solidjs-motion"
+import { createSignal } from "solid-js"
+
+export function ProgressIn(props: { children: any }) {
+  const [el, setEl] = createSignal<HTMLElement>()
+  // Whole options wrapped in an accessor — swapping `el` re-attaches the
+  // scroll subscription. Per-field accessors on `container`/`target` were
+  // removed in 0.2.0; this is the supported reactive form.
+  const { scrollYProgress } = createScroll(() => ({ container: el() }))
+  const width = createTransform(scrollYProgress, [0, 1], ["0%", "100%"])
+  return (
+    <div ref={setEl} style={{ overflow: "auto", height: "300px" }}>
+      <motion.div class="progress" style={{ width }} />
+      {props.children}
+    </div>
   )
 }
 ```
@@ -296,7 +329,11 @@ export function Notifications(props: { items: () => string[] }) {
 
 ### 11. Drag with constraints
 
-`dragConstraints` accepts numeric bounds or a parent ref. `dragElastic` controls overshoot.
+`dragConstraints` accepts either a numeric rect (`{ top, left, right, bottom }`) or a
+container `HTMLElement`. For a reactive container, wrap the surrounding `MotionOptions`
+in an accessor (e.g. `useMotion(() => ({ drag: true, dragConstraints: containerEl() }))`)
+— the per-field `() => HTMLElement` form was removed in 0.2.0. `dragElastic` controls
+overshoot.
 
 ```tsx
 import { motion } from "solidjs-motion"
@@ -337,14 +374,268 @@ export function App() {
 }
 ```
 
+### 13. Layout animations
+
+Add `layout` to a motion element and it'll FLIP to its new rect on every layout-affecting
+change — sibling add/remove, content reflow, parent's `style`/`class` change, own `ResizeObserver`
+firing. The default transition is a critically-damped spring tuned for snappy-but-not-bouncy.
+
+```tsx
+import { motion } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+let nextId = 3
+const INITIAL = [{ id: "1", label: "Task one" }, { id: "2", label: "Task two" }]
+
+export function StackedCards() {
+  const [items, setItems] = createSignal(INITIAL)
+  return (
+    <>
+      <button onClick={() => setItems((p) => [{ id: `${++nextId}`, label: `Task ${nextId}` }, ...p])}>
+        + add
+      </button>
+      <ul>
+        <For each={items()}>
+          {(item) => (
+            <motion.li layout>
+              {item.label}
+              <button onClick={() => setItems((p) => p.filter((i) => i.id !== item.id))}>×</button>
+            </motion.li>
+          )}
+        </For>
+      </ul>
+    </>
+  )
+}
+```
+
+### 14. Shared-element transitions with `layoutId`
+
+Two motion elements with the same `layoutId` in the same `<LayoutGroup>` scope hand off
+animation rect across an unmount/mount. Pair with `<Presence>` so the donor's `exit` and
+the consumer's enter FLIP run in parallel.
+
+```tsx
+import { motion, Presence } from "solidjs-motion"
+import { Show, createSignal } from "solid-js"
+
+export function ExpandableCard() {
+  const [open, setOpen] = createSignal(false)
+  return (
+    <Presence>
+      <Show
+        when={open()}
+        keyed
+        fallback={
+          <motion.button layoutId="card" onClick={() => setOpen(true)} class="thumb">
+            Open
+          </motion.button>
+        }
+      >
+        <motion.div layoutId="card" onClick={() => setOpen(false)} class="hero">
+          Hero content
+        </motion.div>
+      </Show>
+    </Presence>
+  )
+}
+```
+
+### 15. Reorder list (basic drag-to-reorder)
+
+`<Reorder.Group>` + `<Reorder.Item>` for drag-to-reorder. Each Item gets `layout: true`
++ `drag: <axis>` automatically. The dragged row tracks the pointer; siblings FLIP into
+their new slots as it crosses their centers; `values` is mutated live (no preview state).
+
+```tsx
+import { Reorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+const INITIAL = [{ id: "1", label: "First" }, { id: "2", label: "Second" }, { id: "3", label: "Third" }]
+
+export function SortableList() {
+  const [items, setItems] = createSignal(INITIAL)
+  return (
+    <Reorder.Group values={items} onReorder={setItems}>
+      <For each={items()}>
+        {(item) => (
+          <Reorder.Item value={item} class="list-item">
+            {item.label}
+          </Reorder.Item>
+        )}
+      </For>
+    </Reorder.Group>
+  )
+}
+```
+
+### 16. Reorder with a drag handle
+
+When item content contains interactive elements (checkboxes, inputs, buttons), full-row
+drag steals pointer events from them. Scope drag initiation to a dedicated handle with
+`dragListener: false` + `dragControls={controls}` (the same `createDragControls` factory
+that's used outside Reorder). One controls instance per row.
+
+```tsx
+import { createDragControls, Reorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+export function TaskList() {
+  const [tasks, setTasks] = createSignal([
+    { id: "1", label: "Pick up groceries", done: false },
+    { id: "2", label: "Review PR #142", done: true },
+  ])
+  const toggle = (id: string) =>
+    setTasks((p) => p.map((t) => (t.id === id ? { ...t, done: !t.done } : t)))
+
+  return (
+    <Reorder.Group values={tasks} onReorder={setTasks}>
+      <For each={tasks()}>
+        {(task) => {
+          const controls = createDragControls()
+          return (
+            <Reorder.Item value={task} dragListener={false} dragControls={controls}>
+              <button
+                type="button"
+                aria-label={`Drag ${task.label}`}
+                onPointerDown={(e) => controls.start(e)}
+                style={{ "touch-action": "none", cursor: "grab" }}
+              >
+                ⋮⋮
+              </button>
+              <input
+                type="checkbox"
+                checked={task.done}
+                onChange={() => toggle(task.id)}
+              />
+              <span>{task.label}</span>
+            </Reorder.Item>
+          )
+        }}
+      </For>
+    </Reorder.Group>
+  )
+}
+```
+
+### 17. Reorder with exit animations
+
+Pair Reorder with `<Presence>` to animate items in/out as they're added/removed.
+**Always pass `exitMethod="keep-index"`** for layout-animated lists — the default
+(`"move-to-end"`) shuffles the exiting node to the end of the list during its fade,
+firing the layout-coordinator's parent-MO mid-exit and visibly sliding the item to
+the bottom instead of letting it fade in place. `keep-index` holds the slot until
+exit completes; survivors only FLIP after the slot is released.
+
+```tsx
+import { Presence, Reorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+let nextId = 3
+const INITIAL = [{ id: "1", label: "First" }, { id: "2", label: "Second" }]
+
+export function TaskList() {
+  const [items, setItems] = createSignal(INITIAL)
+  const add = () =>
+    setItems([{ id: `${++nextId}`, label: `Task ${nextId}` }, ...items()])
+  const remove = (id: string) => setItems(items().filter((i) => i.id !== id))
+
+  return (
+    <>
+      <button onClick={add}>+ add</button>
+      <Reorder.Group values={items} onReorder={setItems}>
+        <Presence exitMethod="keep-index">
+          <For each={items()}>
+            {(item) => (
+              <Reorder.Item
+                value={item}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                {item.label}
+                <button onClick={() => remove(item.id)}>×</button>
+              </Reorder.Item>
+            )}
+          </For>
+        </Presence>
+      </Reorder.Group>
+    </>
+  )
+}
+```
+
+### 18. `createReorder` primitive (custom Reorder UI)
+
+`<Reorder.Group>` / `<Reorder.Item>` are thin JSX wrappers over `createReorder`.
+Drop down to the primitive when you need a custom container/item structure, or
+when surrounding UI needs to react to the drag state (e.g., a status bar, a
+disabled-while-dragging side panel, a drop-zone indicator). `createReorder`
+returns `{ group, item, dragging }`:
+
+- `group.ref` — spread onto the container element (forward-compat slot).
+- `item(value, motionOptions?)` — per-row factory. Returns the same callable
+  shape `useMotion` returns: spread `m()` onto the JSX element, optionally
+  wrap children in `m.Provider` for variant cascade.
+- `dragging()` — Accessor of the value being dragged (or `null`). Use it
+  anywhere — outside the list, inside it, in a sibling component.
+
+```tsx
+import { createReorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+export function PrioritisedTaskList() {
+  const [tasks, setTasks] = createSignal([
+    { id: "1", label: "Draft RFC", priority: "high" },
+    { id: "2", label: "Review PRs", priority: "med" },
+    { id: "3", label: "Update docs", priority: "low" },
+  ])
+
+  const reorder = createReorder(tasks, setTasks, { axis: "y" })
+
+  return (
+    <section>
+      <header>
+        Drag to reorder ·{" "}
+        <strong>{reorder.dragging()?.label ?? "(idle)"}</strong>
+      </header>
+      <ul ref={reorder.group.ref} class="task-list">
+        <For each={tasks()}>
+          {(task) => {
+            const m = reorder.item(task)
+            return (
+              <li
+                {...m({
+                  class: `task ${task.priority} ${
+                    reorder.dragging() === task ? "is-dragging" : ""
+                  }`,
+                })}
+              >
+                {task.label}
+              </li>
+            )
+          }}
+        </For>
+      </ul>
+    </section>
+  )
+}
+```
+
+`createReorder` accepts an `Accessor<T[]>` (`createSignal` form) OR `T[]`
+directly (`createStore` form — pass `store.items` and `(next) => setStore("items", next)`).
+Both forms track reactivity correctly; mutation-detection uses a re-entrancy
+flag rather than reference identity so `setStore(produce(...))` in-place
+mutations work too.
+
 ## Roadmap
 
 ### Shipped
 
 **Canonical hook + imperative primitive**
 
-- `useMotion(opts | () => opts)` — the public API. Returns a callable `motion(userProps?)` that merges with motion's ref/style/data attributes, plus a `motion.Provider` for opt-in variant context propagation.
-- `createMotion(el, getOpts)` — the imperative primitive `useMotion` wraps, for advanced use (drag controls, custom directives).
+- `useMotion(opts | Accessor<opts>)` — the public API. Returns a callable `motion(userProps?)` that merges with motion's ref/style/data attributes, plus a `motion.Provider` for opt-in variant context propagation.
+- `createMotion(el, opts | Accessor<opts>)` — the imperative primitive `useMotion` wraps, for advanced use (drag controls, custom directives).
 
 **MotionValue family** (every value is a callable `MotionValueAccessor<T> = MotionValue<T> & (() => T)`)
 
@@ -370,7 +661,7 @@ export function App() {
 
 **Drag**
 
-- `drag: true | "x" | "y"` axis lock, `dragConstraints` (numeric or container ref), `dragElastic`, `dragMomentum`, `dragSnapToOrigin`, `dragTransition`, `whileDrag` for sibling-axis visual state.
+- `drag: true | "x" | "y"` axis lock, `dragConstraints` (numeric rect or container `HTMLElement`), `dragElastic`, `dragMomentum`, `dragSnapToOrigin`, `dragTransition`, `whileDrag` for sibling-axis visual state.
 - `createPan(ref, opts?)` — standalone pan-session primitive. Returns `{ isPanning, point, delta, offset, velocity }` with MotionValueAccessors at the numeric leaves.
 - `createDragControls()` — drag-handle pattern. One element captures the pointer, another moves.
 
@@ -413,18 +704,39 @@ export function App() {
 
 - `useMotion` emits a deterministic inline style + `data-motion-hydrated=""` marker on the server. First paint matches the initial target; the client skips the initial-style application on hydration.
 
+**Layout animations** (new in 0.2.0)
+
+- `layout: true | "position" | "size" | "preserve-aspect"` — per-element FLIP from First to Last rect on every layout-affecting change (parent reorder, sibling add/remove, content reflow, ResizeObserver self, parent `style`/`class` change). Critically-damped spring default transition tuned for snappy-but-not-bouncy.
+- `layoutId` — cross-element handoff. Two elements with the same id (within the same `<LayoutGroup>` scope) animate seamlessly across an unmount/mount. Pairs with `<Presence>` for parallel exit + enter FLIP.
+- `<LayoutGroup>` scopes `layoutId` namespacing AND broadcasts dependency changes group-wide.
+- `layoutScroll`, `layoutRoot`, `layoutAnchor`, `layoutDependency`, `layoutTransition` for finer control.
+- `onLayoutAnimationStart` / `onLayoutAnimationComplete` lifecycle callbacks.
+- `Target` accepts every CSS property via `csstype.PropertiesHyphen` — hyphenated keys (`box-shadow`, `background-color`, `--my-custom-prop`) are first-class in `animate`, gesture targets, and `style`.
+
+**Reorder** (new in 0.2.0)
+
+- `<Reorder.Group values onReorder>` + `<Reorder.Item value>` — drag-to-reorder. Items get `layout: true` + `drag: <axis>` automatically; the dragged row tracks the pointer, siblings FLIP into their new slots, list mutation happens live (no preview state).
+- `createReorder(values, setValues, options?)` — the primitive that backs the components. Accepts either `Accessor<T[]>` (signal) or `T[]` (store).
+- Drag-handle pattern via existing `dragListener: false` + `dragControls={controls}` — the row's body stays interactive, drag initiation scoped to a dedicated handle.
+- `cancelOnExternalReorder` for strict mutation guards.
+- Reorder.Item provides variant context to descendants (nested `<motion.button>` inside a row inherits the item's `animate` / `hover` / `whileDrag` / `exit` labels).
+- Pair with `<Presence exitMethod="keep-index">` when items have `exit` declared.
+
+**Improved revert behavior** (new in 0.2.0)
+
+- **Originals tracking** — on first paint, the element's computed style is captured for every gesture-target key that has no canonical motion default (anything outside transforms + opacity). When a gesture deactivates and `animate` doesn't claim the key, the captured original is the revert target. No more redundant `animate.box-shadow` workaround.
+- **`whileDrag` propagates through variant context** — descendants wrapped in `m.Provider` with a matching label in `variants` respond to the parent's drag state, same as `whileHover` / `whilePress` / `whileFocus` / `whileInView`.
+
 **Re-exports from upstream `motion`**
 
 - `animate`, `inView`, `isMotionValue`, `motionValue`, `scroll`, `spring` — for direct use where the framework wrapper isn't needed.
 
-### Deferred to v0.2+
+### Deferred to v0.3+
 
-- Layout animations (`layout` prop, `LayoutGroup`).
-- `layoutId` shared-element transitions.
-- `<Reorder>` drag-to-reorder primitive.
 - SVG path drawing (`<motion.path pathLength>`).
 - `useAnimate` imperative AnimationControls equivalent.
 - `LazyMotion` lazy-loaded feature bundles.
+- Generalized shadow-shape normalization (currently only `"none"`/`""` are normalized for box/text-shadow).
 
 ## License
 

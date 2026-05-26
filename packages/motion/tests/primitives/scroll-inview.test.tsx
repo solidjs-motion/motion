@@ -61,7 +61,7 @@ describe("createScroll", () => {
   it("invokes motion's scroll() with the configured options", async () => {
     const container = document.createElement("div")
     const { dispose } = createRoot((dispose) => {
-      createScroll({ container: () => container, axis: "y" })
+      createScroll({ container, axis: "y" })
       return { dispose }
     })
     // createEffect's first iteration is deferred — flush before asserting
@@ -103,17 +103,20 @@ describe("createScroll", () => {
     expect(entry?.cleanup).toHaveBeenCalled()
   })
 
-  it("re-invokes motion's scroll() when the container accessor changes", async () => {
+  it("re-invokes motion's scroll() when the options accessor changes", async () => {
+    // Accessor-form options reactivity. Per-field accessors on container/
+    // target were dropped in 0.2.0; reactivity comes from wrapping the
+    // whole options object in an accessor.
     const [container, setContainer] = createSignal<HTMLElement | null>(null)
     const { dispose } = createRoot((dispose) => {
-      createScroll({ container: () => container() })
+      createScroll(() => ({ container: container() }))
       return { dispose }
     })
     await flush()
     expect(scrollSpy).toHaveBeenCalledTimes(1)
     const first = scrollHandlers[0]
-    // Swap to a real element — accessor changes, the effect re-runs (after
-    // a microtask), previous subscription is torn down.
+    // Swap to a real element — accessor returns new options, the effect
+    // re-runs (after a microtask), previous subscription is torn down.
     setContainer(document.createElement("div"))
     await flush()
     expect(scrollSpy).toHaveBeenCalledTimes(2)
@@ -306,6 +309,56 @@ describe("createInView", () => {
     dispose()
   })
 
+  it("accepts a static Element as the ref argument (captured once)", async () => {
+    // Q1 ref widening — createInView now accepts a static Element in
+    // addition to an Accessor. The element is captured once; reassignment
+    // of the variable doesn't re-attach the observer (use the accessor
+    // form for reactive refs).
+    const div = document.createElement("div")
+    const { dispose } = createRoot((dispose) => {
+      createInView(div)
+      return { dispose }
+    })
+    await flush()
+    expect(observers.length).toBe(1)
+    expect(observers[0]?.observed).toContain(div)
+    dispose()
+  })
+
+  it("re-attaches the observer when a signal in the options accessor changes", async () => {
+    // Accessor-form options reactivity — the canonical escape hatch for
+    // changing IntersectionObserver config (root, margin, amount) at
+    // runtime. When a signal read inside the options accessor changes,
+    // the createEffect re-runs, disconnects the old observer, and
+    // attaches a new one with the updated options.
+    const div = document.createElement("div")
+    const rootA = document.createElement("div")
+    const rootB = document.createElement("div")
+    const [rootEl, setRootEl] = createSignal<Element>(rootA)
+
+    const { dispose } = createRoot((dispose) => {
+      createInView(div, () => ({ root: rootEl(), margin: "10px" }))
+      return { dispose }
+    })
+    await flush()
+
+    expect(observers.length).toBe(1)
+    expect(observers[0]?.options?.root).toBe(rootA)
+    expect(observers[0]?.observed).toContain(div)
+
+    // Flip the signal — effect re-runs, new observer created, old one
+    // disconnected (its `observed` array is cleared by the spy).
+    setRootEl(rootB)
+    await flush()
+
+    expect(observers.length).toBe(2)
+    expect(observers[1]?.options?.root).toBe(rootB)
+    expect(observers[1]?.observed).toContain(div)
+    expect(observers[0]?.observed.length).toBe(0)
+
+    dispose()
+  })
+
   it("flips isInView to true on intersecting entry", async () => {
     const div = document.createElement("div")
     const { view, dispose } = createRoot((dispose) => {
@@ -399,7 +452,7 @@ describe("createInView", () => {
     const rootEl = document.createElement("div")
     const { dispose } = createRoot((dispose) => {
       const [el, setEl] = createSignal<Element | null>(null)
-      createInView(el, { margin: "100px", amount: 0.5, root: () => rootEl })
+      createInView(el, () => ({ margin: "100px", amount: 0.5, root: rootEl }))
       setEl(div)
       return { dispose }
     })

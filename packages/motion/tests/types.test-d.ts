@@ -9,7 +9,17 @@ import { describe, expectTypeOf, it } from "vitest"
 import {
   type AnimateValue,
   type AnimationPlaybackControls,
+  type CreateInViewOptions,
+  type CreatePanOptions,
+  type CreateScrollOptions,
+  createInView,
+  createMotion,
   createMotionValue,
+  createPan,
+  type createReorder,
+  type createScroll,
+  createTransform,
+  type DragConstraints,
   type DragControls,
   type ElementProps,
   type MotionMergedProps,
@@ -18,6 +28,8 @@ import {
   type MotionValueAccessor,
   type PanInfo,
   type PressInfo,
+  type ReorderOptions,
+  type ReorderResult,
   type ResolvedValues,
   type Target,
   type Transition,
@@ -168,10 +180,10 @@ describe("Target", () => {
     expectTypeOf(target).toExtend<Target>()
   })
 
-  it("accepts arbitrary CSS properties via index signature", () => {
+  it("accepts hyphen-case CSS properties via csstype map", () => {
     const target: Target = {
-      backgroundColor: "red",
-      borderRadius: 4,
+      "background-color": "red",
+      "border-radius": 4,
       width: "50%",
     }
     expectTypeOf(target).toExtend<Target>()
@@ -445,3 +457,153 @@ describe("type errors (negative tests)", () => {
 
 // Helper: ensure ElementProps is exported & visible (the type alias itself).
 type _AssertElementPropsExported = ElementProps
+
+// ---------------------------------------------------------------------------
+// 0.2.0 API audit — type assertions for the consistency pass.
+// Tracks the Accessor<Options> | Options widening across primitives plus the
+// per-field-accessor flattening on ViewportOptions.root and DragConstraints.
+// Each step in `docs/plans/0.2.0-api-audit.md` §12 lands its assertions here.
+// ---------------------------------------------------------------------------
+
+describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
+  it("useMotion accepts both static and accessor option forms", () => {
+    expectTypeOf(useMotion).parameter(0).toEqualTypeOf<MotionOptions | Accessor<MotionOptions>>()
+  })
+
+  it("createMotion accepts both static and accessor option forms", () => {
+    expectTypeOf(createMotion).parameter(1).toEqualTypeOf<MotionOptions | Accessor<MotionOptions>>()
+  })
+
+  it("createInView accepts ref as Accessor OR static Element", () => {
+    expectTypeOf(createInView)
+      .parameter(0)
+      .toEqualTypeOf<Accessor<Element | null | undefined> | Element | null | undefined>()
+  })
+
+  it("createInView accepts options as static OR accessor form", () => {
+    // Parameter has a default (`= {}`) so its inferred type includes
+    // `undefined` — assert against Parameters<…> directly.
+    expectTypeOf<Parameters<typeof createInView>[1]>().toEqualTypeOf<
+      CreateInViewOptions | Accessor<CreateInViewOptions> | undefined
+    >()
+  })
+
+  it("ViewportOptions.root is a static Element, no longer a function", () => {
+    expectTypeOf<ViewportOptions["root"]>().toEqualTypeOf<Element | null | undefined>()
+  })
+
+  it("createPan accepts ref as Accessor OR static HTMLElement", () => {
+    expectTypeOf(createPan)
+      .parameter(0)
+      .toEqualTypeOf<Accessor<HTMLElement | null | undefined> | HTMLElement | null | undefined>()
+  })
+
+  it("createPan accepts options as static OR accessor form", () => {
+    // Parameter has a default (`= {}`) so use Parameters<…> to include the
+    // `undefined` arm from the default.
+    expectTypeOf<Parameters<typeof createPan>[1]>().toEqualTypeOf<
+      CreatePanOptions | Accessor<CreatePanOptions> | undefined
+    >()
+  })
+
+  it("createScroll accepts options as static OR accessor form", () => {
+    // Optional parameter (no default object) — `undefined` arm is from the
+    // `?` modifier rather than a default.
+    expectTypeOf<Parameters<typeof createScroll>[0]>().toEqualTypeOf<
+      Accessor<CreateScrollOptions> | CreateScrollOptions | undefined
+    >()
+  })
+
+  it("CreateScrollOptions.container and .target are static Elements, not functions", () => {
+    expectTypeOf<CreateScrollOptions["container"]>().toEqualTypeOf<Element | null | undefined>()
+    expectTypeOf<CreateScrollOptions["target"]>().toEqualTypeOf<Element | null | undefined>()
+  })
+
+  it("DragConstraints accepts only a numeric rect or a static HTMLElement", () => {
+    // The () => HTMLElement | null arm was dropped in 0.2.0. Reactivity
+    // comes from wrapping MotionOptions in an accessor.
+    expectTypeOf<DragConstraints>().toEqualTypeOf<
+      { top?: number; left?: number; right?: number; bottom?: number } | HTMLElement
+    >()
+  })
+
+  it("createTransform accepts inputRange/outputRange as static OR accessor", () => {
+    // Q4: ranges are widened to support reactive opts.
+    expectTypeOf<Parameters<typeof createTransform>[1]>().toEqualTypeOf<
+      number[] | Accessor<number[]>
+    >()
+    // Output range parameter uses the generic O — for the inferred-from-call
+    // case we check via a concrete instantiation.
+    const x = createMotionValue(0)
+    expectTypeOf(createTransform(x, [0, 1], [10, 20])).toMatchTypeOf<MotionValueAccessor<number>>()
+    // Accessor-form ranges compile.
+    expectTypeOf(
+      createTransform(
+        x,
+        () => [0, 1],
+        () => [10, 20],
+      ),
+    ).toMatchTypeOf<MotionValueAccessor<number>>()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createReorder — public surface (0.2.0).
+// ---------------------------------------------------------------------------
+
+describe("createReorder", () => {
+  it("ReorderOptions has axis and cancelOnExternalReorder, both optional", () => {
+    expectTypeOf<ReorderOptions>().toEqualTypeOf<{
+      axis?: "x" | "y"
+      cancelOnExternalReorder?: boolean
+    }>()
+  })
+
+  it("returns { group, item, dragging } with expected shapes", () => {
+    type R = ReorderResult<string>
+    // group is an object with a ref function — kept structural so future
+    // 0.3.x additions (e.g. scroll-watcher) can extend non-breakingly.
+    expectTypeOf<R["group"]>().toMatchTypeOf<{ ref: (el: HTMLElement) => void }>()
+    // dragging is an Accessor of value-or-null.
+    expectTypeOf<R["dragging"]>().toEqualTypeOf<Accessor<string | null>>()
+    // item is a callable taking value + optional motionOptions.
+    expectTypeOf<Parameters<R["item"]>[0]>().toEqualTypeOf<string>()
+    expectTypeOf<Parameters<R["item"]>[1]>().toEqualTypeOf<
+      MotionOptions | Accessor<MotionOptions> | undefined
+    >()
+    // item's return is UseMotionResult — the MotionGetProps callable
+    // plus a `.Provider` for variant-context propagation. JSX wrapper
+    // <Reorder.Item> uses m.Provider to propagate variants from the
+    // item into nested motion children.
+    expectTypeOf<ReturnType<R["item"]>>().toEqualTypeOf<UseMotionResult>()
+  })
+
+  it("createReorder is generic over the value type", () => {
+    type R1 = ReturnType<typeof createReorder<{ id: string }>>
+    expectTypeOf<R1["dragging"]>().toEqualTypeOf<Accessor<{ id: string } | null>>()
+    expectTypeOf<Parameters<R1["item"]>[0]>().toEqualTypeOf<{ id: string }>()
+  })
+
+  it("options parameter accepts static OR accessor form", () => {
+    expectTypeOf<Parameters<typeof createReorder>[2]>().toEqualTypeOf<
+      ReorderOptions | Accessor<ReorderOptions> | undefined
+    >()
+  })
+
+  it("values parameter accepts Accessor<T[]> OR T[] (createStore support)", () => {
+    type ValuesParam = Parameters<typeof createReorder<string>>[0]
+    expectTypeOf<ValuesParam>().toEqualTypeOf<Accessor<string[]> | string[]>()
+  })
+
+  it("setValues parameter accepts any (next: T[]) => void function", () => {
+    // Permissive shape — Solid's Setter<T[]> is structurally compatible
+    // (its T[] return is assignable to void), so createSignal users pass
+    // their setter directly. createStore users pass a wrapper like
+    // `(next) => setStore("items", next)`. Using `Setter<T[]>` in the
+    // union confused TypeScript's overload resolution when matched
+    // against SetStoreFunction (top-level array stores), so we keep the
+    // permissive form only.
+    type SetterParam = Parameters<typeof createReorder<string>>[1]
+    expectTypeOf<SetterParam>().toEqualTypeOf<(next: string[]) => void>()
+  })
+})

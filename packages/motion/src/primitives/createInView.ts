@@ -54,13 +54,16 @@ export type CreateInViewResult = {
  * Observe an element via {@link IntersectionObserver} and expose its
  * in-view state as a pair of Solid Accessors.
  *
- * Pass a ref-style accessor that returns the element. The observer
- * attaches once the accessor returns a non-null element and re-attaches
- * if it changes. The observer is disconnected on owner disposal.
+ * The `ref` argument accepts EITHER a Solid Accessor returning the element
+ * OR a static Element. The accessor form re-attaches the observer when the
+ * accessor's return value changes; the static form captures the element
+ * once — reassignment of the variable does NOT re-attach.
  *
- * Options can be a static object or a function form (matching `useMotion`
- * and `createPan`'s convention). The function form is tracked inside the
- * effect — option changes (e.g., switching `root`) re-attach the observer.
+ * Options can be a static object or an accessor (matching `useMotion`,
+ * `createMotion`, and `createPan`'s convention). The accessor form is
+ * tracked inside the effect; option changes (e.g., switching `root`)
+ * re-attach the observer. Per-field accessors on options were dropped in
+ * 0.2.0 — wrap the whole options object in an accessor for reactivity.
  *
  * @example Static options
  * const [el, setEl] = createSignal<HTMLElement>()
@@ -69,9 +72,13 @@ export type CreateInViewResult = {
  *   if (view.isInView()) console.log("now in view")
  * })
  *
- * @example Function-form options (reactive)
- * const [root, setRoot] = createSignal<HTMLElement>()
- * const view = createInView(el, () => ({ root, margin: "100px" }))
+ * @example Accessor-form options (reactive)
+ * const [rootEl, setRootEl] = createSignal<HTMLElement>()
+ * const view = createInView(el, () => ({ root: rootEl(), margin: "100px" }))
+ *
+ * @example Static Element ref (captured once)
+ * const div = document.querySelector(".target") as HTMLElement
+ * const view = createInView(div, { once: true })
  *
  * @example Reading the raw entry reactively
  * const view = createInView(el)
@@ -83,11 +90,19 @@ export type CreateInViewResult = {
  * <div ref={setEl}>watch me</div>
  */
 export function createInView(
-  ref: () => Element | null | undefined,
-  options: CreateInViewOptions | (() => CreateInViewOptions) = {},
+  ref: Accessor<Element | null | undefined> | Element | null | undefined,
+  options: CreateInViewOptions | Accessor<CreateInViewOptions> = {},
 ): CreateInViewResult {
   const [isInView, setIsInView] = createSignal(false)
   const [entry, setEntry] = createSignal<IntersectionObserverEntry | null>(null)
+
+  // Normalize ref + options to function form. A static Element is captured
+  // once via a constant accessor — no re-attach on variable reassignment;
+  // pass the accessor form for reactive refs.
+  const getRef: Accessor<Element | null | undefined> =
+    typeof ref === "function" ? (ref as Accessor<Element | null | undefined>) : () => ref
+  const getOpts: Accessor<CreateInViewOptions> =
+    typeof options === "function" ? options : () => options
 
   // createEffect — Solid-idiomatic for side-effect setup (attaching the
   // IntersectionObserver). First iteration runs in the next microtask,
@@ -96,9 +111,9 @@ export function createInView(
   // effect's body are tracked — function-form options that read signals
   // will re-run the effect (and re-attach the observer) on change.
   createEffect(() => {
-    const el = ref()
+    const el = getRef()
     if (!el) return
-    const opts = typeof options === "function" ? options() : options
+    const opts = getOpts()
 
     const threshold = resolveThreshold(opts.amount)
     const observer = new IntersectionObserver(
@@ -119,7 +134,7 @@ export function createInView(
         }
       },
       {
-        root: opts.root?.() ?? null,
+        root: opts.root ?? null,
         rootMargin: opts.margin ?? "0px",
         threshold,
       },

@@ -1,10 +1,19 @@
 import { mergeRefs } from "@solid-primitives/refs"
 import { isMotionValue, type MotionValue } from "motion"
-import { type Accessor, type Component, type JSX, mergeProps, onMount, untrack } from "solid-js"
+import {
+  type Accessor,
+  type Component,
+  createSignal,
+  type JSX,
+  mergeProps,
+  onMount,
+  untrack,
+} from "solid-js"
 import { createStore } from "solid-js/store"
 import { usePresenceContext } from "./presence-context"
 import { asVariantLabels, createMotion, resolveTarget } from "./primitives/createMotion"
 import type { GestureStateName } from "./primitives/gesture-state"
+import { ProjectionContext, useProjectionContext } from "./projection-context"
 import { snapshotValue, TRANSFORM_KEYS, targetToStyle } from "./style"
 import type {
   ElementProps,
@@ -12,6 +21,7 @@ import type {
   MotionMergedProps,
   MotionOptions,
   MotionStyle,
+  ProjectionContextValue,
   Target,
   Transition,
   UseMotionResult,
@@ -58,7 +68,39 @@ import { isControllingVariants, useVariantContext, VariantContext } from "./vari
  * For the common "JSX wrapper does propagation automatically" pattern, use
  * `<motion.div>` (Phase 4).
  */
-export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotionResult {
+/**
+ * Optional internal config for `useMotion`. Used by the motion proxy
+ * to thread the captured OUTER projection context (the one above
+ * m.Provider in the JSX tree) to createMotion. See the JSDoc on the
+ * `parentProjectionContext` field below for the architectural reason.
+ *
+ * Not part of the public API — direct useMotion users don't pass this.
+ */
+export type UseMotionInternalConfig = {
+  /**
+   * Captured outer projection context. When provided, the element's
+   * createMotion uses this for measurement instead of calling
+   * `useProjectionContext()` at ref-fire time.
+   *
+   * Why this matters: the motion proxy wraps the rendered element in
+   * `m.Provider`, so the element's ref fires INSIDE its own
+   * myProjectionCtx — which (for layout-active elements) returns the
+   * element itself as projection parent. Without this config, the
+   * controller measures against itself: every `E - P` evaluates to 0,
+   * no FLIP fires. The proxy captures the OUTER context above m.Provider
+   * (where the parent's context still lives) and passes it here.
+   *
+   * Direct useMotion callers don't pass this — they place
+   * `<m.Provider>` MANUALLY in JSX, so the live context at ref-fire IS
+   * the correct parent context.
+   */
+  parentProjectionContext?: ProjectionContextValue
+}
+
+export function useMotion(
+  opts: MotionOptions | Accessor<MotionOptions>,
+  config?: UseMotionInternalConfig,
+): UseMotionResult {
   const getOpts: () => MotionOptions = typeof opts === "function" ? opts : () => opts
 
   // ---------- Parent context (with controlling-variants shadowing) ----------
@@ -80,6 +122,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
     press: () => (isControlling() ? undefined : actualParentCtx.press?.()),
     focus: () => (isControlling() ? undefined : actualParentCtx.focus?.()),
     inView: () => (isControlling() ? undefined : actualParentCtx.inView?.()),
+    drag: () => (isControlling() ? undefined : actualParentCtx.drag?.()),
     exit: () => (isControlling() ? undefined : actualParentCtx.exit?.()),
     custom: () => (isControlling() ? undefined : actualParentCtx.custom?.()),
     transition: () => (isControlling() ? undefined : actualParentCtx.transition?.()),
@@ -153,7 +196,15 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
   // this flag to skip its own applyStaticStyle pass — without the
   // styleMotionValues branch it would re-apply only the initialTarget half
   // and clobber the MV-snapshot half that's already in the inline style.
+  // `elSignal` is set by `motionRef` once Solid attaches the DOM element.
+  // The `m.Provider` projection-context value reads this lazily so
+  // descendants that consume the context before parent's ref fires fall
+  // back to the inherited projection parent; subsequent measurements
+  // (which run in `frame.read`, post-mount) see this element.
+  const [elSignal, setElSignal] = createSignal<MotionElement | undefined>(undefined)
+
   const motionRef = (el: MotionElement) => {
+    setElSignal(el)
     createMotion(el, getOpts, {
       initialAppliedBySSR:
         initialTarget !== null ||
@@ -161,6 +212,7 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
         styleStaticTransforms !== undefined,
       activeStore,
       parentContext: parentVariantCtx,
+      parentProjectionContext: config?.parentProjectionContext,
       styleMotionValues,
       styleStaticTransforms,
     })
@@ -368,13 +420,59 @@ export function useMotion(opts: MotionOptions | (() => MotionOptions)): UseMotio
     press: () => (active.whilePress ? asVariantLabels(getOpts().press) : undefined),
     focus: () => (active.whileFocus ? asVariantLabels(getOpts().focus) : undefined),
     inView: () => (active.whileInView ? asVariantLabels(getOpts().inView) : undefined),
+    drag: () => (active.whileDrag ? asVariantLabels(getOpts().whileDrag) : undefined),
     exit: () => asVariantLabels(getOpts().exit),
     custom: () => getOpts().custom,
     transition: () => getOpts().transition,
   }
 
+  // ---------- Projection context value pushed via `m.Provider` ----------
+  // Locked in Q3 of the grill session: useMotion direct-use opts into
+  // projection ancestry by wrapping descendants in `<m.Provider>`; the
+  // proxy (Phase 4) auto-wraps so the common case requires no manual
+  // Provider. Without the wrap, descendant `layout` elements fall back
+  // to the inherited (implicit-root document.documentElement) projection
+  // parent — correct top-level behaviour, wrong nested behaviour.
+  //
+  // The chain-reset rule for `scrollAncestors` (locked Q-layoutScroll):
+  // `layout`/`layoutRoot` becomes the new projection parent — outer
+  // scrolls above it cancel for descendants, so the chain RESETS to
+  // either `[el]` (if also `layoutScroll`) or `[]`. A `layoutScroll`-only
+  // element extends the inherited chain without changing the projection
+  // parent.
+  //
+  // Accessors are recomputed on each call so descendants see live
+  // values when opts toggle.
+  const parentProjectionCtx: ProjectionContextValue = useProjectionContext()
+  const myProjectionCtx: ProjectionContextValue = {
+    parentEl: () => {
+      const opts = getOpts()
+      const el = elSignal()
+      if (el !== undefined && (opts.layout || opts.layoutRoot)) return el
+      return parentProjectionCtx.parentEl()
+    },
+    scrollAncestors: () => {
+      const opts = getOpts()
+      const el = elSignal()
+      const needsLayoutPush = Boolean(opts.layout || opts.layoutRoot)
+      const needsScrollPush = Boolean(opts.layoutScroll)
+      if (el === undefined || (!needsLayoutPush && !needsScrollPush)) {
+        return parentProjectionCtx.scrollAncestors()
+      }
+      if (needsLayoutPush) {
+        // RESET — outer scrolls above the new projection parent cancel out.
+        return needsScrollPush ? [el] : []
+      }
+      // layoutScroll-only: extend the inherited chain without changing
+      // projection parent.
+      return [el, ...parentProjectionCtx.scrollAncestors()]
+    },
+  }
+
   const Provider: Component<{ children: JSX.Element }> = (props) => (
-    <VariantContext.Provider value={myVariantCtx}>{props.children}</VariantContext.Provider>
+    <ProjectionContext.Provider value={myProjectionCtx}>
+      <VariantContext.Provider value={myVariantCtx}>{props.children}</VariantContext.Provider>
+    </ProjectionContext.Provider>
   )
 
   // Attach Provider to the callable function. Object.assign merges types

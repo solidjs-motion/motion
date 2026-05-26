@@ -106,8 +106,13 @@ export type CreatePanResult = {
  * Fields update from `pointerdown` forward (including pre-threshold moves)
  * — gate reads on `pan.isPanning()` if you only care about real pans.
  *
- * The `options` argument accepts either a static object or a function form
- * (matching `useMotion`'s convention). The function form is read INSIDE
+ * The `ref` argument accepts EITHER a Solid Accessor returning the element
+ * OR a static HTMLElement. The accessor form re-attaches pointer listeners
+ * when the accessor's return value changes; the static form captures the
+ * element once — reassignment of the variable does NOT re-attach.
+ *
+ * The `options` argument accepts either a static object or an accessor
+ * (matching `useMotion`'s convention). The accessor form is read INSIDE
  * each pointer-event handler, so reactive option changes apply on the next
  * relevant event without re-attaching listeners.
  *
@@ -136,12 +141,18 @@ export type CreatePanResult = {
  * </Show>
  */
 export function createPan(
-  ref: () => HTMLElement | null | undefined,
-  options: CreatePanOptions | (() => CreatePanOptions) = {},
+  ref: Accessor<HTMLElement | null | undefined> | HTMLElement | null | undefined,
+  options: CreatePanOptions | Accessor<CreatePanOptions> = {},
 ): CreatePanResult {
-  // Normalize to a function form. All option reads inside event handlers
-  // call this so the latest reactive values are seen on each event.
-  const getOpts: () => CreatePanOptions = typeof options === "function" ? options : () => options
+  // Normalize ref + options to function form. A static HTMLElement is
+  // captured once via a constant accessor — no re-attach on variable
+  // reassignment; pass the accessor form for reactive refs.
+  const getRef: Accessor<HTMLElement | null | undefined> =
+    typeof ref === "function" ? (ref as Accessor<HTMLElement | null | undefined>) : () => ref
+  // All option reads inside event handlers call getOpts so the latest
+  // reactive values are seen on each event.
+  const getOpts: Accessor<CreatePanOptions> =
+    typeof options === "function" ? options : () => options
 
   // ---- State surface ----
   // isPanning is a plain signal — booleans aren't animate-able, so a full
@@ -166,7 +177,7 @@ export function createPan(
   // callback firing and the next microtask. Re-runs (ref changes) carry the
   // same harmless delay.
   createEffect(() => {
-    const el = ref()
+    const el = getRef()
     if (!el) return
 
     // NOTE: threshold and callbacks are read INSIDE the event handlers via

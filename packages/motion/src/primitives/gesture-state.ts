@@ -125,6 +125,17 @@ export type GestureStateMachine = {
   /** Imperatively toggle a gesture state. Triggers re-resolution + animate(). */
   setActive: SetActive
   /**
+   * The reactive active-flags store. Exposed so peer per-element machinery
+   * (in particular `createLayoutController`, for Reorder's drag-suppressed
+   * FLIP gate) can subscribe to specific flags like `whileDrag` without
+   * needing to route through the state machine's diff effect.
+   *
+   * Read-only by convention — only `setActive` should mutate. The
+   * underlying store is the same instance whether internal to this
+   * machine or provided via `externalActiveStore`.
+   */
+  active: ActiveStore
+  /**
    * Resolves when the next animate dispatched while `exit` is the highest-
    * priority active driver state completes. If no exit animation is in
    * flight AND no exit target is defined, resolves immediately.
@@ -230,8 +241,15 @@ export function createGestureStateMachine(
       ),
       // whileDrag — resolved like any other gesture state's target. Drag's
       // visual state composes with drag's translation through the shared
-      // VisualElement (Q5/C-lean).
-      whileDrag: resolveTarget(opts.whileDrag, variants, undefined, custom),
+      // VisualElement (Q5/C-lean). Inherits the parent's `drag` label so
+      // descendants without their own `whileDrag` prop pick up the
+      // ancestor's drag variant while the ancestor is being dragged.
+      whileDrag: resolveTarget(
+        opts.whileDrag,
+        variants,
+        asVariantLabels(parentVariantCtx.drag?.()),
+        custom,
+      ),
       exit: resolveTarget(opts.exit, variants, asVariantLabels(parentVariantCtx.exit?.()), custom),
     }
   })
@@ -289,11 +307,67 @@ export function createGestureStateMachine(
 
   // ---------- Diff-and-animate effect ----------
   // The single site that calls motion's animate(). Diffs winners against
-  // lastApplied to compute changed keys (a) and removed keys (b). Removed keys
-  // walk Q7's fallback chain: initial → motion default → null.
+  // lastApplied to compute changed keys (a) and removed keys (b). Removed
+  // keys walk the revert chain: initial → motion default → originals → null.
   let prevControls: AnimationPlaybackControls | null = null
   let lastApplied: Record<string, unknown> = {}
   let isFirstRun = true
+
+  // ---------- Pre-gesture computed-style snapshots (originals) ----------
+  // For NON-transform CSS keys (anything not in TRANSFORM_DEFAULTS — e.g.,
+  // box-shadow, background-color, border-color), the removed-key fallback
+  // has no canonical default value to revert to. Motion's `animate(el,
+  // { key: null })` is meant to read computed style at animation start, but
+  // by revert-dispatch time the element's computed style already reflects
+  // the gesture target — so the "revert" lands on the current value and
+  // the property stays visibly stuck.
+  //
+  // captureOriginals() runs ONCE on the first effect iteration (after the
+  // Presence readiness gate, before any animate dispatches). At that
+  // moment the element shows ONLY `initialTarget` + whatever CSS/inline
+  // style was already on it — no gesture has fired. That's the true
+  // baseline. We snapshot it via getComputedStyle and serve it from
+  // getRevertValue() when motion's default returns null.
+  const originals: Record<string, unknown> = {}
+  function captureOriginals(): void {
+    const targets = untrack(() => stateTargets())
+    let cs: CSSStyleDeclaration | undefined
+    for (const stateName in targets) {
+      const target = targets[stateName as GestureStateName]
+      if (!target) continue
+      for (const key in target) {
+        if (key === "transition") continue
+        // Skip keys with a canonical motion default (x/y/scale/opacity/...);
+        // computed-style for transforms gives `"matrix(...)"` not `1`.
+        if (getMotionDefault(key) !== null) continue
+        if (key in originals) continue
+        cs ??= window.getComputedStyle(el as unknown as Element)
+        const raw = cs.getPropertyValue(toKebabCase(key))
+        originals[key] = normalizeOriginal(key, raw)
+      }
+    }
+  }
+
+  /**
+   * Walk the revert chain for a key whose owning state has deactivated:
+   *   1. own `initial` target — explicit user intent wins
+   *   2. motion default — canonical baseline for transforms/opacity
+   *   3. captured original — pre-gesture computed style (non-transform keys)
+   *   4. `null` — motion reads from computed style at animation start
+   *      (in practice the element is already at the gesture value here,
+   *      so this is the "stuck" terminal — the originals branch above is
+   *      what makes non-transform reverts work without the user adding
+   *      every gesture key to `animate`)
+   */
+  function getRevertValue(key: string): unknown {
+    if (initialTarget && key in (initialTarget as Record<string, unknown>)) {
+      return (initialTarget as Record<string, unknown>)[key]
+    }
+    const motionDefault = getMotionDefault(key)
+    if (motionDefault !== null) return motionDefault
+    if (key in originals) return originals[key]
+    return null
+  }
 
   // ---------- onceExitComplete plumbing (Phase 3 — Presence integration) ----------
   // Resolvers queued by `onceExitComplete()` waiters. Drain happens when an
@@ -321,6 +395,13 @@ export function createGestureStateMachine(
     // re-runs and the iteration below treats THAT pass as the first.
     if (isFirstRun && enterReady && !enterReady()) {
       return
+    }
+
+    // Originals capture — one-shot, after the Presence gate so the element
+    // is on-DOM, before any animate dispatch so computed style reflects
+    // strictly the initialTarget + element CSS (no gesture has fired yet).
+    if (isFirstRun) {
+      captureOriginals()
     }
 
     // First-mount guard: either the user opted out via `initial: false` OR
@@ -374,12 +455,15 @@ export function createGestureStateMachine(
         // on pointerdown and snap the element back to its initial state
         // before the user's first move could reach the DOM.
         if (active.whileDrag && (key === "x" || key === "y")) continue
-        // Removed-key fallback: own initial → motion default → null.
-        const initialValue =
-          initialTarget && key in (initialTarget as Record<string, unknown>)
-            ? (initialTarget as Record<string, unknown>)[key]
-            : undefined
-        changes[key] = initialValue !== undefined ? initialValue : getMotionDefault(key)
+        const revertValue = getRevertValue(key)
+        // Equality guard — if the previously-applied value already matches
+        // the revert target, the dispatch would be a zero-effect animate()
+        // that still calls prevControls.stop() and cancels any in-flight
+        // tween. Common case: a gesture whose target happens to equal the
+        // motion default or the captured original. The prune step below
+        // still drops the key from lastApplied so we don't reconsider it.
+        if (lastApplied[key] === revertValue) continue
+        changes[key] = revertValue
       }
     }
 
@@ -419,6 +503,19 @@ export function createGestureStateMachine(
         : undefined,
     })
 
+    // Prune removed keys from lastApplied REGARDLESS of whether we
+    // dispatch below. The removed-key fallback is a one-shot revert:
+    // - If we dispatched it (changes had the key), we're done — drop it.
+    // - If the equality guard above skipped it (revert value already
+    //   matched), lastApplied is already at the right value — drop it
+    //   too so we don't reconsider on every subsequent effect run.
+    // Keeping stale entries used to allow the next iteration to re-fire
+    // the fallback and spuriously cancel any in-flight animation via
+    // prevControls.stop().
+    for (const key in lastApplied) {
+      if (!(key in next)) delete lastApplied[key]
+    }
+
     if (!skipAnimate && Object.keys(changes).length > 0) {
       // Update lastApplied to the new winner snapshot (NOT including removed-
       // key fallback values — those become "applied" only after the animation
@@ -427,11 +524,6 @@ export function createGestureStateMachine(
       // that brings the key back, the diff sees `lastApplied[key] = fallback`
       // vs `next[key] = newValue` and animates correctly).
       lastApplied = { ...lastApplied, ...changes }
-      // Then drop keys that don't appear in `next` from lastApplied so future
-      // re-removals don't compare against stale fallback values.
-      for (const key in lastApplied) {
-        if (!(key in next) && !(key in changes)) delete lastApplied[key]
-      }
 
       // ---------- splitTarget: separate MotionValue refs from plain values ----------
       // Preserved from Phase 1: motion's vanilla animate(el, target) doesn't
@@ -451,10 +543,7 @@ export function createGestureStateMachine(
       const waaPlain: Record<string, unknown> = {}
       for (const key in plain) {
         const value = plain[key]
-        const fallback =
-          initialTarget && key in (initialTarget as Record<string, unknown>)
-            ? (initialTarget as Record<string, unknown>)[key]
-            : getMotionDefault(key)
+        const fallback = getRevertValue(key)
         const routedMV = getValueForAnimate?.(key, fallback)
         if (routedMV) {
           routed.push({ mv: routedMV, value })
@@ -533,10 +622,7 @@ export function createGestureStateMachine(
             // Stage 3: route through the registry the same way the main
             // dispatch does, so a style MV the user also wrote into
             // `animate` doesn't bypass the writer's transform composition.
-            const fallback =
-              initialTarget && key in (initialTarget as Record<string, unknown>)
-                ? (initialTarget as Record<string, unknown>)[key]
-                : getMotionDefault(key)
+            const fallback = getRevertValue(key)
             const routedMV = getValueForAnimate?.(key, fallback)
             if (routedMV && routedMV !== targetMV) {
               // biome-ignore lint/suspicious/noExplicitAny: motion's animate overload soup; runtime correct
@@ -584,7 +670,7 @@ export function createGestureStateMachine(
     })
   }
 
-  return { setActive, onceExitComplete }
+  return { setActive, active, onceExitComplete }
 }
 
 // ---------------------------------------------------------------------------
@@ -619,14 +705,39 @@ function isStateActive(
       return parent.focus?.() !== undefined
     case "whileInView":
       return parent.inView?.() !== undefined
-    // Drag inheritance through context isn't wired in Phase 1's
-    // VariantContextValue (no `drag` slot). Commit 6 will revisit if needed.
     case "whileDrag":
-      return false
+      return parent.drag?.() !== undefined
     case "animate":
     case "exit":
       return false
   }
+}
+
+/** "boxShadow" → "box-shadow"; "box-shadow" → "box-shadow". */
+function toKebabCase(s: string): string {
+  return s.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)
+}
+
+/**
+ * Normalize a captured computed-style value into something WAA can interpolate
+ * from. Only intervenes for shadow keys where computed style returns the
+ * keyword `"none"` (real browsers) or `""` (jsdom + no inline shadow) — WAA
+ * can't smoothly interpolate either to/from a concrete shadow value, so both
+ * become a transparent zero-shadow with matching component shape. Other
+ * values pass through unchanged — if the element already has an explicit
+ * shadow via CSS or inline style, that's the right revert target.
+ */
+function normalizeOriginal(key: string, value: string): string {
+  if (
+    (key === "box-shadow" ||
+      key === "text-shadow" ||
+      key === "boxShadow" ||
+      key === "textShadow") &&
+    (value === "none" || value === "")
+  ) {
+    return "0px 0px 0px rgba(0,0,0,0)"
+  }
+  return value
 }
 
 /** Convert a winners map into the flat value snapshot used by `lastApplied`. */
@@ -716,7 +827,7 @@ function animateValueForState(
     case "exit":
       return opts.exit ?? parentVariantCtx.exit?.()
     case "whileDrag":
-      return opts.whileDrag
+      return opts.whileDrag ?? parentVariantCtx.drag?.()
   }
 }
 

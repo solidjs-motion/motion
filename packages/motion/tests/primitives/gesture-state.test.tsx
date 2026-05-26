@@ -199,13 +199,15 @@ describe("gesture state machine — per-key handoff (Q3b)", () => {
     dispose()
   })
 
-  it("falls a key to null (computed-style read) when no initial AND no motion default", () => {
-    // backgroundColor has no entry in TRANSFORM_DEFAULTS. With no initial
-    // override, the fallback is null — motion's animate() reads from
-    // getComputedStyle at animation start.
+  it("falls a non-transform key to the captured pre-gesture computed value when no initial AND no motion default", () => {
+    // background-color has no entry in TRANSFORM_DEFAULTS. With no initial
+    // override, the originals map snapshots the element's computed style on
+    // the first effect iteration (before any gesture has dispatched) and
+    // serves THAT as the revert target. In jsdom, an unset background-color
+    // computes to "rgba(0, 0, 0, 0)".
     const { setActive, dispose } = makeStateMachine({
       animate: { x: 0 },
-      hover: { backgroundColor: "red" },
+      hover: { "background-color": "red" },
     })
     animateSpy.mockClear()
 
@@ -213,7 +215,27 @@ describe("gesture state machine — per-key handoff (Q3b)", () => {
     setActive("whileHover", false)
 
     const lastCall = animateSpy.mock.calls[animateSpy.mock.calls.length - 1]
-    expect(lastCall?.[1]).toMatchObject({ backgroundColor: null })
+    expect(lastCall?.[1]).toMatchObject({ "background-color": "rgba(0, 0, 0, 0)" })
+    dispose()
+  })
+
+  it("skips the revert dispatch when the gesture value already equals the revert target", () => {
+    // whileHover: { scale: 1 } sets scale to the motion default. The
+    // first hover activation dispatches scale: 1 (vs lastApplied[scale]
+    // = undefined). On hover-end, getRevertValue("scale") = 1 (motion
+    // default) === lastApplied[scale] = 1 — the equality guard skips
+    // the no-op animate() and the spurious prevControls.stop() that
+    // would otherwise cancel any concurrent in-flight tween.
+    const { setActive, dispose } = makeStateMachine({
+      hover: { scale: 1 },
+    })
+
+    setActive("whileHover", true)
+    const callsAfterActivate = animateSpy.mock.calls.length
+    setActive("whileHover", false)
+    const callsAfterDeactivate = animateSpy.mock.calls.length
+
+    expect(callsAfterDeactivate).toBe(callsAfterActivate)
     dispose()
   })
 })

@@ -1,3 +1,4 @@
+import type * as csstype from "csstype"
 import type {
   AnimationPlaybackControls,
   MotionValue,
@@ -92,16 +93,49 @@ export type DragControls = {
 
 type Numeric = number | MotionValue<number> | Accessor<number>
 type Stringish = string | MotionValue<string> | Accessor<string>
-type AnyValue = Numeric | Stringish
 
 /** A property value or an array of values (keyframe sequence). */
 export type Keyframes<T> = T | T[]
 
 // ---------------------------------------------------------------------------
-// Target — strict transform shorthand + index signature for arbitrary CSS.
-// Plain values, MotionValues, and Accessors all accepted. A `transition` key
-// can also be present for per-target transition overrides.
+// Target — every CSS property animatable by motion, plus motion-specific
+// transform shorthands. Plain values, MotionValues, and Accessors all
+// accepted. A `transition` key can also be present for per-target
+// transition overrides.
+//
+// CSS property KEYS come from csstype's camelCase `Properties` interface —
+// the same source Solid uses for JSX types — so users get IDE autocomplete
+// for every standard, vendor-prefixed, and SVG CSS property. Each property's
+// VALUE type is widened to `Keyframes<Numeric | Stringish>` so motion's
+// runtime can accept numbers (auto-suffix px/deg), strings (colors,
+// gradients, CSS keywords), MotionValues, and Solid Accessors uniformly.
+//
+// Properties with stricter motion semantics — `opacity` and `zIndex` only
+// accept numbers, transforms have shorthand keys — are declared explicitly
+// and excluded from the CSS-property map via `Omit` to avoid the wider
+// `Numeric | Stringish` weakening them.
 // ---------------------------------------------------------------------------
+
+/**
+ * Every standard / vendor-prefixed / SVG CSS property name from csstype,
+ * widened so motion's animate() accepts our union of value types.
+ *
+ * Drives IDE autocomplete inside `initial` / `animate` / `hover` / etc.
+ * Without this, the Target's old open `[key: string]` index signature
+ * accepted everything at the type level but TypeScript had nothing to
+ * SUGGEST — users wouldn't know `background-color` or `box-shadow` were
+ * supported until they typed the full key.
+ *
+ * Hyphen-case to match Solid's `style` prop convention (which uses
+ * csstype's PropertiesHyphen). A user writing
+ * `style: { "background-color": "red" }` naturally extends the same
+ * casing to `animate: { "background-color": "blue" }`. Motion's runtime
+ * accepts hyphen-case directly; camelCase keys would need additional
+ * normalization to interoperate with Solid's style binding cleanly.
+ */
+type CssMotionProperties = {
+  [K in keyof csstype.PropertiesHyphen]?: Keyframes<Numeric | Stringish>
+}
 
 export type Target = {
   // Translate shorthand (px when number)
@@ -128,19 +162,23 @@ export type Target = {
 
   // Transform-related but not shorthand
   transformPerspective?: Keyframes<Numeric>
-  transformOrigin?: Stringish
 
-  // Common CSS with narrowed types
+  // Common CSS with narrowed types (numeric-only). Hyphen-case keys to
+  // match Solid's style convention. `opacity` is spelled the same way
+  // in both camel and hyphen casing; `z-index` is the hyphen form.
   opacity?: Keyframes<Numeric>
-  zIndex?: Keyframes<Numeric>
+  "z-index"?: Keyframes<Numeric>
 
   // Per-target transition override (Q3 sub-3)
   transition?: Transition
-
-  // Catch-all for arbitrary CSS (incl. CSS variables like "--foo").
-  // Index signature must accept every named property above, plus Transition.
-  [key: string]: Keyframes<AnyValue> | Transition | undefined
-}
+} & Omit<CssMotionProperties, "opacity" | "z-index" | "transition"> & {
+    // CSS custom properties (e.g. `--my-color: "red"`). The csstype map
+    // doesn't include these — they're free-form per design — so we add
+    // a template-literal index signature scoped to the `--` prefix to
+    // keep autocomplete usable (the OLD `[key: string]: ...` swallowed
+    // EVERY string key, defeating discoverability).
+    [key: `--${string}`]: Keyframes<Numeric | Stringish> | undefined
+  }
 
 // ---------------------------------------------------------------------------
 // Variants
@@ -179,8 +217,14 @@ export type ViewportOptions = {
    *   crossings, so `entry.intersectionRatio` stays stale.
    */
   amount?: "some" | "all" | number | number[]
-  /** Solid-style accessor returning the root element; defaults to viewport. */
-  root?: () => Element | null
+  /**
+   * Root element to scope the {@link IntersectionObserver} to. Defaults to
+   * the viewport. For reactivity, wrap the whole options object in an
+   * accessor — e.g. `createInView(el, () => ({ root: rootEl() }))` or
+   * `useMotion(() => ({ inViewOptions: { root: rootEl() } }))`. Plain
+   * field-level accessors were dropped in 0.2.0.
+   */
+  root?: Element | null
 }
 
 // ---------------------------------------------------------------------------
@@ -188,19 +232,20 @@ export type ViewportOptions = {
 // ---------------------------------------------------------------------------
 
 /**
- * Drag bounds (Q8). Three shapes:
+ * Drag bounds (Q8). Two shapes:
  *
  * - **Numeric** (`{ top, left, right, bottom }`): absolute MV-value bounds.
  *   Missing keys are unbounded on that side.
  * - **HTMLElement**: container the dragged element must stay inside. Bounds
  *   are computed at drag-start from the container's bounding rect.
- * - **`() => HTMLElement | null`**: Solid-style accessor for a reactive
- *   container ref. Called at drag-start.
+ *
+ * For a reactive container, wrap the surrounding `MotionOptions` in an
+ * accessor — e.g. `useMotion(() => ({ drag: true, dragConstraints: containerEl() }))`.
+ * Per-field accessors (`() => HTMLElement | null`) were dropped in 0.2.0.
  */
 export type DragConstraints =
   | { top?: number; left?: number; right?: number; bottom?: number }
   | HTMLElement
-  | (() => HTMLElement | null)
 
 export type DragOptions = {
   drag?: boolean | "x" | "y"
@@ -233,6 +278,40 @@ export type DragOptions = {
    * Mirrors motion-react's `dragListener` prop.
    */
   dragListener?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Reorder options. The primitive `createReorder` accepts `ReorderOptions` for
+// group-level configuration (axis, cancel-on-external-reorder). Per-item
+// drag-handle composition (`dragListener`, `dragControls`) is configured
+// directly on each item's MotionOptions — those fields already live on
+// `DragOptions` and don't need a separate type. See
+// docs/plans/0.2.0-reorder.md and ADR 0008.
+// ---------------------------------------------------------------------------
+
+export type ReorderOptions = {
+  /**
+   * Axis along which items can be dragged AND along which center-cross
+   * detection fires reorders. Mirrors `drag: "x" | "y"` semantics —
+   * the perpendicular axis is locked.
+   *
+   * Default: `"y"`.
+   */
+  axis?: "x" | "y"
+  /**
+   * Cancel an in-progress drag when `values` is mutated from outside the
+   * primitive (e.g. a remove button, server push, or programmatic sort).
+   * When `false` (default), the primitive re-measures and continues unless
+   * the dragged item itself disappears from the array.
+   *
+   * Detection is via reference-identity check against the primitive's
+   * own writes — any `setValues` call from outside the primitive (where
+   * the resulting array is not the one the primitive just produced
+   * itself) is treated as external.
+   *
+   * Default: `false`.
+   */
+  cancelOnExternalReorder?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +349,12 @@ export type MotionCallbacks = {
   onDrag?: (e: PointerEvent, info: PanInfo) => void
   onDragEnd?: (e: PointerEvent, info: PanInfo) => void
   onDragTransitionEnd?: () => void
+
+  // Layout lifecycle (0.2.0)
+  /** Fires when a layout animation starts on this element. */
+  onLayoutAnimationStart?: () => void
+  /** Fires when a layout animation completes (or is cancelled). */
+  onLayoutAnimationComplete?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +406,85 @@ export type MotionOptions = MotionCallbacks &
 
     /** Value passed to function variants. */
     custom?: unknown
+
+    // ---- Layout animations (0.2.0) ----
+
+    /**
+     * Auto-animate when a Solid render changes the element's measured
+     * bounding rect (FLIP). Boolean shorthand for `true` animates both
+     * position and size. Strings narrow the animation:
+     *
+     * - `"position"` — translate only; size changes are instant.
+     * - `"size"` — scale only; position changes are instant.
+     * - `"preserve-aspect"` — translate + uniform scale; maintains the
+     *   rect's aspect ratio across the FLIP. The uniform scale is
+     *   `Math.min(inverseScaleX, inverseScaleY)` — the element starts
+     *   tucked within its source footprint, then grows or shifts to
+     *   fill the target.
+     */
+    layout?: boolean | "position" | "size" | "preserve-aspect"
+
+    /**
+     * Shared-element identity. Two motion elements with the same
+     * `layoutId` (in the same `<LayoutGroup>` scope) match across
+     * mount/unmount; the entering element FLIPs from the donor's last
+     * position. Runs in parallel with the donor's `exit` animation
+     * when both are active under `<Presence>`.
+     */
+    layoutId?: string
+
+    /**
+     * Reactive trigger for layout re-measurement. Use when the cause
+     * of the layout change isn't visible to the automatic triggers
+     * (`ResizeObserver(self)`, `MutationObserver` on the immediate
+     * parent's `style` / `class` / `childList`). Accessor form only —
+     * a static value would never change, so a static dependency is
+     * silently broken; the type forces the function form to surface
+     * the reactivity contract.
+     *
+     * @example
+     * <motion.div layout layoutDependency={() => items().length} />
+     */
+    layoutDependency?: Accessor<unknown>
+
+    /**
+     * Declare THIS element as a scrollable container for the purposes
+     * of descendants' layout animations. Descendants compensate their
+     * measured rects for this element's `scrollLeft` / `scrollTop`, so
+     * user scrolling doesn't pollute layout deltas. The scroll-ancestors
+     * chain RESETS at each `layout`/`layoutRoot` push — outer scrolls
+     * above a new projection parent already cancel for descendants.
+     */
+    layoutScroll?: boolean
+
+    /**
+     * Declare THIS element as the projection root for descendants'
+     * layout animations, overriding the nearest `layout` ancestor.
+     * Use for fixed-positioned or absolute elements whose visual
+     * position differs from their layout-flow position.
+     */
+    layoutRoot?: boolean
+
+    /**
+     * Parent-relative origin point for the layout animation. Each
+     * component in 0..1. Default `{ x: 0, y: 0 }` (top-left, standard
+     * FLIP). `{ x: 0.5, y: 0.5 }` pivots the layout animation from the
+     * projection parent's center; `{ x: 1, y: 1 }` from the
+     * bottom-right.
+     */
+    layoutAnchor?: { x: number; y: number }
+
+    /**
+     * Transition override specifically for layout animations.
+     * Resolution chain: `layoutTransition` (most specific) →
+     * `transition` (on this element) → `<MotionConfig>.transition`
+     * (least specific). When reduced-motion is active, the existing
+     * `mergeTransition` helper applies a final `{ duration: 0 }`
+     * override; the FLIP runs in 0ms and lifecycle callbacks fire
+     * normally. Applies to both `layout`-driven FLIPs and
+     * `layoutId`-driven shared transitions.
+     */
+    layoutTransition?: Transition
   }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +646,7 @@ export type VariantContextValue = {
   press?: Accessor<VariantLabels | undefined>
   focus?: Accessor<VariantLabels | undefined>
   inView?: Accessor<VariantLabels | undefined>
+  drag?: Accessor<VariantLabels | undefined>
   exit?: Accessor<VariantLabels | undefined>
   custom?: Accessor<unknown>
   transition?: Accessor<Transition | undefined>
@@ -549,4 +714,135 @@ export type MotionConfigProps = {
   transition?: Transition
   nonce?: string
   children: JSX.Element
+}
+
+// ---------------------------------------------------------------------------
+// Layout animations (0.2.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * An entry deposited in the layout coordinator by a donor `layoutId`
+ * element at owner-disposal time (synchronous with the `<Show>` / `<For>`
+ * flip — BEFORE any exit animation runs). The consumer reads it during
+ * its mount setup to derive its FLIP "First" rect. See ADR 0007 and
+ * Plan §6.
+ */
+export type LayoutEntry = {
+  /**
+   * Donor's DOM element. The consumer checks `el.isConnected` to decide
+   * whether to prefer a live `getBoundingClientRect()` (Presence
+   * keep-alive case — donor still in DOM during exit) over the stored
+   * {@link rect}.
+   */
+  el: Element
+  /** Donor's bounding rect captured synchronously at owner disposal — pre-exit. */
+  rect: DOMRect
+  /** Donor's projection parent's bounding rect at donation time. */
+  projectionParentRect: DOMRect
+}
+
+/**
+ * Per-`<LayoutGroup>` coordinator brokering `layoutId` handoff between
+ * donor (unmounting) and consumer (mounting) motion elements. A
+ * module-level singleton serves as the implicit root coordinator for
+ * `layoutId` elements not wrapped in an explicit `<LayoutGroup>`. The
+ * runtime implementation lives in `layout-coordinator.ts`.
+ */
+export type LayoutCoordinator = {
+  /**
+   * Deposit a donor's entry for `layoutId`. Schedules an idempotent
+   * per-coordinator RAF cleanup on first donation so unclaimed entries
+   * expire by the next paint; cross-paint handoffs are expected to use
+   * `<Presence>` to keep the donor's DOM element alive.
+   */
+  donate: (layoutId: string, entry: LayoutEntry) => void
+  /**
+   * Atomically retrieve and remove the entry for `layoutId`, returning
+   * `null` if no match exists.
+   */
+  consume: (layoutId: string) => LayoutEntry | null
+  /**
+   * Register a currently-mounted layout-active element under `layoutId`.
+   * Called by `createMotion` at mount. The live registry is queried by
+   * `findLive` to handle the Presence/concurrent-mount case where a
+   * new consumer mounts BEFORE the old donor's `onCleanup` fires.
+   */
+  register: (layoutId: string, el: Element) => void
+  /**
+   * Remove a previously-registered live element. Called at owner
+   * cleanup (before `donate`).
+   */
+  unregister: (layoutId: string, el: Element) => void
+  /**
+   * Find any other live element with this `layoutId` excluding `self`.
+   * Returns the first such element, or null. The consumer reads
+   * `getBoundingClientRect()` on the returned element to derive its
+   * starting position — the most accurate source when the previous
+   * holder of the id is still in the DOM (Presence keep-alive, or
+   * concurrent mount/unmount via `<Show>`).
+   */
+  findLive: (layoutId: string, self: Element) => Element | null
+}
+
+/**
+ * Props for `<LayoutGroup>`. Fragment-only component (no DOM wrapper).
+ * See Plan §3.3 and Q15 of the design grill.
+ */
+export type LayoutGroupProps = {
+  /**
+   * Reactive trigger for re-measurement of all `layout` descendants.
+   * When this accessor's value changes, the group's broadcast counter
+   * bumps and every descendant `layout` element schedules a measurement
+   * pass. Use when an ancestor's class/style change drives the layout
+   * shift and individual descendants can't see it via the automatic
+   * triggers.
+   *
+   * Accessor form only — same rationale as `MotionOptions.layoutDependency`.
+   */
+  dependency?: Accessor<unknown>
+  children: JSX.Element
+}
+
+/**
+ * Context value carrying projection ancestry for layout animations.
+ * Pushed by `<motion.X layout>`, `<motion.X layoutRoot>`, and
+ * `<motion.X layoutScroll>` via `m.Provider` (auto-wrapped by the
+ * proxy, opt-in for `useMotion` direct-use). See ADR 0007.
+ */
+export type ProjectionContextValue = {
+  /**
+   * The element to measure against for projection-parent-local
+   * coordinates. Defaults to `document.documentElement` (top-level
+   * projection parent — gives scroll-stable document-relative
+   * coordinates without a separate scroll-compensation pass).
+   */
+  parentEl: Accessor<Element>
+  /**
+   * `layoutScroll` ancestors that are BETWEEN the consuming element
+   * and its projection parent (inclusive of projection parent if it's
+   * itself `layoutScroll`). The chain RESETS at each new projection
+   * parent pushed by `layout`/`layoutRoot` — outer scrolls above the
+   * new reference frame already cancel out for descendants and would
+   * over-compensate if carried through.
+   */
+  scrollAncestors: Accessor<Element[]>
+}
+
+/**
+ * Context value provided by `<LayoutGroup>`. Carries the per-group
+ * coordinator for `layoutId` handoff and a broadcast counter that
+ * descendant `layout` elements subscribe to for re-measurement. See
+ * Plan §3.3.
+ */
+export type LayoutGroupContextValue = {
+  /** Per-group coordinator for `layoutId` donate/consume. */
+  coordinator: LayoutCoordinator
+  /**
+   * Monotonically-increasing counter. Bumps on every `dependency`
+   * change (via the LayoutGroup's internal `createComputed`).
+   * Descendants subscribe via `createEffect(() => { broadcast();
+   * scheduleMeasurement() })`. The implicit-root default value
+   * is `() => 0` (constant — never re-fires).
+   */
+  broadcast: Accessor<number>
 }
