@@ -55,29 +55,20 @@ bun --filter basic dev
 
 ## Status
 
-Targeting **0.2.0**. The v0.1 surface (animation primitives, MotionValues, gestures, drag,
-Presence, motion proxy + HOC, MV-in-style) is shipped; v0.2.0 adds layout animations,
-shared-element transitions, and drag-to-reorder.
+Current release: **v0.2.0** (pre-1.0). The library covers the canonical
+`motion/react` surface — animation primitives, MotionValues, gestures,
+drag, variants, `<Presence>`, the `<motion.X>` proxy + HOC, MV-in-style,
+layout animations, shared-element transitions (`layoutId`), and
+drag-to-reorder.
 
-- **Shipped in v0.1.x:** `useMotion`, the full MotionValue family (`createMotionValue`,
-  `createTransform`, `createSpring`, `createTime`, `createVelocity`, `createTemplate`),
-  scroll + viewport (`createScroll`, `createInView`), gestures (hover / press / focus /
-  whileInView), drag with constraints/elastic/momentum, `createPan`, `createDragControls`,
-  variants with parent-cascade + controlling-children rule, `<Presence>` +
-  `useAnimatePresence`, `<motion.X>` proxy + `motion.create(Component)` HOC, MV-in-style
-  (per-element value registry, see
-  [ADR 0005](./docs/adr/0005-mv-in-style-value-registry.md)), `<MotionConfig>`,
-  `createReducedMotion`, SSR-friendly first paint.
-- **New in v0.2.0:** layout animations (`layout`, `layoutId`, `<LayoutGroup>`,
-  `layoutScroll`, `layoutRoot`, `layoutAnchor`, `layoutDependency`, `layoutTransition`,
-  `onLayoutAnimationStart/Complete`), drag-to-reorder
-  (`<Reorder.Group>` / `<Reorder.Item>` / `createReorder`), originals tracking for
-  non-transform property reverts, `whileDrag` variant context propagation, Target
-  accepting every CSS property via `csstype.PropertiesHyphen`.
-- **Deferred to v0.3+:** SVG path drawing (`<motion.path pathLength>`), `useAnimate`
-  imperative AnimationControls, `LazyMotion` lazy-loaded feature bundles.
+Deferred to a future minor: SVG path drawing (`<motion.path pathLength>`),
+`useAnimate` imperative AnimationControls, `LazyMotion` lazy-loaded
+feature bundles.
 
-See [`packages/motion/README.md`](./packages/motion/README.md#roadmap) for the per-API breakdown.
+See [`packages/motion/CHANGELOG.md`](./packages/motion/CHANGELOG.md) for
+release history and
+[`packages/motion/README.md`](./packages/motion/README.md#roadmap) for
+the per-API breakdown.
 
 ## License
 

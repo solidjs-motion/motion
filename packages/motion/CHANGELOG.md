@@ -7,15 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0-next.0] — 2026-05-25
-
-> Pre-release iteration of 0.2.0 on the `next` branch — published to npm
-> under the `next` dist-tag for early validation. Promotes to `0.2.0`
-> once we've cycled through any field-found regressions. See
-> [docs/plans/0.2.0-api-audit.md](../../docs/plans/0.2.0-api-audit.md),
-> [docs/plans/0.2.0-layout-animations.md](../../docs/plans/0.2.0-layout-animations.md),
-> and [docs/plans/0.2.0-reorder.md](../../docs/plans/0.2.0-reorder.md) for
-> the design decisions behind this release.
+## [0.2.0] — 2026-05-25
 
 ### Breaking
 
@@ -536,5 +528,5 @@ embedded directly in `style` (`style={{ x: mv }}`).
   0004 (motion proxy + HOC), 0005 (MV-in-style via per-element value
   registry).
 
-[0.2.0-next.0]: https://github.com/solidjs-motion/motion/releases/tag/v0.2.0-next.0
+[0.2.0]: https://github.com/solidjs-motion/motion/releases/tag/v0.2.0
 [0.1.0]: https://github.com/solidjs-motion/motion/releases/tag/v0.1.0
