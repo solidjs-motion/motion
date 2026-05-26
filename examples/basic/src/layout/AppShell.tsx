@@ -23,10 +23,18 @@ import { Wordmark } from "./Wordmark"
 const ROUTER_BASE = __DEPLOY_BASE__.replace(/\/$/, "")
 
 function stripBase(pathname: string): string {
-  if (ROUTER_BASE && pathname.startsWith(ROUTER_BASE)) {
-    return pathname.slice(ROUTER_BASE.length) || "/"
+  let stripped = pathname
+  if (ROUTER_BASE && stripped.startsWith(ROUTER_BASE)) {
+    stripped = stripped.slice(ROUTER_BASE.length) || "/"
   }
-  return pathname
+  // GitHub Pages serves the prerendered `/motion/drag/index.html` under
+  // `/motion/drag/` — see the matching note in NavLinks. Strip a
+  // trailing slash on anything other than root so registry lookups
+  // (which use unslashed entry paths) match either form.
+  if (stripped.length > 1 && stripped.endsWith("/")) {
+    stripped = stripped.slice(0, -1)
+  }
+  return stripped
 }
 
 export function AppShell(props: ParentProps) {

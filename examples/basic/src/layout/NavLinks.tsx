@@ -45,10 +45,26 @@ import { demos } from "../demos/registry"
 const ROUTER_BASE = __DEPLOY_BASE__.replace(/\/$/, "")
 
 function stripBase(pathname: string): string {
-  if (ROUTER_BASE && pathname.startsWith(ROUTER_BASE)) {
-    return pathname.slice(ROUTER_BASE.length) || "/"
+  let stripped = pathname
+  if (ROUTER_BASE && stripped.startsWith(ROUTER_BASE)) {
+    stripped = stripped.slice(ROUTER_BASE.length) || "/"
   }
-  return pathname
+  // Normalize the trailing slash. GitHub Pages serves the prerendered
+  // `/motion/drag/index.html` under `/motion/drag/` — with the slash —
+  // so `useLocation().pathname` reads `"/motion/drag/"` on first paint
+  // even though `<A href="/drag">` issues navigations to the unslashed
+  // form. Registry entries use unslashed paths (`/drag`), so without
+  // this trim `isActive` was false at hydration on a directly-loaded
+  // route. Solid would then see a Show whose SSR'd body needed to be
+  // torn down on hydration but never re-evaluated again until something
+  // else perturbed the subtree — visible as the active marker
+  // staying stuck on the originally-loaded link after a client-side
+  // navigation, only clearing once any other interaction nudged the
+  // tree (hover, focus, etc.).
+  if (stripped.length > 1 && stripped.endsWith("/")) {
+    stripped = stripped.slice(0, -1)
+  }
+  return stripped
 }
 
 export type NavLinksProps = {
