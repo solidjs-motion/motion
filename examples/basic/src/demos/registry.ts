@@ -408,7 +408,7 @@ export const demos: DemoEntry[] = [
     path: "/reorder-with-exit",
     title: "Reorder (with exit)",
     blurb:
-      "Reorder + <Presence>-coordinated exit. Add / remove items at will — removed items fade + scale out via `exit`; survivors FLIP into new slots in parallel. The <For> sits inside <Presence> so drag-reorder + add/remove all route through the keep-alive coordinator.",
+      "Reorder + <Presence exitMethod=\"keep-index\">. Add / remove items at will — removed items fade in place via `exit`; survivors FLIP into new slots after the slot is released. `keep-index` is REQUIRED for layout-animated lists: the default (`\"move-to-end\"`) shuffles the exiting node to the end of the list during its fade, hiding the exit visually.",
     phase: 4,
     component: lazy(() => import("./ReorderWithExit")),
     source: rawSource(() => import("./ReorderWithExit.tsx?raw")),

@@ -374,6 +374,118 @@ export function App() {
 }
 ```
 
+### 13. Layout animations
+
+Add `layout` to a motion element and it'll FLIP to its new rect on every layout-affecting
+change — sibling add/remove, content reflow, parent's `style`/`class` change, own `ResizeObserver`
+firing. The default transition is a critically-damped spring tuned for snappy-but-not-bouncy.
+
+```tsx
+import { motion } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+let nextId = 3
+const INITIAL = [{ id: "1", label: "Task one" }, { id: "2", label: "Task two" }]
+
+export function StackedCards() {
+  const [items, setItems] = createSignal(INITIAL)
+  return (
+    <>
+      <button onClick={() => setItems((p) => [{ id: `${++nextId}`, label: `Task ${nextId}` }, ...p])}>
+        + add
+      </button>
+      <ul>
+        <For each={items()}>
+          {(item) => (
+            <motion.li layout>
+              {item.label}
+              <button onClick={() => setItems((p) => p.filter((i) => i.id !== item.id))}>×</button>
+            </motion.li>
+          )}
+        </For>
+      </ul>
+    </>
+  )
+}
+```
+
+### 14. Shared-element transitions with `layoutId`
+
+Two motion elements with the same `layoutId` in the same `<LayoutGroup>` scope hand off
+animation rect across an unmount/mount. Pair with `<Presence>` so the donor's `exit` and
+the consumer's enter FLIP run in parallel.
+
+```tsx
+import { motion, Presence } from "solidjs-motion"
+import { Show, createSignal } from "solid-js"
+
+export function ExpandableCard() {
+  const [open, setOpen] = createSignal(false)
+  return (
+    <Presence>
+      <Show
+        when={open()}
+        keyed
+        fallback={
+          <motion.button layoutId="card" onClick={() => setOpen(true)} class="thumb">
+            Open
+          </motion.button>
+        }
+      >
+        <motion.div layoutId="card" onClick={() => setOpen(false)} class="hero">
+          Hero content
+        </motion.div>
+      </Show>
+    </Presence>
+  )
+}
+```
+
+### 15. Reorder list (drag + add/remove)
+
+`<Reorder.Group>` + `<Reorder.Item>` for drag-to-reorder. Each Item gets `layout: true`
++ `drag: <axis>` automatically. Pair with `<Presence exitMethod="keep-index">` when items
+have `exit` declared — the default `exitMethod` (`"move-to-end"`) shuffles the exiting
+node to the end of the list during its fade, hiding the exit visually.
+
+```tsx
+import { Presence, Reorder } from "solidjs-motion"
+import { For, createSignal } from "solid-js"
+
+let nextId = 3
+const INITIAL = [{ id: "1", label: "First" }, { id: "2", label: "Second" }]
+
+export function TaskList() {
+  const [items, setItems] = createSignal(INITIAL)
+  const add = () =>
+    setItems([{ id: `${++nextId}`, label: `Task ${nextId}` }, ...items()])
+  const remove = (id: string) => setItems(items().filter((i) => i.id !== id))
+
+  return (
+    <>
+      <button onClick={add}>+ add</button>
+      <Reorder.Group values={items} onReorder={setItems}>
+        <Presence exitMethod="keep-index">
+          <For each={items()}>
+            {(item) => (
+              <Reorder.Item
+                value={item}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                {item.label}
+                <button onClick={() => remove(item.id)}>×</button>
+              </Reorder.Item>
+            )}
+          </For>
+        </Presence>
+      </Reorder.Group>
+    </>
+  )
+}
+```
+
 ## Roadmap
 
 ### Shipped
@@ -450,18 +562,40 @@ export function App() {
 
 - `useMotion` emits a deterministic inline style + `data-motion-hydrated=""` marker on the server. First paint matches the initial target; the client skips the initial-style application on hydration.
 
+**Layout animations** (new in 0.2.0)
+
+- `layout: true | "position" | "size" | "preserve-aspect"` — per-element FLIP from First to Last rect on every layout-affecting change (parent reorder, sibling add/remove, content reflow, ResizeObserver self, parent `style`/`class` change). Critically-damped spring default transition tuned for snappy-but-not-bouncy.
+- `layoutId` — cross-element handoff. Two elements with the same id (within the same `<LayoutGroup>` scope) animate seamlessly across an unmount/mount. Pairs with `<Presence>` for parallel exit + enter FLIP.
+- `<LayoutGroup>` scopes `layoutId` namespacing AND broadcasts dependency changes group-wide.
+- `layoutScroll`, `layoutRoot`, `layoutAnchor`, `layoutDependency`, `layoutTransition` for finer control.
+- `onLayoutAnimationStart` / `onLayoutAnimationComplete` lifecycle callbacks.
+- `Target` accepts every CSS property via `csstype.PropertiesHyphen` — hyphenated keys (`box-shadow`, `background-color`, `--my-custom-prop`) are first-class in `animate`, gesture targets, and `style`.
+
+**Reorder** (new in 0.2.0)
+
+- `<Reorder.Group values onReorder>` + `<Reorder.Item value>` — drag-to-reorder. Items get `layout: true` + `drag: <axis>` automatically; the dragged row tracks the pointer, siblings FLIP into their new slots, list mutation happens live (no preview state).
+- `createReorder(values, setValues, options?)` — the primitive that backs the components. Accepts either `Accessor<T[]>` (signal) or `T[]` (store).
+- Drag-handle pattern via existing `dragListener: false` + `dragControls={controls}` — the row's body stays interactive, drag initiation scoped to a dedicated handle.
+- `cancelOnExternalReorder` for strict mutation guards.
+- Reorder.Item provides variant context to descendants (nested `<motion.button>` inside a row inherits the item's `animate` / `hover` / `whileDrag` / `exit` labels).
+- Pair with `<Presence exitMethod="keep-index">` when items have `exit` declared.
+
+**Improved revert behavior** (new in 0.2.0)
+
+- **Originals tracking** — on first paint, the element's computed style is captured for every gesture-target key that has no canonical motion default (anything outside transforms + opacity). When a gesture deactivates and `animate` doesn't claim the key, the captured original is the revert target. No more redundant `animate.box-shadow` workaround.
+- **`whileDrag` propagates through variant context** — descendants wrapped in `m.Provider` with a matching label in `variants` respond to the parent's drag state, same as `whileHover` / `whilePress` / `whileFocus` / `whileInView`.
+
 **Re-exports from upstream `motion`**
 
 - `animate`, `inView`, `isMotionValue`, `motionValue`, `scroll`, `spring` — for direct use where the framework wrapper isn't needed.
 
-### Deferred to v0.2+
+### Deferred to v0.3+
 
-- Layout animations (`layout` prop, `LayoutGroup`).
-- `layoutId` shared-element transitions.
-- `<Reorder>` drag-to-reorder primitive.
 - SVG path drawing (`<motion.path pathLength>`).
 - `useAnimate` imperative AnimationControls equivalent.
 - `LazyMotion` lazy-loaded feature bundles.
+- Generalized shadow-shape normalization (currently only `"none"`/`""` are normalized for box/text-shadow).
+- Default `exitMethod="keep-index"` on `<Presence>` (currently "move-to-end"; would be a breaking change).
 
 ## License
 
