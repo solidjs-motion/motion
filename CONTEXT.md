@@ -274,6 +274,24 @@ ADR; see [docs/plans/0.2.0-reorder.md](docs/plans/0.2.0-reorder.md) and
   gate; when true on a layout-active element, its `createLayoutController`
   skips the measurement/FLIP path for that element only. Sibling
   controllers are unaffected and FLIP normally.
+- **drag-scroll** — a drag-gesture capability that lives in
+  `createDrag`, so it's available to any `drag`-enabled motion element,
+  not just Reorder. While a drag is active and the pointer enters the
+  threshold zone near a scrollable container's leading/trailing edge,
+  that container auto-scrolls along the drag axis so the drag can
+  continue past the visible viewport; the dragged element's own
+  translate is compensated each frame so it stays under the pointer.
+  Container resolution auto-discovers the nearest scrollable ancestor
+  along the drag axis (falling through to the document/window scroller),
+  or takes an explicit `dragScrollContainer` override. On by default for
+  a scrollable container; a no-op when there's no scroll range. Governed
+  by `dragScroll` (enable), `dragScrollThreshold` (edge-zone px),
+  `dragScrollSpeed` (max px/sec), and `dragScrollContainer` (override).
+  `<Reorder.Group>` passes its [[layoutScroll]] group element as the
+  container explicitly, so the scrolled element is guaranteed to be the
+  one descendant FLIPs compensate for; Reorder additionally folds the
+  scroll delta into its [[center-cross detection]] so swaps stay correct
+  while scrolling.
 - **drag handle (Reorder)** — optional opt-in to drag initiation from
   a specific child node rather than the whole item. Composes with the
   existing `createDragControls` primitive: the user creates a

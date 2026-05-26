@@ -77,6 +77,10 @@ export type MotionOptKey =
   | "dragSnapToOrigin"
   | "dragControls"
   | "dragListener"
+  | "dragScroll"
+  | "dragScrollContainer"
+  | "dragScrollThreshold"
+  | "dragScrollSpeed"
   | "whileDrag"
   // Pan
   | "panThreshold"
@@ -146,6 +150,10 @@ export const MOTION_OPT_KEYS: readonly MotionOptKey[] = [
   "dragSnapToOrigin",
   "dragControls",
   "dragListener",
+  "dragScroll",
+  "dragScrollContainer",
+  "dragScrollThreshold",
+  "dragScrollSpeed",
   "whileDrag",
   // Pan
   "panThreshold",

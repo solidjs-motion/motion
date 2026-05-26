@@ -278,6 +278,53 @@ export type DragOptions = {
    * Mirrors motion-react's `dragListener` prop.
    */
   dragListener?: boolean
+  /**
+   * Auto-scroll a scrollable container as the dragged element nears its
+   * leading/trailing edge ("drag-scroll"), so a drag can continue past
+   * the visible viewport — the expected behaviour for touch and
+   * trackpad. The dragged element's own translate is compensated each
+   * frame so it stays under the pointer while the container scrolls.
+   *
+   * Scrolls along the drag axis only. A no-op when the resolved
+   * container has no scroll range, so it's safe to leave on.
+   *
+   * Default: `true`.
+   */
+  dragScroll?: boolean
+  /**
+   * The container drag-scroll scrolls. When unset, the nearest scrollable
+   * ancestor along the drag axis is auto-discovered (falling through to
+   * the document/window scroller). Pass an element or accessor to scroll
+   * a specific container instead — `<Reorder.Group>` passes its own
+   * element so the scrolled element is the same one descendant layout
+   * animations compensate for.
+   *
+   * Default: auto-discovered nearest scrollable ancestor.
+   */
+  dragScrollContainer?: HTMLElement | (() => HTMLElement)
+  /**
+   * Size in px of the edge zone that arms drag-scroll. When the pointer
+   * is within this distance of the container's leading or trailing edge
+   * (along the drag axis), scrolling begins; speed ramps linearly from 0
+   * at the zone's inner boundary to {@link dragScrollSpeed} at the edge.
+   *
+   * When unset, the default is `min(80, axisSize × 0.2)` — capped so a
+   * tall container doesn't dedicate a huge band to "edge," while a short
+   * container shrinks the zone to stay usable. An explicit value is used
+   * literally (no cap applied).
+   *
+   * Default: `min(80, axisSize × 0.2)`.
+   */
+  dragScrollThreshold?: number
+  /**
+   * Maximum drag-scroll velocity in px/sec, reached when the pointer is
+   * at the very edge. Framerate-independent — applied per frame via the
+   * frame's delta-time, so 60Hz and 120Hz displays scroll at the same
+   * real-world speed.
+   *
+   * Default: `720` (px/sec).
+   */
+  dragScrollSpeed?: number
 }
 
 // ---------------------------------------------------------------------------

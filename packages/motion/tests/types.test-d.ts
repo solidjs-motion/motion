@@ -133,6 +133,15 @@ describe("MotionOptions", () => {
       dragControls?: DragControls
     }>()
   })
+
+  it("accepts drag-scroll options", () => {
+    expectTypeOf<MotionOptions>().toExtend<{
+      dragScroll?: boolean
+      dragScrollContainer?: HTMLElement | (() => HTMLElement)
+      dragScrollThreshold?: number
+      dragScrollSpeed?: number
+    }>()
+  })
 })
 
 // ---------------------------------------------------------------------------
