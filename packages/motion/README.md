@@ -671,6 +671,7 @@ browser paint/composite/GC, and the optimization checklist, see
 **Drag**
 
 - `drag: true | "x" | "y"` axis lock, `dragConstraints` (numeric rect or container `HTMLElement`), `dragElastic`, `dragMomentum`, `dragSnapToOrigin`, `dragTransition`, `whileDrag` for sibling-axis visual state.
+- **Drag-scroll** — `dragScroll` (default `true`), `dragScrollContainer` (`HTMLElement` or accessor; defaults to the nearest scrollable ancestor, falling through to the document scroller), `dragScrollThreshold` (edge-zone px), `dragScrollSpeed` (max px/sec). When a drag nears the container's leading/trailing edge along the drag axis, the container auto-scrolls so the drag can continue past the visible viewport — the dragged element tracks the pointer while it scrolls.
 - `createPan(ref, opts?)` — standalone pan-session primitive. Returns `{ isPanning, point, delta, offset, velocity }` with MotionValueAccessors at the numeric leaves.
 - `createDragControls()` — drag-handle pattern. One element captures the pointer, another moves.
 
@@ -728,6 +729,7 @@ browser paint/composite/GC, and the optimization checklist, see
 - `createReorder(values, setValues, options?)` — the primitive that backs the components. Accepts either `Accessor<T[]>` (signal) or `T[]` (store).
 - Drag-handle pattern via existing `dragListener: false` + `dragControls={controls}` — the row's body stays interactive, drag initiation scoped to a dedicated handle.
 - `cancelOnExternalReorder` for strict mutation guards.
+- **Scrollable lists** — `<Reorder.Group>` is a `layoutScroll` element, so a long list with `max-height` + `overflow: auto` keeps sibling FLIPs correct while scrolled. Drag-scroll is on by default: drag a row toward the group's edge and it auto-scrolls. Tune group-wide via `dragScroll` / `dragScrollThreshold` / `dragScrollSpeed` on `<Reorder.Group>`.
 - Reorder.Item provides variant context to descendants (nested `<motion.button>` inside a row inherits the item's `animate` / `hover` / `whileDrag` / `exit` labels).
 - Pair with `<Presence exitMethod="keep-index">` when items have `exit` declared.
 

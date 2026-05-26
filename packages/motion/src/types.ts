@@ -301,7 +301,7 @@ export type DragOptions = {
    *
    * Default: auto-discovered nearest scrollable ancestor.
    */
-  dragScrollContainer?: HTMLElement | (() => HTMLElement)
+  dragScrollContainer?: HTMLElement | (() => HTMLElement | null | undefined)
   /**
    * Size in px of the edge zone that arms drag-scroll. When the pointer
    * is within this distance of the container's leading or trailing edge
@@ -359,6 +359,34 @@ export type ReorderOptions = {
    * Default: `false`.
    */
   cancelOnExternalReorder?: boolean
+  /**
+   * Group-level drag-scroll toggle. When the group is scrollable and an
+   * item is dragged near its leading/trailing edge, the group auto-scrolls
+   * so the drag can continue past the visible viewport. Applies to every
+   * item in the group; the scrolled element is always the group itself.
+   *
+   * This is the same capability as the drag `dragScroll` option, exposed
+   * once at the list level rather than per item (a list-wide behaviour).
+   * `createReorder` forwards it (and the threshold/speed below) into each
+   * item's drag.
+   *
+   * Default: `true`.
+   */
+  dragScroll?: boolean
+  /**
+   * Edge-zone size in px that arms drag-scroll. See the drag
+   * `dragScrollThreshold` option. Applies group-wide.
+   *
+   * Default: `min(80, axisSize × 0.2)`.
+   */
+  dragScrollThreshold?: number
+  /**
+   * Maximum drag-scroll velocity in px/sec. See the drag `dragScrollSpeed`
+   * option. Applies group-wide.
+   *
+   * Default: `720` (px/sec).
+   */
+  dragScrollSpeed?: number
 }
 
 // ---------------------------------------------------------------------------

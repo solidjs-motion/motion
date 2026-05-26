@@ -137,7 +137,7 @@ describe("MotionOptions", () => {
   it("accepts drag-scroll options", () => {
     expectTypeOf<MotionOptions>().toExtend<{
       dragScroll?: boolean
-      dragScrollContainer?: HTMLElement | (() => HTMLElement)
+      dragScrollContainer?: HTMLElement | (() => HTMLElement | null | undefined)
       dragScrollThreshold?: number
       dragScrollSpeed?: number
     }>()
@@ -561,10 +561,13 @@ describe("0.2.0 audit — Accessor<Options> | Options widening", () => {
 // ---------------------------------------------------------------------------
 
 describe("createReorder", () => {
-  it("ReorderOptions has axis and cancelOnExternalReorder, both optional", () => {
+  it("ReorderOptions has axis, cancel-on-external, and group-level drag-scroll knobs", () => {
     expectTypeOf<ReorderOptions>().toEqualTypeOf<{
       axis?: "x" | "y"
       cancelOnExternalReorder?: boolean
+      dragScroll?: boolean
+      dragScrollThreshold?: number
+      dragScrollSpeed?: number
     }>()
   })
 

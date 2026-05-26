@@ -287,11 +287,14 @@ ADR; see [docs/plans/0.2.0-reorder.md](docs/plans/0.2.0-reorder.md) and
   a scrollable container; a no-op when there's no scroll range. Governed
   by `dragScroll` (enable), `dragScrollThreshold` (edge-zone px),
   `dragScrollSpeed` (max px/sec), and `dragScrollContainer` (override).
-  `<Reorder.Group>` passes its [[layoutScroll]] group element as the
-  container explicitly, so the scrolled element is guaranteed to be the
-  one descendant FLIPs compensate for; Reorder additionally folds the
-  scroll delta into its [[center-cross detection]] so swaps stay correct
-  while scrolling.
+  `<Reorder.Group>` exposes `dragScroll` / `dragScrollThreshold` /
+  `dragScrollSpeed` at the **group** level (a list-wide behaviour, not
+  per item) and fans them down to every item's drag — the same way
+  `axis` becomes each item's `drag`. It also passes its [[layoutScroll]]
+  group element as the container explicitly, so the scrolled element is
+  guaranteed to be the one descendant FLIPs compensate for; Reorder
+  additionally folds the scroll delta into its [[center-cross detection]]
+  so swaps stay correct while scrolling.
 - **drag handle (Reorder)** — optional opt-in to drag initiation from
   a specific child node rather than the whole item. Composes with the
   existing `createDragControls` primitive: the user creates a

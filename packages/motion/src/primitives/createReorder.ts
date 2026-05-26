@@ -226,6 +226,19 @@ export function createReorder<T>(
    * each item's height — a follow-up can refine that math). */
   let slotCenterByValue: Map<T, number> | null = null
 
+  // ---------- Group element + drag-scroll bridge ----------
+  /** The group's container element, captured via `group.ref`. Passed to
+   * each item's drag as `dragScrollContainer` so drag-scroll moves THIS
+   * element (the [[layoutScroll]] one descendant FLIPs compensate for),
+   * not some auto-discovered ancestor. */
+  let groupEl: HTMLElement | null = null
+  /** The group's scroll position along the active axis at drag-start.
+   * drag-scroll (in createDrag) scrolls `groupEl` while the dragged item
+   * nears an edge; the center-cross math must fold that scroll delta into
+   * `draggedCenter` to stay in the layout-coord space `slotCenterByValue`
+   * uses. Both layers just read the same `scrollTop` — no contract. */
+  let groupScrollAtDragStart = 0
+
   // ---------- External-mutation detection ----------
   /** True while we're inside `internalSetValues` — the values-watcher
    * uses this re-entrancy flag (rather than reference identity) to
@@ -366,6 +379,10 @@ export function createReorder<T>(
     activeElement = elementByValue.get(value) ?? null
     activePointerId = event.pointerId
     cumulativeLayoutDelta = 0
+    // Snapshot the group's scroll position so handleDrag can fold any
+    // drag-scroll movement into the layout-coord center-cross math.
+    groupScrollAtDragStart =
+      groupEl !== null ? (activeAxis === "y" ? groupEl.scrollTop : groupEl.scrollLeft) : 0
     setDraggingSig(() => value)
     snapshotAll()
     draggedStartRect = bcrSnapshot.get(value) ?? null
@@ -406,9 +423,20 @@ export function createReorder<T>(
 
     const ax = activeAxis
     const offsetAlongAxis = ax === "y" ? info.offset.y : info.offset.x
-    // Pointer position along axis = original slot center + cumulative drag.
-    // Frozen draggedStartRect keeps this stable across mid-drag reorders.
-    const draggedCenter = centerOf(draggedStartRect, ax) + offsetAlongAxis
+    // drag-scroll compensation: the group may have auto-scrolled since
+    // drag-start (createDrag owns the scroll + the dragged MV). `info.offset`
+    // is the pointer's viewport delta and does NOT include scroll, but
+    // `slotCenterByValue` lives in layout coords (offsetTop, scroll-
+    // independent). Add the scroll delta so the dragged center is compared
+    // in the same layout space as the slot centers.
+    const groupScrollDelta =
+      groupEl !== null
+        ? (ax === "y" ? groupEl.scrollTop : groupEl.scrollLeft) - groupScrollAtDragStart
+        : 0
+    // Pointer position along axis = original slot center + cumulative drag
+    // + group scroll since drag-start. Frozen draggedStartRect keeps this
+    // stable across mid-drag reorders.
+    const draggedCenter = centerOf(draggedStartRect, ax) + offsetAlongAxis + groupScrollDelta
 
     // Center-cross loop — handles fast drags crossing multiple siblings
     // in one onDrag tick. All slot centers come from `slotCenterByValue`,
@@ -514,10 +542,12 @@ export function createReorder<T>(
   // ---------- Public API ----------
   return {
     group: {
-      // v1: no behavior. Held for API stability so 0.3.x features
-      // (auto-scroll near edges, drag bounds scoped to the container)
-      // can attach here without changing the surface.
-      ref: (_el: HTMLElement): void => {},
+      // Capture the container so drag-scroll can target it and the
+      // center-cross math can read its scroll position. Drag bounds scoped
+      // to the container (a further 0.3.x feature) can attach here too.
+      ref: (el: HTMLElement): void => {
+        groupEl = el
+      },
     },
     // The runtime accepts an optional third `config` arg used by the
     // JSX `<Reorder.Item>` wrapper to thread the outer projection
@@ -536,6 +566,7 @@ export function createReorder<T>(
 
       const mergedOpts: () => MotionOptions = () => {
         const u = getUserOpts()
+        const groupOpts = getOpts()
         return {
           ...u,
           // Reorder-locked fields — silently override caller.
@@ -543,6 +574,16 @@ export function createReorder<T>(
           drag: axisOf(),
           dragSnapToOrigin: true,
           dragMomentum: false,
+          // Drag-scroll is a list-wide behaviour, configured once on the
+          // group and fanned to every item here (like `axis` → `drag`).
+          // The container is always the group element — the layoutScroll
+          // one descendant FLIPs compensate for, not an auto-discovered
+          // ancestor. `undefined` values fall through to createDrag's
+          // defaults (on, min(80,20%), 720 px/sec).
+          dragScroll: groupOpts.dragScroll,
+          dragScrollThreshold: groupOpts.dragScrollThreshold,
+          dragScrollSpeed: groupOpts.dragScrollSpeed,
+          dragScrollContainer: () => groupEl,
           // Composed callbacks — caller's runs first.
           onDragStart: compose(u.onDragStart, (e: PointerEvent) => handleDragStart(value, e)),
           onDrag: compose(u.onDrag, (_e: PointerEvent, info: PanInfo) => handleDrag(value, info)),

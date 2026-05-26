@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-05-26
+
+### Added
+
+- **Drag-scroll.** A `drag`-enabled element now auto-scrolls its
+  scrollable container when the pointer nears the container's
+  leading/trailing edge along the drag axis, so a drag can continue past
+  the visible viewport (the expected touch + trackpad behaviour). The
+  dragged element's own translate is compensated each frame so it stays
+  under the pointer. Lives in the drag gesture (`createDrag`), so any
+  `<motion.X drag>` gets it. New drag options:
+  - `dragScroll` (default `true`) — enable/disable.
+  - `dragScrollContainer` (`HTMLElement | (() => HTMLElement | null | undefined)`)
+    — the container to scroll; defaults to the nearest scrollable
+    ancestor along the drag axis, falling through to the document
+    scroller.
+  - `dragScrollThreshold` (px) — edge-zone size; an explicit value is
+    literal, the default is `min(80, axisSize × 0.2)`.
+  - `dragScrollSpeed` (px/sec, default `720`) — max velocity, applied
+    framerate-independently via per-frame delta-time.
+- **`<Reorder.Group>` is now a `layoutScroll` element.** A long list
+  with `max-height` + `overflow: auto` keeps its sibling FLIP cascade
+  correct while the group is scrolled (descendant projections compensate
+  for the group's scroll offset). Mirrors motion-react parity.
+- **Group-level drag-scroll on Reorder.** `<Reorder.Group>` exposes
+  `dragScroll` / `dragScrollThreshold` / `dragScrollSpeed` as list-wide
+  options (fanned to every item's drag, like `axis` → each item's
+  `drag`); the scrolled container is always the group element so it
+  matches the one descendant FLIPs compensate for. On by default when
+  the group is scrollable.
+- **Performance guide.** New [`PERFORMANCE.md`](./PERFORMANCE.md)
+  (mental model + measurement workflow + optimization checklist),
+  bench `§09 — Reorder crossing` in
+  [`bench/BASELINES.md`](./bench/BASELINES.md), and a `/reorder-perf`
+  profiling stage in the basic example.
+
 ## [0.2.1] — 2026-05-25
 
 ### Fixed

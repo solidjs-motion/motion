@@ -120,6 +120,12 @@ export default function ReorderPerfStage() {
   const [n, setN] = createSignal<number>(100)
   const [variant, setVariant] = createSignal<"minimal" | "card">("minimal")
   const [running, setRunning] = createSignal(false)
+  // drag-scroll knobs — the group is scrollable (max-height + overflow), so
+  // dragging an item toward the top/bottom edge auto-scrolls. Toggle off to
+  // feel the difference; tune speed/threshold to sanity-check the options.
+  const [dragScroll, setDragScroll] = createSignal(true)
+  const [dragScrollSpeed, setDragScrollSpeed] = createSignal(720)
+  const [dragScrollThreshold, setDragScrollThreshold] = createSignal(80)
 
   // Regenerate items whenever N changes; createMemo dedupes when the same N
   // is selected. The fresh array reference is what onReorder mutates.
@@ -208,6 +214,63 @@ export default function ReorderPerfStage() {
         >
           {running() ? "Running…" : "Run auto-drag"}
         </button>
+
+        <span
+          style={{ width: "1px", "align-self": "stretch", background: "var(--color-border)" }}
+        />
+
+        <label style={{ color: "var(--color-fg)", display: "flex", gap: "0.4rem" }}>
+          <input
+            type="checkbox"
+            checked={dragScroll()}
+            onChange={(e) => setDragScroll(e.currentTarget.checked)}
+            disabled={running()}
+            data-testid="reorder-perf/drag-scroll"
+          />
+          drag-scroll
+        </label>
+        <label
+          style={{
+            color: "var(--color-fg)",
+            display: "flex",
+            gap: "0.4rem",
+            opacity: dragScroll() ? "1" : "0.5",
+          }}
+        >
+          speed:
+          <input
+            type="number"
+            min="50"
+            max="3000"
+            step="60"
+            value={dragScrollSpeed()}
+            onChange={(e) => setDragScrollSpeed(Number(e.currentTarget.value))}
+            disabled={running() || !dragScroll()}
+            data-testid="reorder-perf/drag-scroll-speed"
+            style={{ width: "5rem" }}
+          />
+        </label>
+        <label
+          style={{
+            color: "var(--color-fg)",
+            display: "flex",
+            gap: "0.4rem",
+            opacity: dragScroll() ? "1" : "0.5",
+          }}
+        >
+          threshold:
+          <input
+            type="number"
+            min="10"
+            max="300"
+            step="10"
+            value={dragScrollThreshold()}
+            onChange={(e) => setDragScrollThreshold(Number(e.currentTarget.value))}
+            disabled={running() || !dragScroll()}
+            data-testid="reorder-perf/drag-scroll-threshold"
+            style={{ width: "5rem" }}
+          />
+        </label>
       </div>
 
       <Reorder.Group
@@ -216,6 +279,9 @@ export default function ReorderPerfStage() {
         }}
         values={itemsForN}
         onReorder={setItems}
+        dragScroll={dragScroll()}
+        dragScrollSpeed={dragScrollSpeed()}
+        dragScrollThreshold={dragScrollThreshold()}
         data-testid="reorder-perf/group"
         style={{
           "list-style": "none",

@@ -1,5 +1,13 @@
 import { type AnimationPlaybackControls, animate } from "motion"
-import { HTMLVisualElement, type MotionValue, time, visualElementStore } from "motion-dom"
+import {
+  cancelFrame,
+  type FrameData,
+  frame,
+  HTMLVisualElement,
+  type MotionValue,
+  time,
+  visualElementStore,
+} from "motion-dom"
 import { createEffect, onCleanup } from "solid-js"
 import type {
   DragConstraints,
@@ -278,6 +286,47 @@ const DEFAULT_DRAG_TRANSITION = {
   restSpeed: 10,
 }
 
+// ---------------------------------------------------------------------------
+// drag-scroll — auto-scroll a scrollable container while a drag nears its
+// edge. See the **drag-scroll** glossary term + ADR 0008 follow-up note.
+// ---------------------------------------------------------------------------
+
+/** Default max drag-scroll velocity (px/sec) — reached at the very edge. */
+const DEFAULT_DRAG_SCROLL_SPEED = 720
+/** Cap on the auto-computed edge-zone size (px). */
+const DRAG_SCROLL_THRESHOLD_MAX = 80
+/** Edge-zone size as a fraction of the container's axis extent. */
+const DRAG_SCROLL_THRESHOLD_RATIO = 0.2
+
+function clamp01(n: number): number {
+  return n < 0 ? 0 : n > 1 ? 1 : n
+}
+
+/**
+ * True when `node` is its document's root scroller (the element whose
+ * scroll moves the viewport). Edge detection differs for this case —
+ * the visible edges are the viewport bounds, not a bounding rect.
+ */
+function isRootScroller(node: HTMLElement): boolean {
+  return (
+    node === document.scrollingElement ||
+    node === document.documentElement ||
+    node === document.body
+  )
+}
+
+/**
+ * Whether `node` can scroll along `axis` — both `overflow` allows it AND
+ * there's actual scroll range. Used by the nearest-scrollable-ancestor
+ * walk when no explicit `dragScrollContainer` is given.
+ */
+function isScrollableAlong(node: HTMLElement, axis: "x" | "y"): boolean {
+  const style = getComputedStyle(node)
+  const overflow = axis === "y" ? style.overflowY : style.overflowX
+  if (overflow !== "auto" && overflow !== "scroll" && overflow !== "overlay") return false
+  return axis === "y" ? node.scrollHeight > node.clientHeight : node.scrollWidth > node.clientWidth
+}
+
 /**
  * Bind pointer-driven drag to an element. Layers on top of createPan for the
  * pointer session; adds transform writes, body styles, pointer capture, and
@@ -318,9 +367,211 @@ export function createDrag(
    * owner disposal AND on a fresh pointerdown (to interrupt a settling
    * momentum if the user grabs again mid-decay). */
   let momentumControls: AnimationPlaybackControls[] = []
+  /** Last PanInfo offset seen this session. The drag-scroll frame loop
+   * re-derives the dragged MV from this between pointermoves (when the
+   * pointer is parked in the edge zone, no onDrag fires but the loop must
+   * keep writing `dragStart + offset + cumulativeScrollDelta`). */
+  let lastOffset = { x: 0, y: 0 }
+
+  // ---------- drag-scroll session state ----------
+  /** Axis the drag-scroll loop scrolls along: the drag lock axis when
+   * locked, else "y" (the common scroll direction for `drag: true`). */
+  let scrollAxis: "x" | "y" = "y"
+  /** Resolved container for this session — explicit override, nearest
+   * scrollable ancestor, or the root scroller. `null` when drag-scroll is
+   * disabled or no container resolved. Captured once at drag-start. */
+  let scrollContainer: HTMLElement | null = null
+  /** Cumulative px the container has auto-scrolled along `scrollAxis` this
+   * session. Folded into the dragged MV every frame so the element stays
+   * under the pointer; Reorder reads the same `scrollTop` for swap math. */
+  let cumulativeScrollDelta = 0
+  /** Last pointer position along `scrollAxis` in client (viewport) coords —
+   * the loop's edge detection reads this so a parked pointer keeps the
+   * loop alive. */
+  let lastPointerClient = 0
+  /** Max scroll along `scrollAxis` captured at drag-start, BEFORE the
+   * dragged element's transform inflates the container's scrollable area.
+   * The loop clamps to this instead of the live `getMaxScroll()`: a
+   * transformed in-flow child grows `scrollHeight`, and trusting the live
+   * value lets the dragged item's own overshoot keep extending the bound —
+   * a runaway where the container appears to grow and the item drags out
+   * the bottom. Reorder keeps total content height constant, so the
+   * snapshot stays valid for the session. */
+  let scrollBoundAtStart = 0
+  /** True while the self-sustaining `frame.update` loop is running. */
+  let autoScrollActive = false
 
   function isDragEnabled(): boolean {
     return Boolean(getOpts().drag)
+  }
+
+  // ---------- drag-scroll helpers (operate on the resolved container) ----------
+  function getScroll(): number {
+    if (scrollContainer === null) return 0
+    return scrollAxis === "y" ? scrollContainer.scrollTop : scrollContainer.scrollLeft
+  }
+
+  function setScroll(value: number): void {
+    if (scrollContainer === null) return
+    if (scrollAxis === "y") scrollContainer.scrollTop = value
+    else scrollContainer.scrollLeft = value
+  }
+
+  function getMaxScroll(): number {
+    if (scrollContainer === null) return 0
+    return scrollAxis === "y"
+      ? scrollContainer.scrollHeight - scrollContainer.clientHeight
+      : scrollContainer.scrollWidth - scrollContainer.clientWidth
+  }
+
+  /** Visible edges of the container along `scrollAxis`, in client coords:
+   * `[leadingEdge, trailingEdge, extent]`. For the root scroller these are
+   * the viewport bounds; for an element, its bounding rect. */
+  function getViewportEdges(): [number, number, number] {
+    if (scrollContainer !== null && isRootScroller(scrollContainer)) {
+      const size = scrollAxis === "y" ? window.innerHeight : window.innerWidth
+      return [0, size, size]
+    }
+    const rect = (scrollContainer as HTMLElement).getBoundingClientRect()
+    return scrollAxis === "y"
+      ? [rect.top, rect.bottom, rect.height]
+      : [rect.left, rect.right, rect.width]
+  }
+
+  /** Resolve the container to scroll for this drag session. Explicit
+   * override wins; otherwise walk up to the nearest scrollable ancestor,
+   * falling through to the document's root scroller. */
+  function resolveScrollContainer(axis: "x" | "y"): HTMLElement | null {
+    const override = getOpts().dragScrollContainer
+    if (override !== undefined) {
+      // Explicit override — an accessor not yet resolved (e.g. a ref still
+      // null pre-mount) yields no scroll rather than silently falling back
+      // to auto-discovery, which could pick an unexpected ancestor.
+      const resolved = typeof override === "function" ? override() : override
+      return resolved ?? null
+    }
+    let node: HTMLElement | null = el.parentElement
+    while (node) {
+      if (isScrollableAlong(node, axis)) return node
+      node = node.parentElement
+    }
+    return (document.scrollingElement as HTMLElement | null) ?? document.documentElement
+  }
+
+  /** Edge-zone intent from the last pointer position: which direction to
+   * scroll (-1 leading, +1 trailing, 0 none) and the linear-ramp ratio
+   * (0 at the zone's inner boundary, 1 at/past the edge). */
+  function computeScrollIntent(): { direction: -1 | 0 | 1; ratio: number } {
+    const [start, end, size] = getViewportEdges()
+    const threshold =
+      getOpts().dragScrollThreshold ??
+      Math.min(DRAG_SCROLL_THRESHOLD_MAX, size * DRAG_SCROLL_THRESHOLD_RATIO)
+    if (threshold <= 0) return { direction: 0, ratio: 0 }
+    const distToStart = lastPointerClient - start
+    const distToEnd = end - lastPointerClient
+    if (distToStart >= threshold && distToEnd >= threshold) return { direction: 0, ratio: 0 }
+    // Tiny container where both zones overlap: scroll toward the nearer edge.
+    if (distToStart <= distToEnd) {
+      return { direction: -1, ratio: clamp01((threshold - distToStart) / threshold) }
+    }
+    return { direction: 1, ratio: clamp01((threshold - distToEnd) / threshold) }
+  }
+
+  function hasScrollRoom(direction: -1 | 1): boolean {
+    // Trailing bound is the drag-start snapshot, not the live (drag-inflated)
+    // getMaxScroll() — see scrollBoundAtStart.
+    return direction < 0 ? getScroll() > 0 : getScroll() < scrollBoundAtStart
+  }
+
+  /** Frame-loop body. Self-sustaining via `frame.update(_, keepAlive=true)`;
+   * self-cancels when the pointer leaves the zone or the container can't
+   * scroll further. */
+  function autoScrollTick(data: FrameData): void {
+    if (!autoScrollActive || scrollContainer === null) return
+    const { direction, ratio } = computeScrollIntent()
+    if (direction === 0) {
+      stopAutoScroll()
+      return
+    }
+    const maxSpeed = getOpts().dragScrollSpeed ?? DEFAULT_DRAG_SCROLL_SPEED
+    const px = direction * maxSpeed * ratio * (data.delta / 1000)
+    const before = getScroll()
+    // Clamp the target to the drag-start bound, not the live getMaxScroll()
+    // (which the dragged element's transform inflates — see scrollBoundAtStart).
+    const target = Math.max(0, Math.min(before + px, scrollBoundAtStart))
+    setScroll(target)
+    const actual = getScroll() - before
+    if (actual === 0) {
+      // Boundary reached — nothing scrolled. Self-cancel; the next onDrag
+      // re-arms only if there's scroll room again.
+      stopAutoScroll()
+      return
+    }
+    cumulativeScrollDelta += actual
+    // Apply the scroll delta INCREMENTALLY, not via applyDragTransform's
+    // absolute recompute. Between pointermoves the loop is the only thing
+    // running, but a concurrent writer (notably createReorder's per-swap
+    // `mv -= cumulativeLayoutDelta` slot compensation) may have adjusted the
+    // MV since the last frame. Recomputing `base + offset + cumulativeScroll`
+    // here would discard that adjustment and the dragged element would drift
+    // off-screen by the slot delta. Nudging by `actual` preserves whatever
+    // the MV currently holds. `handlePan` keeps the absolute recompute — it's
+    // paired with handleDrag re-applying the layout comp every pointermove.
+    applyScrollIncrement(actual)
+  }
+
+  /** Nudge the scroll-axis MV by `delta` px, preserving the current value
+   * (and thus any concurrent writer's adjustment). */
+  function applyScrollIncrement(delta: number): void {
+    if (scrollAxis === "y") {
+      if (yMV) yMV.set(yMV.get() + delta)
+    } else if (xMV) {
+      xMV.set(xMV.get() + delta)
+    }
+  }
+
+  function maybeArmAutoScroll(): void {
+    if (autoScrollActive || scrollContainer === null) return
+    if (getOpts().dragScroll === false) return
+    const { direction } = computeScrollIntent()
+    if (direction !== 0 && hasScrollRoom(direction)) {
+      autoScrollActive = true
+      frame.update(autoScrollTick, true)
+    }
+  }
+
+  function stopAutoScroll(): void {
+    if (!autoScrollActive) return
+    autoScrollActive = false
+    cancelFrame(autoScrollTick)
+  }
+
+  /** Write the dragged element's x/y MVs from the current drag offset plus
+   * accumulated scroll compensation. Shared by `handlePan` (on pointermove)
+   * and the drag-scroll loop (between pointermoves). Mirrors the axis-lock
+   * + elastic rules of the original inline writer. */
+  function applyDragTransform(): void {
+    if (!xMV || !yMV) return
+    const axis = getOpts().drag
+    const elastic = getOpts().dragElastic ?? DEFAULT_ELASTIC
+    if (axis !== "y") {
+      const scrollComp = scrollAxis === "x" ? cumulativeScrollDelta : 0
+      const candidateX = dragStartX + lastOffset.x + scrollComp
+      xMV.set(
+        sessionBounds
+          ? applyElastic(candidateX, sessionBounds.minX, sessionBounds.maxX, elastic)
+          : candidateX,
+      )
+    }
+    if (axis !== "x") {
+      const scrollComp = scrollAxis === "y" ? cumulativeScrollDelta : 0
+      const candidateY = dragStartY + lastOffset.y + scrollComp
+      yMV.set(
+        sessionBounds
+          ? applyElastic(candidateY, sessionBounds.minY, sessionBounds.maxY, elastic)
+          : candidateY,
+      )
+    }
   }
 
   function restoreBodyAndElementStyles(): void {
@@ -406,6 +657,24 @@ export function createDrag(
     // a rare corner case — they re-apply on the NEXT session).
     sessionBounds = resolveConstraints(getOpts().dragConstraints, el, dragStartX, dragStartY)
 
+    // drag-scroll session init. Resolve the scroll container once at
+    // drag-start (the auto-discover walk reads layout, so do it once).
+    // The loop arms lazily on the first pointermove that enters the edge
+    // zone. `cumulativeScrollDelta`/`lastOffset` reset per session.
+    cumulativeScrollDelta = 0
+    lastOffset = { x: info.offset.x, y: info.offset.y }
+    if (getOpts().dragScroll === false) {
+      scrollContainer = null
+      scrollBoundAtStart = 0
+    } else {
+      scrollAxis = axis === "x" ? "x" : "y"
+      scrollContainer = resolveScrollContainer(scrollAxis)
+      // Snapshot the legitimate scroll range NOW, before the drag transform
+      // inflates the container's scrollHeight. At drag-start the offset is
+      // ~0, so this reads the natural content extent.
+      scrollBoundAtStart = scrollContainer !== null ? getMaxScroll() : 0
+    }
+
     // Body + touch-action overrides — saved so the exact prior values
     // restore on session end (don't assume defaults).
     savedUserSelect = document.body.style.userSelect
@@ -430,35 +699,31 @@ export function createDrag(
   const handlePan = (event: PointerEvent, info: PanInfo) => {
     if (!isDragEnabled() || !xMV || !yMV) return
 
-    const axis = getOpts().drag
-    // Axis lock: when drag is "x" or "y", we SKIP writes to the locked axis
-    // entirely — matches motion/react's per-axis shouldDrag short-circuit.
-    // Writing dragStartY+0 to yMV when y is locked would generate
-    // no-op-but-non-empty writes that consumers and tests both observe.
-    const writeX = axis !== "y"
-    const writeY = axis !== "x"
-    const elastic = getOpts().dragElastic ?? DEFAULT_ELASTIC
+    // Record this frame's offset + pointer position so the drag-scroll
+    // loop can re-derive the transform between pointermoves, then write
+    // the MVs (axis-lock + elastic live in applyDragTransform).
+    lastOffset = { x: info.offset.x, y: info.offset.y }
+    lastPointerClient = scrollAxis === "y" ? event.clientY : event.clientX
+    applyDragTransform()
 
-    if (writeX) {
-      const candidateX = dragStartX + info.offset.x
-      const finalX = sessionBounds
-        ? applyElastic(candidateX, sessionBounds.minX, sessionBounds.maxX, elastic)
-        : candidateX
-      xMV.set(finalX)
-    }
-    if (writeY) {
-      const candidateY = dragStartY + info.offset.y
-      const finalY = sessionBounds
-        ? applyElastic(candidateY, sessionBounds.minY, sessionBounds.maxY, elastic)
-        : candidateY
-      yMV.set(finalY)
-    }
+    // Arm drag-scroll if the pointer has entered the edge zone. The loop
+    // is self-sustaining once armed — it keeps scrolling a parked pointer
+    // without further onDrag events.
+    maybeArmAutoScroll()
 
     getOpts().onDrag?.(event, info)
   }
 
   const handlePanEnd = (event: PointerEvent, info: PanInfo) => {
     if (!isDragEnabled() || !xMV || !yMV) return
+
+    // Stop any active drag-scroll loop immediately on release. The MV
+    // already carries `cumulativeScrollDelta`, so the momentum / snap-back
+    // animation below settles from the correct (scroll-compensated)
+    // position — snapToOrigin springs to MV 0 (the item's natural slot in
+    // the now-scrolled container), momentum decays from where it was left.
+    stopAutoScroll()
+    scrollContainer = null
 
     // Visual gesture state ends with the pointerup; momentum is a separate
     // animation that continues after whileDrag deactivates. This matches
@@ -792,13 +1057,16 @@ export function createDrag(
     onCleanup(unregister)
   })
 
-  // Owner-disposal cleanup. Three layers:
-  // 1. Stop any settling momentum animations (they hold MV references that
+  // Owner-disposal cleanup. Four layers:
+  // 1. Stop any active drag-scroll frame loop (keepAlive keeps it ticking
+  //    after disposal otherwise).
+  // 2. Stop any settling momentum animations (they hold MV references that
   //    keep ticking after disposal otherwise).
-  // 2. Restore the body/touch styles if we're in mid-drag.
-  // 3. Release any captured pointer.
+  // 3. Restore the body/touch styles if we're in mid-drag.
+  // 4. Release any captured pointer.
   // createPan's own onCleanup handles removing its listeners separately.
   onCleanup(() => {
+    stopAutoScroll()
     stopMomentum()
     if (xMV || yMV) {
       restoreBodyAndElementStyles()

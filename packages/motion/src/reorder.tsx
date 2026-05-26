@@ -73,6 +73,18 @@ export type ReorderGroupProps<T> = Omit<JSX.HTMLAttributes<HTMLElement>, "childr
    * the primitive. See `ReorderOptions.cancelOnExternalReorder`. Default: `false`.
    */
   cancelOnExternalReorder?: boolean
+  /**
+   * Auto-scroll the group while an item is dragged near its edge, so the
+   * drag can continue past the visible viewport (touch + trackpad). A
+   * list-wide behaviour — set once here, applies to every item. A no-op
+   * when the group isn't scrollable. See `ReorderOptions.dragScroll`.
+   * Default: `true`.
+   */
+  dragScroll?: boolean
+  /** Edge-zone size in px that arms drag-scroll. Default: `min(80, axisSize × 0.2)`. */
+  dragScrollThreshold?: number
+  /** Maximum drag-scroll velocity in px/sec. Default: `720`. */
+  dragScrollSpeed?: number
   /** Container element tag. Default: `"ul"`. */
   as?: keyof JSX.IntrinsicElements
   children: JSX.Element
@@ -121,12 +133,18 @@ function Group<T>(props: ReorderGroupProps<T>): JSX.Element {
     "onReorder",
     "axis",
     "cancelOnExternalReorder",
+    "dragScroll",
+    "dragScrollThreshold",
+    "dragScrollSpeed",
     "as",
     "children",
   ])
   const reorder = createReorder(own.values, own.onReorder, () => ({
     axis: own.axis,
     cancelOnExternalReorder: own.cancelOnExternalReorder,
+    dragScroll: own.dragScroll,
+    dragScrollThreshold: own.dragScrollThreshold,
+    dragScrollSpeed: own.dragScrollSpeed,
   }))
   // Mark the group container as a scroll ancestor for descendant FLIPs.
   // Reorder.Items have `layout: true`; when the group is the scrollable
