@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { createPan, createTransform, useMotion } from "solidjs-motion"
+import { animate, createPan, createTransform, useMotion } from "solidjs-motion"
 
 // ---------------------------------------------------------------------------
 // Pan — standalone createPan returns an object with MotionValueAccessors at
@@ -9,12 +9,27 @@ import { createPan, createTransform, useMotion } from "solidjs-motion"
 //
 // Demo: pan the gradient pad. The hue rotation of the indicator dot is
 // driven by `pan.offset.x` → createTransform → useMotion. The pad's own
-// color shifts on `pan.isPanning()`.
+// color shifts on `pan.isPanning()`. On release, `offset.x` springs back to
+// 0 — a snap-to-end animation that starts from the value createPan retained.
 // ---------------------------------------------------------------------------
 
 export default function Pan() {
   const [padEl, setPadEl] = createSignal<HTMLDivElement>()
-  const pan = createPan(padEl)
+
+  // createPan retains offset.x at its last value on pointerup (by design —
+  // see Q5/3) precisely so you can run a snap-to-end animation FROM it. We
+  // lean into that: on release, spring offset.x back to 0 so the hue glides
+  // home instead of freezing. The retained value is the spring's start point.
+  //
+  // `snapBack` is stopped on the next onPanStart so re-grabbing mid-spring
+  // hands control straight back to the pointer.
+  let snapBack: ReturnType<typeof animate> | undefined
+  const pan = createPan(padEl, {
+    onPanStart: () => snapBack?.stop(),
+    onPanEnd: () => {
+      snapBack = animate(pan.offset.x, 0, { type: "spring", stiffness: 200, damping: 20 })
+    },
+  })
 
   // pan.offset.x is a MotionValueAccessor<number>. createTransform maps it
   // to a CSS `hue-rotate(...)` string. The result is itself a
@@ -36,7 +51,7 @@ export default function Pan() {
     <div>
       <p style={{ color: "var(--color-fg)", "margin-bottom": "1rem" }}>
         Drag inside the pad. The dot's hue is driven by <code>pan.offset.x</code> piped through{" "}
-        <code>createTransform</code>.
+        <code>createTransform</code>. On release it springs back to neutral.
       </p>
       <div
         ref={setPadEl}
@@ -60,7 +75,10 @@ export default function Pan() {
               width: "60px",
               height: "60px",
               "border-radius": "50%",
-              background: "var(--color-elevated)",
+              // hue-rotate() rotates a color's HUE — it's a no-op on
+              // achromatic colors (white/gray/black). The dot needs a
+              // SATURATED base color for the rotation to be visible.
+              background: "linear-gradient(135deg, #ff0080, #ffb300)",
               "box-shadow": "0 6px 18px rgba(0,0,0,0.2)",
             },
           })}
