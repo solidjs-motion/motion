@@ -17,3 +17,6 @@ solid-motion-phase-notes.md
 .envrc
 .envrc.local
 .envrc.private
+
+# OAC / tooling scratch dirs (e.g. packages/motion/.tmp)
+.tmp/
