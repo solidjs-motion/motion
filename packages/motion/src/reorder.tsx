@@ -139,7 +139,27 @@ function Group<T>(props: ReorderGroupProps<T>): JSX.Element {
     "as",
     "children",
   ])
-  const reorder = createReorder(own.values, own.onReorder, () => ({
+  // Normalize `values` into a fresh-reading accessor BEFORE handing it to
+  // createReorder. `own.values` is a reactive getter, but the VALUE it yields
+  // can be any of three shapes:
+  //   - `values={items}`       → an `Accessor<T[]>` (call it to read)
+  //   - `values={store.items}` → a live store proxy (read directly)
+  //   - `values={items()}`     → a plain array SNAPSHOT (the Solid-idiomatic
+  //                              invoked-signal form)
+  // createReorder's `T[]` branch wraps a plain array in `() => values`, which
+  // freezes that snapshot forever — so the invoked-signal form never observes
+  // the `setValues` writes the drag loop makes, and `handleDrag`'s
+  // `while (didSwap)` never converges (`indexOf(value)` can't advance) →
+  // synchronous infinite loop → tab lock. Re-reading `own.values` on every
+  // call keeps all three forms reactive, and only ever passes createReorder a
+  // function (so it takes the accessor branch). The `typeof v === "function"`
+  // check mirrors createReorder's own normalization: only the whole accessor
+  // is a function — an array (even of functions) is an object.
+  const resolvedValues = (): T[] => {
+    const v = own.values
+    return typeof v === "function" ? (v as Accessor<T[]>)() : v
+  }
+  const reorder = createReorder(resolvedValues, own.onReorder, () => ({
     axis: own.axis,
     cancelOnExternalReorder: own.cancelOnExternalReorder,
     dragScroll: own.dragScroll,

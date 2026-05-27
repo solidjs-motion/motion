@@ -36,7 +36,7 @@ export default function ReorderBasic() {
         to its (now-updated) slot on release via <code>dragSnapToOrigin</code>.
       </p>
       <Reorder.Group
-        values={items}
+        values={items()}
         onReorder={setItems}
         data-testid="reorder-basic/group"
         style={{

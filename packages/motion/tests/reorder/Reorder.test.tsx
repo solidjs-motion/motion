@@ -417,6 +417,38 @@ describe("<Reorder.*> — integration with createReorder", () => {
     expect(items()).toEqual(["b", "a", "c"])
   })
 
+  it("accepts an invoked signal as `values` (values={items()}) without looping", () => {
+    // Regression: passing the Solid-idiomatic invoked-signal form
+    // `values={items()}` (a plain array snapshot, not the accessor) used to
+    // freeze createReorder's internal `valuesAccessor` on the original array,
+    // so the center-cross `while (didSwap)` loop never converged → infinite
+    // loop / tab lock. The Group now re-reads its reactive `values` prop on
+    // every read, so the snapshot form stays live. A wall-clock timeout would
+    // catch a regression here; the value assertion catches a correct fix.
+    const [items, setItems] = createSignal(["a", "b", "c"])
+    const { container } = render(() => (
+      <Reorder.Group values={items()} onReorder={setItems}>
+        <For each={items()}>
+          {(v) => (
+            <Reorder.Item value={v} data-testid={`it-${v}`}>
+              {v}
+            </Reorder.Item>
+          )}
+        </For>
+      </Reorder.Group>
+    ))
+    for (let i = 0; i < 3; i++) {
+      const v = items()[i] as string
+      const el = container.querySelector<HTMLElement>(`[data-testid='it-${v}']`)
+      if (el === null) continue
+      stubRect(el, { x: 0, y: i * 100, width: 100, height: 100 })
+    }
+    const itemA = container.querySelector<HTMLElement>("[data-testid='it-a']")
+    if (itemA === null) throw new Error("item not found")
+    drag(itemA, { x: 50, y: 50 }, { x: 50, y: 160 })
+    expect(items()).toEqual(["b", "a", "c"])
+  })
+
   it("Group's `axis` prop flows into the primitive's drag config", () => {
     const [items, setItems] = createSignal(["a", "b", "c"])
     const { container } = render(() => (
