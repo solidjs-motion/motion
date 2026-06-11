@@ -1,3 +1,5 @@
+#### I'm still working on this project, just really getting down the layout/reorder engine here. The initial implementation is extremely shallow and does NOT cover all motion examples precisely. Framer motion does A LOT under the hood to handle layout based animations, so this will take some time! Thanks for your patience!
+
 # solidjs-motion (workspace)
 
 Monorepo for [`solidjs-motion`](./packages/motion) — a SolidJS animation library that ports the
